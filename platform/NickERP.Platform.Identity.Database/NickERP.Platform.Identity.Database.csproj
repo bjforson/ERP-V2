@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Platform.Identity.Database</RootNamespace>
+    <AssemblyName>NickERP.Platform.Identity.Database</AssemblyName>
+    <Description>NICKSCAN ERP SOLUTION — IdentityDbContext for the canonical nickerp_platform PostgreSQL database, schema 'identity'. Hosts identity_users, app_scopes, user_scopes, service_token_identities, service_token_scopes. Plus DbIdentityResolver — the default IIdentityResolver implementation. Owned by the platform layer; modules consume via IIdentityResolver, never via this assembly directly (except for the eventual identity admin REST API which is the data owner).</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+  </ItemGroup>
+
+</Project>

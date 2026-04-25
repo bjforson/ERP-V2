@@ -15,4 +15,15 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- JwtBearer + IdentityModel for CF Access JWT validation. JwtBearer types come via the framework reference
+         in newer SDKs but the IdentityModel.Protocols.OpenIdConnect package is not in the framework ref. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.16.0" />
+  </ItemGroup>
+
 </Project>
