@@ -1,0 +1,6 @@
+@NickERP.Platform.Demos.Observability_HostAddress = http://localhost:5259
+
+GET {{NickERP.Platform.Demos.Observability_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

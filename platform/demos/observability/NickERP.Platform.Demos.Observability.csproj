@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickERP.Platform.Demos.Observability</RootNamespace>
+    <AssemblyName>NickERP.Platform.Demos.Observability</AssemblyName>
+    <Description>Demo for ROADMAP A.1.4 — exercises NickERP.Platform.Logging + NickERP.Platform.Telemetry end-to-end against Seq. Throwaway code; validates the platform contracts before Track B starts. Do NOT consume from production services.</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\NickERP.Platform.Logging\NickERP.Platform.Logging.csproj" />
+    <ProjectReference Include="..\..\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
+  </ItemGroup>
+
+</Project>
