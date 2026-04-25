@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Platform.Identity</RootNamespace>
+    <AssemblyName>NickERP.Platform.Identity</AssemblyName>
+    <Description>NICKSCAN ERP SOLUTION — Platform Identity. Canonical user store, app-scope assignments, Cloudflare Access JWT validation, service-token authentication. Every NickERP service consumes this via `AddNickErpIdentity()`. Replaces per-app user stores (NickHR Users, NSCIM Users) over time via adapter shims (Track C.2). Detailed contract in IDENTITY.md.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>
