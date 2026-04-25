@@ -1,0 +1,24 @@
+@using NickERP.Platform.Identity.Auth
+
+<header class="nav-shell">
+    <div class="brand">
+        <span class="brand-mark">NickERP</span>
+        <span class="brand-tagline">Identity demo · ROADMAP A.2.9</span>
+    </div>
+    <nav class="nav-links">
+        <NavLink href="/" Match="NavLinkMatch.All">Home</NavLink>
+        <NavLink href="/round-trip">Round-trip</NavLink>
+        <NavLink href="/lists">Lists</NavLink>
+    </nav>
+    <AuthorizeView>
+        <Authorized>
+            <div class="who">
+                <span class="who-name">@(context.User.FindFirst(NickErpClaims.DisplayName)?.Value ?? "(no display name)")</span>
+                <span class="who-email">@(context.User.FindFirst(NickErpClaims.Email)?.Value ?? "(service token)")</span>
+            </div>
+        </Authorized>
+        <NotAuthorized>
+            <span class="who who-anon">Not signed in</span>
+        </NotAuthorized>
+    </AuthorizeView>
+</header>

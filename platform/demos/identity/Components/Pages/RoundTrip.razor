@@ -1,0 +1,257 @@
+@page "/round-trip"
+@attribute [Authorize(Roles = IdentityAdminEndpoints.AdminScope)]
+@using System.Security.Claims
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Identity.Database
+@using NickERP.Platform.Identity.Entities
+@using NickERP.Platform.Identity.Services
+@inject IDbContextFactory<IdentityDbContext>? DbFactory
+@inject IdentityDbContext Db
+@inject IIdentityResolver Resolver
+@inject IHttpContextAccessor HttpAccessor
+@rendermode InteractiveServer
+
+<PageTitle>Identity demo · round-trip</PageTitle>
+
+<h1>Round-trip</h1>
+
+<p class="lede">
+    The acceptance gate for ROADMAP §A.2: in one click, the demo creates a
+    fresh app scope, creates a fresh user, grants the scope to the user, and
+    re-resolves the identity to confirm the new scope is visible. If every
+    box turns green, the Identity layer is honest end-to-end.
+</p>
+
+<section class="card">
+    <button class="primary" disabled="@_running" @onclick="RunAsync">
+        @(_running ? "Running…" : "Run round-trip")
+    </button>
+    <button class="secondary" disabled="@_running" @onclick="ResetAsync">Reset (revoke + deactivate)</button>
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="error">@_error</div>
+    }
+</section>
+
+<section class="card">
+    <h3>Steps</h3>
+    <ol class="steps">
+        <li class="@StateClass(_step1)">
+            <strong>1. Create app scope</strong>
+            @if (_createdScope is not null)
+            {
+                <div>code <code>@_createdScope.Code</code> · id <code>@_createdScope.Id</code></div>
+            }
+        </li>
+        <li class="@StateClass(_step2)">
+            <strong>2. Create identity user</strong>
+            @if (_createdUser is not null)
+            {
+                <div>email <code>@_createdUser.Email</code> · id <code>@_createdUser.Id</code></div>
+            }
+        </li>
+        <li class="@StateClass(_step3)">
+            <strong>3. Grant scope to user</strong>
+            @if (_grantId is not null)
+            {
+                <div>user_scope id <code>@_grantId</code></div>
+            }
+        </li>
+        <li class="@StateClass(_step4)">
+            <strong>4. Resolve user — new scope visible?</strong>
+            @if (_resolvedAfter is not null)
+            {
+                <div>resolved scopes: <code>@string.Join(", ", _resolvedAfter.ScopeCodes)</code></div>
+                @if (_resolvedAfter.HasScope(_createdScope?.Code ?? ""))
+                {
+                    <div class="ok">Found the new scope on the resolved identity. Round-trip succeeded.</div>
+                }
+                else
+                {
+                    <div class="bad">New scope NOT in resolved set — resolver / cache invariant broken.</div>
+                }
+            }
+        </li>
+    </ol>
+</section>
+
+@code {
+    enum StepState { Pending, Running, Done, Failed }
+
+    StepState _step1, _step2, _step3, _step4;
+    bool _running;
+    string? _error;
+    AppScope? _createdScope;
+    IdentityUser? _createdUser;
+    Guid? _grantId;
+    ResolvedIdentity? _resolvedAfter;
+
+    string StateClass(StepState s) => s switch
+    {
+        StepState.Done => "step-done",
+        StepState.Running => "step-running",
+        StepState.Failed => "step-failed",
+        _ => "step-pending"
+    };
+
+    async Task RunAsync()
+    {
+        _running = true;
+        _error = null;
+        _step1 = _step2 = _step3 = _step4 = StepState.Pending;
+        _createdScope = null;
+        _createdUser = null;
+        _grantId = null;
+        _resolvedAfter = null;
+        StateHasChanged();
+
+        try
+        {
+            var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff");
+            var now = DateTimeOffset.UtcNow;
+            var caller = ResolveCallerId();
+
+            // 1. Create scope ----------------------------------------------------
+            _step1 = StepState.Running; StateHasChanged();
+            var scopeCode = $"Demo.RoundTrip.{stamp}";
+            _createdScope = new AppScope
+            {
+                Code = scopeCode,
+                AppName = "demo",
+                Description = "Synthesised by the A.2.9 round-trip demo. Safe to delete.",
+                IsActive = true,
+                CreatedAt = now,
+                TenantId = 1
+            };
+            Db.AppScopes.Add(_createdScope);
+            await Db.SaveChangesAsync();
+            _step1 = StepState.Done; StateHasChanged();
+
+            // 2. Create user -----------------------------------------------------
+            _step2 = StepState.Running; StateHasChanged();
+            var email = $"round-trip-{stamp}@nickscan.com";
+            _createdUser = new IdentityUser
+            {
+                Email = email,
+                NormalizedEmail = email.ToUpperInvariant(),
+                DisplayName = $"Round-trip demo {stamp}",
+                IsActive = true,
+                CreatedAt = now,
+                UpdatedAt = now,
+                TenantId = 1
+            };
+            Db.Users.Add(_createdUser);
+            await Db.SaveChangesAsync();
+            _step2 = StepState.Done; StateHasChanged();
+
+            // 3. Grant scope -----------------------------------------------------
+            _step3 = StepState.Running; StateHasChanged();
+            var grant = new UserScope
+            {
+                IdentityUserId = _createdUser.Id,
+                AppScopeCode = scopeCode,
+                GrantedAt = now,
+                GrantedByUserId = caller,
+                TenantId = 1,
+                Notes = "Granted by A.2.9 round-trip demo."
+            };
+            Db.UserScopes.Add(grant);
+            await Db.SaveChangesAsync();
+            _grantId = grant.Id;
+            _step3 = StepState.Done; StateHasChanged();
+
+            // 4. Re-resolve via the resolver to prove the scope is visible -------
+            _step4 = StepState.Running; StateHasChanged();
+            _resolvedAfter = await ResolveSyntheticAsync(_createdUser);
+            _step4 = (_resolvedAfter is not null && _resolvedAfter.HasScope(scopeCode))
+                ? StepState.Done
+                : StepState.Failed;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            if (_step1 == StepState.Running) _step1 = StepState.Failed;
+            else if (_step2 == StepState.Running) _step2 = StepState.Failed;
+            else if (_step3 == StepState.Running) _step3 = StepState.Failed;
+            else if (_step4 == StepState.Running) _step4 = StepState.Failed;
+        }
+        finally
+        {
+            _running = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task ResetAsync()
+    {
+        _running = true;
+        _error = null;
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var caller = ResolveCallerId();
+
+            // Revoke any open grant referencing the synthesised scope, then
+            // soft-deactivate the synthesised user + scope.
+            if (_grantId is not null)
+            {
+                var grant = await Db.UserScopes.FirstOrDefaultAsync(s => s.Id == _grantId.Value);
+                if (grant is not null && grant.RevokedAt is null)
+                {
+                    grant.RevokedAt = now;
+                    grant.RevokedByUserId = caller;
+                }
+            }
+            if (_createdUser is not null)
+            {
+                var user = await Db.Users.FirstOrDefaultAsync(u => u.Id == _createdUser.Id);
+                if (user is not null) { user.IsActive = false; user.UpdatedAt = now; }
+            }
+            if (_createdScope is not null)
+            {
+                var scope = await Db.AppScopes.FirstOrDefaultAsync(s => s.Id == _createdScope.Id);
+                if (scope is not null) scope.IsActive = false;
+            }
+            await Db.SaveChangesAsync();
+
+            _step1 = _step2 = _step3 = _step4 = StepState.Pending;
+            _createdScope = null;
+            _createdUser = null;
+            _grantId = null;
+            _resolvedAfter = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    /// <summary>
+    /// Re-runs the resolver against a synthesised request whose dev-bypass
+    /// header points at the freshly-created user. Mirrors what would happen
+    /// if that user opened a browser tab against this host.
+    /// </summary>
+    async Task<ResolvedIdentity?> ResolveSyntheticAsync(IdentityUser user)
+    {
+        var current = HttpAccessor.HttpContext;
+        if (current is null) return null;
+
+        // Dev-bypass path: build a fake HttpContext that carries the new user's
+        // email in the bypass header. In production (CF Access) this branch is
+        // disabled at startup, so the round-trip page is dev-only — that's fine
+        // for an acceptance demo and is documented in the README.
+        var fake = new DefaultHttpContext { RequestServices = current.RequestServices };
+        fake.Request.Headers["X-Dev-User"] = user.Email;
+        return await Resolver.ResolveAsync(fake, current.RequestAborted);
+    }
+
+    Guid ResolveCallerId()
+    {
+        var raw = HttpAccessor.HttpContext?.User.FindFirst(NickErpClaims.Id)?.Value;
+        return Guid.TryParse(raw, out var id) ? id : Guid.Empty;
+    }
+}

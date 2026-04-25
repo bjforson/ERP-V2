@@ -1,7 +1,9 @@
 # NickERP.Platform.Identity
 
-> Status (2026-04-25): A.2.1 – A.2.8 shipped. A.2.9 demo app at
-> `platform/demos/identity/` is the remaining open item. ROADMAP §A.2.
+> Status (2026-04-23): A.2.1 – A.2.10 shipped — layer is feature-complete and
+> the acceptance demo at `platform/demos/identity/` runs end-to-end. Remaining
+> open items (first-admin bootstrap CLI, OpenAPI spec generation) are
+> nice-to-haves and don't block consumers. ROADMAP §A.2.
 
 The single contract every NickERP service uses to answer
 **"who is this caller, and what may they do?"**. Owns canonical user
@@ -256,26 +258,45 @@ platform/NickERP.Platform.Identity.Api/
 │   └── Dtos.cs                            — request + response DTOs
 ├── IdentityAdminEndpoints.cs              — MapNickErpIdentityAdmin()
 └── NickERP.Platform.Identity.Api.csproj
+
+platform/demos/identity/                   — A.2.9 acceptance demo
+├── Components/
+│   ├── Layout/MainLayout.razor + NavMenu.razor
+│   ├── Pages/Home.razor                   — claims dump + scope check
+│   ├── Pages/RoundTrip.razor              — scope→user→grant→resolve
+│   ├── Pages/Lists.razor                  — read-only table dump
+│   ├── App.razor + Routes.razor + _Imports.razor
+├── Properties/launchSettings.json         — http://localhost:5260
+├── wwwroot/app.css
+├── appsettings.json + appsettings.Development.json
+├── NickERP.Platform.Demos.Identity.csproj
+├── NickERP.Platform.Demos.Identity.http   — curl-equivalent test surface
+├── Program.cs                             — host wiring (auth + admin API + Blazor)
+└── README.md                              — including first-admin bootstrap SQL
 ```
 
 ---
 
 ## What's still open in A.2
 
-- **A.2.9 Demo app** at `platform/demos/identity/` — Blazor Server
-  app behind CF Access that exercises the full stack:
-  user-creates-scope-creates-user-creates-grant-then-resolves
-  round-trip. **Acceptance gate** for the layer per `ROADMAP §A.2`.
+- [x] **A.2.9 Demo app** at `platform/demos/identity/` — Blazor Server
+      app that mounts the auth scheme, the DB-backed resolver, and the
+      admin REST API on a single host. Has a `/round-trip` page that
+      creates scope → creates user → grants → re-resolves and reports
+      green/red per step. Dev-bypass enabled in `Development` so engineers
+      run it without configuring CF Access locally. **Acceptance gate met.**
 - **First-admin bootstrap script** — a one-line `dotnet run` tool
   that inserts the `Identity.Admin` grant for a given email so prod
-  setup doesn't require DBA-level SQL.
+  setup doesn't require DBA-level SQL. Demo's README §"First-admin
+  bootstrap" has the SQL template; turning that into a CLI is on the
+  backlog.
 - **OpenAPI spec generation** — `MapNickErpIdentityAdmin` exposes
   endpoints with route metadata but no Swagger doc shipped yet.
   Add an opinionated `MapNickErpIdentityAdminSwagger()` extension
   next to it.
 
-None of these block consumers from wiring up auth + scope checks
-today.
+Neither of the open items blocks consumers from wiring up auth + scope
+checks today.
 
 ---
 

@@ -1,0 +1,63 @@
+@host = http://localhost:5260
+@devUser = dev@nickscan.com
+@tenantId = 1
+
+### List users
+GET {{host}}/api/identity/users?page=1&pageSize=50
+X-Dev-User: {{devUser}}
+
+### Create a user
+POST {{host}}/api/identity/users
+Content-Type: application/json
+X-Dev-User: {{devUser}}
+
+{
+  "email": "newhire-{{$timestamp}}@nickscan.com",
+  "displayName": "New Hire",
+  "tenantId": {{tenantId}},
+  "initialScopes": ["Demo.Reader"]
+}
+
+### List scopes
+GET {{host}}/api/identity/scopes
+X-Dev-User: {{devUser}}
+
+### Create an app scope
+POST {{host}}/api/identity/scopes
+Content-Type: application/json
+X-Dev-User: {{devUser}}
+
+{
+  "code": "Demo.Reader",
+  "appName": "demo",
+  "description": "Read-only scope minted by the .http file.",
+  "tenantId": {{tenantId}}
+}
+
+### Grant + revoke scopes for a user (replace {userId})
+PATCH {{host}}/api/identity/users/{userId}/scopes
+Content-Type: application/json
+X-Dev-User: {{devUser}}
+
+{
+  "grant":  ["Demo.Reader"],
+  "revoke": [],
+  "notes":  "Granted from .http file"
+}
+
+### List service tokens
+GET {{host}}/api/identity/service-tokens
+X-Dev-User: {{devUser}}
+
+### Create a service token
+POST {{host}}/api/identity/service-tokens
+Content-Type: application/json
+X-Dev-User: {{devUser}}
+
+{
+  "tokenClientId": "demo-svc-{{$timestamp}}",
+  "displayName": "Demo service token",
+  "purpose": "Smoke test from .http file",
+  "tenantId": {{tenantId}},
+  "initialScopes": ["Demo.Reader"]
+}

@@ -1,0 +1,95 @@
+@page "/lists"
+@attribute [Authorize(Roles = IdentityAdminEndpoints.AdminScope)]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Identity.Database
+@using NickERP.Platform.Identity.Entities
+@inject IdentityDbContext Db
+@rendermode InteractiveServer
+
+<PageTitle>Identity demo · lists</PageTitle>
+
+<h1>Lists</h1>
+
+<p class="lede">
+    Read-only dump of the four canonical tables backing the Identity layer.
+    Refresh after running the round-trip to see the new rows. For mutations
+    use the admin REST API documented in the <code>.http</code> file or call
+    <code>PATCH /api/identity/users/{id}/scopes</code> directly.
+</p>
+
+<section class="card">
+    <h3>App scopes (@_scopes.Count)</h3>
+    <table>
+        <thead>
+            <tr><th>Code</th><th>App</th><th>Active</th><th>Tenant</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var s in _scopes)
+            {
+                <tr>
+                    <td><code>@s.Code</code></td>
+                    <td>@s.AppName</td>
+                    <td>@(s.IsActive ? "yes" : "no")</td>
+                    <td>@s.TenantId</td>
+                    <td>@s.CreatedAt.ToString("u")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+<section class="card">
+    <h3>Users (@_users.Count)</h3>
+    <table>
+        <thead>
+            <tr><th>Email</th><th>Display</th><th>Active</th><th>Scopes</th><th>Tenant</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var u in _users)
+            {
+                <tr>
+                    <td><code>@u.Email</code></td>
+                    <td>@(u.DisplayName ?? "")</td>
+                    <td>@(u.IsActive ? "yes" : "no")</td>
+                    <td>@u.Scopes.Count(g => g.RevokedAt is null) open / @u.Scopes.Count total</td>
+                    <td>@u.TenantId</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+<section class="card">
+    <h3>Service tokens (@_tokens.Count)</h3>
+    <table>
+        <thead>
+            <tr><th>Client id</th><th>Display</th><th>Active</th><th>Scopes</th><th>Expires</th><th>Tenant</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var t in _tokens)
+            {
+                <tr>
+                    <td><code>@t.TokenClientId</code></td>
+                    <td>@t.DisplayName</td>
+                    <td>@(t.IsActive ? "yes" : "no")</td>
+                    <td>@t.Scopes.Count(g => g.RevokedAt is null) open / @t.Scopes.Count total</td>
+                    <td>@(t.ExpiresAt?.ToString("u") ?? "—")</td>
+                    <td>@t.TenantId</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+@code {
+    List<AppScope> _scopes = new();
+    List<IdentityUser> _users = new();
+    List<ServiceTokenIdentity> _tokens = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _scopes = await Db.AppScopes.AsNoTracking().OrderBy(s => s.AppName).ThenBy(s => s.Code).ToListAsync();
+        _users = await Db.Users.AsNoTracking().Include(u => u.Scopes).OrderBy(u => u.NormalizedEmail).ToListAsync();
+        _tokens = await Db.ServiceTokens.AsNoTracking().Include(t => t.Scopes).OrderBy(t => t.DisplayName).ToListAsync();
+    }
+}

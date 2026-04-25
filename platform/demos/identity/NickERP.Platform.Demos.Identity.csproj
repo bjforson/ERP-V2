@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickERP.Platform.Demos.Identity</RootNamespace>
+    <AssemblyName>NickERP.Platform.Demos.Identity</AssemblyName>
+    <Description>Demo for ROADMAP A.2.9 — Blazor Server app that mounts the Identity admin API, runs behind CF Access (or the dev-bypass header in Development), and exercises the full round-trip: create scope -> create user -> grant scope -> resolve identity. Acceptance gate for the Identity layer per ROADMAP §A.2. Throwaway code; do NOT consume from production services.</Description>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pin EF Core to match the Database project (10.0.7), silencing
+         MSB3277 conflicts between the SDK-bundled 10.0.4 and the
+         transitive 10.0.7 from the Identity.Database project ref. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+    <ProjectReference Include="..\..\NickERP.Platform.Identity.Api\NickERP.Platform.Identity.Api.csproj" />
+    <ProjectReference Include="..\..\NickERP.Platform.Identity.Database\NickERP.Platform.Identity.Database.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,134 @@
+@page "/"
+@attribute [Authorize]
+@using System.Security.Claims
+@using NickERP.Platform.Identity.Auth
+@using NickERP.Platform.Identity.Services
+@inject IIdentityResolver Resolver
+@inject IHttpContextAccessor HttpAccessor
+@rendermode InteractiveServer
+
+<PageTitle>Identity demo · home</PageTitle>
+
+<h1>Identity demo</h1>
+
+<p class="lede">
+    This page proves the identity layer is wired end-to-end. The
+    <code>NickErpAuthenticationHandler</code> ran on this request, called
+    <code>IIdentityResolver.ResolveAsync</code>, and built the principal you see below.
+    Whether you got here via Cloudflare Access or the Development bypass header,
+    the rest of the stack reads it the same way.
+</p>
+
+@if (_resolved is null)
+{
+    <div class="card warning">
+        <h3>No identity resolved</h3>
+        <p>The resolver returned <code>null</code>, which usually means:</p>
+        <ul>
+            <li>You hit this page without a CF Access JWT (and dev-bypass is off), or</li>
+            <li>Your email isn't yet a row in <code>nickerp_platform.identity_users</code>, or</li>
+            <li>The user record exists but <code>is_active = false</code>.</li>
+        </ul>
+        <p>See the README for first-admin bootstrap instructions.</p>
+    </div>
+}
+else
+{
+    <section class="card">
+        <h3>Resolved identity</h3>
+        <dl>
+            <dt>Canonical id</dt>
+            <dd><code>@_resolved.Id</code></dd>
+
+            <dt>Display name</dt>
+            <dd>@_resolved.DisplayName</dd>
+
+            <dt>Email</dt>
+            <dd>@(_resolved.Email ?? "(service token — no email)")</dd>
+
+            <dt>Is service token?</dt>
+            <dd>@(_resolved.IsServiceToken ? "yes" : "no")</dd>
+
+            <dt>Tenant id</dt>
+            <dd>@_resolved.TenantId</dd>
+
+            <dt>External subject (CF JWT <code>sub</code>)</dt>
+            <dd><code>@(_resolved.ExternalSubject ?? "(none — dev-bypass)")</code></dd>
+
+            <dt>Active scopes (@_resolved.ScopeCodes.Count)</dt>
+            <dd>
+                @if (_resolved.ScopeCodes.Count == 0)
+                {
+                    <em>(none — this user can authenticate but cannot do anything)</em>
+                }
+                else
+                {
+                    <ul class="scope-list">
+                        @foreach (var s in _resolved.ScopeCodes)
+                        {
+                            <li><code>@s</code></li>
+                        }
+                    </ul>
+                }
+            </dd>
+        </dl>
+    </section>
+
+    <section class="card">
+        <h3>Raw claims (from <code>HttpContext.User</code>)</h3>
+        <p class="muted">
+            Modules read these via
+            <code>HttpContext.User.FindFirst(NickErpClaims.X)?.Value</code>.
+            Scopes are also mirrored as <code>ClaimTypes.Role</code> so
+            <code>[Authorize(Roles = "Identity.Admin")]</code> works.
+        </p>
+        <table class="claims">
+            <thead>
+                <tr><th>Type</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var c in _claims)
+                {
+                    <tr>
+                        <td><code>@c.Type</code></td>
+                        <td><code>@c.Value</code></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+
+    <section class="card">
+        <h3>Has the <code>Identity.Admin</code> scope?</h3>
+        <p>
+            @if (_resolved.HasScope(IdentityAdminEndpoints.AdminScope))
+            {
+                <span class="pill ok">YES</span>
+                <span> — you can run the round-trip and the lists pages.</span>
+            }
+            else
+            {
+                <span class="pill warn">NO</span>
+                <span> — round-trip and lists pages will return 403. See the README to grant yourself the scope.</span>
+            }
+        </p>
+    </section>
+}
+
+@code {
+    private ResolvedIdentity? _resolved;
+    private List<Claim> _claims = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // HttpContext is only available during the prerender pass on a Server
+        // component. We capture what we need then; the resolver also stamps
+        // HttpContext.User via the auth handler so we can dump claims directly.
+        var ctx = HttpAccessor.HttpContext;
+        if (ctx is not null)
+        {
+            _claims = ctx.User.Claims.OrderBy(c => c.Type).ToList();
+            _resolved = await Resolver.ResolveAsync(ctx, ctx.RequestAborted);
+        }
+    }
+}
