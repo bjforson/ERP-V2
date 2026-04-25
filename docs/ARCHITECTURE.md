@@ -298,13 +298,33 @@ v1 → v2 cutover plumbing is a first-class concern, not a last-mile scramble:
 - Outbound submissions carry a `cutover_register` flag: "this case was already submitted from v1 — v2 must NOT resubmit."
 - `MIGRATION-FROM-V1.md` grows one section per parallel-run concern as it's discovered.
 
-### 7.7 Observability
+### 7.7 Image pipeline — pre-rendering from line 1
 
-- **Logs:** Serilog → Seq, same sink as main roadmap Phase 2.
-- **Metrics:** `System.Diagnostics.Metrics` counters/histograms per domain event type, scraped to Prometheus (or whatever Phase 2 settles on).
-- **Traces:** OpenTelemetry from day 1. Trace every command from API → domain → adapter call. Ties into Phase 5.3 of main roadmap.
+**No base64 image marshalling, ever.** v1's worst performance failure was reading 2–30 MB scan files at request time and base64-encoding them through Blazor SignalR. v2 must not repeat this. The image pipeline is a **first-class** cross-cutting concern, baked in from Phase 7.1 — not deferred to a later sub-phase.
 
-### 7.8 Team topology
+The vendor-neutral pre-rendering pipeline lives inside `NickERP.Inspection.Application.Imaging` (or a sibling project) and serves every scanner adapter:
+
+- **On scan ingest** (any `IScannerAdapter` produces a `RawScanArtifact`): enqueue a pre-render job carrying the artifact's `SourceHash` as idempotency key.
+- **Pre-render workers** (background services) consume the queue, call `IImageRenderer.RenderThumbnailAsync` (256 px) and `RenderPreviewAsync` (1024 px) on each artifact, store outputs.
+- **Storage routing**: thumbnails (< 512 KB) → Redis via `ICacheService`; previews → disk blob cache at `<storage_root>/prerender/{yyyy}/{MM}/{dd}/{scanId}/{kind}_{size}.{ext}` with LRU eviction.
+- **Serving**: `GET /api/images/{scanId}/{kind}` streams the cached bytes with `ETag: "<sourceHash[0..15]>"` + `Cache-Control: public, max-age=86400, s-maxage=604800, immutable`. Range requests supported. **No `[Cached]` attribute on these routes** — it serializes streams to JSON in cache and corrupts images.
+- **Library**: ImageSharp (managed; TIFF first-class; matches v1 deploy story). Rejected: SkiaSharp (native libs), Magick.NET (slow + license).
+- **Queue**: SQL-backed durable queue + in-memory `Channel<long>` for fast wake-up. Atomic dequeue via `UPDATE…OUTPUT…WITH (READPAST, UPDLOCK, ROWLOCK)`. Lease-based for multi-instance safety.
+- **Predictive prefetch**: when an analyst opens a Case, hint the queue to prioritise that case's previews. SignalR `AssetReady` push updates the UI live as renders land.
+
+**Rationale for "from line 1, not B.1.2":** at production scale (analysts cite 2000 images/day per Location as the working assumption), base64-per-request is unworkable. Building Phase 7.1 with synchronous image fetch and "we'll add pre-rendering in 7.2" creates two acceptance moments, breaks Phase 7.1's perf metrics, and risks Phase 7.2 silently sliding. Cleaner: ship 7.1 with the pre-rendering pipeline already serving every image.
+
+**Reference design**: the v1 pre-rendering plan at `C:\Users\Administrator\.claude\plans\glimmering-sparking-valiant.md` is the source spec for queue mechanics, retry, lease, idempotency, observability, and rollout patterns. v2 ports the *design*, not the v1 controllers — the implementation lives in `NickERP.Inspection.*` against the new domain.
+
+**Acceptance bar (rolls into Phase 7.1)**: thumbs ≤ 50 ms p95 from Redis, previews ≤ 80 ms p95 from disk; cache hit rate ≥ 85% after 1 h warm operation; ingestion throughput unaffected (±5% per scanner).
+
+### 7.8 Observability
+
+- **Logs:** Serilog → Seq, same sink as main roadmap Track A.1.
+- **Metrics:** `System.Diagnostics.Metrics` counters/histograms per domain event type, scraped to Prometheus (or whatever Track A.1 settles on). Pre-rendering metrics: queue depth, render latency histogram, cache-hit rate by tier.
+- **Traces:** OpenTelemetry from day 1. Trace every command from API → domain → adapter call. Ties into main roadmap Track A.1.
+
+### 7.9 Team topology
 
 Plugin isolation enables this split:
 
@@ -335,28 +355,29 @@ Goal: a runnable empty app that proves the shape.
 
 **Acceptance:** an admin can create a tenant, a location, a station, and register a mock scanner plugin. Cross-tenant access returns zero rows (RLS verified by test).
 
-### Phase 7.1 — Single-location single-scanner happy path (target: 4–6 weeks)
+### Phase 7.1 — Single-location single-scanner happy path (target: 5–7 weeks)
 
-Goal: Tema, one FS6000, full case lifecycle end-to-end.
+Goal: Tema, one FS6000, full case lifecycle end-to-end **with the production-grade image pipeline live from day 1.**
 
 - [ ] `NickERP.Inspection.Scanners.FS6000` adapter — port decoder from v1 `Services.FS6000`, dress behind `IScannerAdapter`.
 - [ ] `NickERP.Inspection.ExternalSystems.IcumsGh` adapter — port ICUMS ingestion + outbox from v1 `Services.Icums`, dress behind `IExternalSystemAdapter`.
 - [ ] `NickERP.Inspection.Authorities.CustomsGh` — port port-match, Fyco, regime, CMR→IM rules behind `IAuthorityRulesProvider`.
 - [ ] Core domain: Case → Scan → Artifact → Workflow → Review → Finding → Verdict → Submission.
 - [ ] Analyst UI (one case at a time — viewer ported from v1: W/L, pixel-probe, ROI inspector).
+- [ ] **Image pre-rendering pipeline** (per §7.7) — `IImageRenderer` (ImageSharp), pre-render workers consuming a SQL+Channel queue, Redis-or-disk routing, ETag/Cache-Control streaming endpoints, predictive prefetch on case-open, SignalR `AssetReady` push. **No base64 image marshalling anywhere in the path.**
 - [ ] ML telemetry capture.
 - [ ] Outbound submission with idempotency.
 
-**Acceptance:** a scan at Tema lands, case materializes, authority docs pull, analyst reviews, verdict submits, event log has the full chain. RLS holds. Telemetry rows exist.
+**Acceptance:** a scan at Tema lands, case materializes, authority docs pull, analyst reviews, verdict submits, event log has the full chain. RLS holds. Telemetry rows exist. **Image-pipeline acceptance**: thumbs ≤ 50 ms p95 from Redis, previews ≤ 80 ms p95 from disk; cache hit rate ≥ 85% after 1 h warm; ingestion throughput unaffected (±5%).
 
 ### Phase 7.2 — Multi-scanner same location (target: 2–3 weeks)
 
 - [ ] `NickERP.Inspection.Scanners.ASE` adapter (ported tri-panel/composite rendering).
 - [ ] Multiple Stations at Tema (Lane 1 FS6000, Lane 2 ASE).
 - [ ] Lane routing — a scan knows its Station by scanner config, not by IP guessing.
-- [ ] Pre-rendering integration (Phase 2.5 of main roadmap) for thumbnails/previews.
+- [ ] ASE adapter exercises the pre-rendering pipeline shipped in 7.1 — no new pipeline work, but verify the second scanner's artifact formats render cleanly.
 
-**Acceptance:** two scanners running at Tema feed the same analyst queue; image list loads < 50 ms warm.
+**Acceptance:** two scanners running at Tema feed the same analyst queue; image list loads < 50 ms warm; ASE-specific formats (composite, IR) render correctly through the existing pipeline.
 
 ### Phase 7.3 — Multi-location (target: 3–4 weeks)
 
