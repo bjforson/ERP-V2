@@ -1,0 +1,66 @@
+# =====================================================================
+# NickERP.Inspection v2 — .gitignore
+# Standard .NET ignore + plugin-runtime drop folder.
+# Phase 6.0 will add language-specific exclusions as needed.
+# =====================================================================
+
+# Build output
+bin/
+obj/
+out/
+artifacts/
+publish/
+*.dll
+*.exe
+*.pdb
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.swp
+*~
+
+# Test output
+TestResults/
+[Tt]est[Rr]esult*/
+coverage*.xml
+coverage*.json
+*.coverage
+*.coveragexml
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs / local state
+*.log
+logs/
+*.local.json
+
+# Plugin runtime drop folder — adapter DLLs land here at deploy, not in source
+plugins/*.dll
+plugins/*.pdb
+!plugins/README.md
+
+# Secrets — should never be committed
+*.pfx
+*.key
+appsettings.*.local.json
+secrets.json
+.env
+.env.*
+!.env.example
+
+# EF Core temp
+*.efcache
