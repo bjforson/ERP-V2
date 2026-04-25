@@ -2,7 +2,7 @@
 
 > **Status:** design of record. Edit freely; this doc and the code evolve together.
 > **Repo:** `C:\Shared\ERP V2\` — separate git repo from v1.
-> **Parent roadmap:** `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` → Phase 6 (lives in the v1 repo).
+> **Parent roadmap:** `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` → Phase 7 (lives in the v1 repo).
 > **Migration companion:** [`MIGRATION-FROM-V1.md`](MIGRATION-FROM-V1.md)
 > **First written:** 2026-04-24 · **Relocated to standalone repo:** 2026-04-25
 
@@ -294,7 +294,7 @@ Store as-you-go. Don't worry about ML consumers yet — the schema is cheap, the
 
 v1 → v2 cutover plumbing is a first-class concern, not a last-mile scramble:
 
-- v2 accepts **dual-reporting scanners** from Phase 1 (scanner sends to both systems during parallel run). `idempotency_key` per scan guarantees no double-processing.
+- v2 accepts **dual-reporting scanners** from Phase 7.1 (scanner sends to both systems during parallel run). `idempotency_key` per scan guarantees no double-processing.
 - Outbound submissions carry a `cutover_register` flag: "this case was already submitted from v1 — v2 must NOT resubmit."
 - `MIGRATION-FROM-V1.md` grows one section per parallel-run concern as it's discovered.
 
@@ -320,7 +320,7 @@ Repo is one monorepo; builds are per-project; release cadence can differ.
 
 Each phase has a crisp acceptance bar. Do not declare done until it's met.
 
-### Phase 0 — Skeleton (target: 2–3 weeks)
+### Phase 7.0 — Skeleton (target: 2–3 weeks)
 
 Goal: a runnable empty app that proves the shape.
 
@@ -335,7 +335,7 @@ Goal: a runnable empty app that proves the shape.
 
 **Acceptance:** an admin can create a tenant, a location, a station, and register a mock scanner plugin. Cross-tenant access returns zero rows (RLS verified by test).
 
-### Phase 1 — Single-location single-scanner happy path (target: 4–6 weeks)
+### Phase 7.1 — Single-location single-scanner happy path (target: 4–6 weeks)
 
 Goal: Tema, one FS6000, full case lifecycle end-to-end.
 
@@ -349,7 +349,7 @@ Goal: Tema, one FS6000, full case lifecycle end-to-end.
 
 **Acceptance:** a scan at Tema lands, case materializes, authority docs pull, analyst reviews, verdict submits, event log has the full chain. RLS holds. Telemetry rows exist.
 
-### Phase 2 — Multi-scanner same location (target: 2–3 weeks)
+### Phase 7.2 — Multi-scanner same location (target: 2–3 weeks)
 
 - [ ] `NickERP.Inspection.Scanners.ASE` adapter (ported tri-panel/composite rendering).
 - [ ] Multiple Stations at Tema (Lane 1 FS6000, Lane 2 ASE).
@@ -358,7 +358,7 @@ Goal: Tema, one FS6000, full case lifecycle end-to-end.
 
 **Acceptance:** two scanners running at Tema feed the same analyst queue; image list loads < 50 ms warm.
 
-### Phase 3 — Multi-location (target: 3–4 weeks)
+### Phase 7.3 — Multi-location (target: 3–4 weeks)
 
 - [ ] Onboarding flow for second Location (Kotoka Cargo).
 - [ ] Per-Location user assignments.
@@ -367,7 +367,7 @@ Goal: Tema, one FS6000, full case lifecycle end-to-end.
 
 **Acceptance:** two locations live simultaneously, analysts at each see only their location's work, tenant admin sees both, zero cross-location data leakage verified by penetration test.
 
-### Phase 4 — External system breadth (target: 2–3 weeks)
+### Phase 7.4 — External system breadth (target: 2–3 weeks)
 
 - [ ] Second `ExternalSystemType` (e.g., a second authority or a cross-border customs — whoever is next on the commercial list).
 - [ ] Polymorphic `AuthorityDocument` payloads.
@@ -375,7 +375,7 @@ Goal: Tema, one FS6000, full case lifecycle end-to-end.
 
 **Acceptance:** a Case can carry documents from two different external systems; the correct Rules Provider validates each.
 
-### Phase 5 — Migration tooling + parallel run (target: 3–4 weeks, then however long parallel-run lasts)
+### Phase 7.5 — Migration tooling + parallel run (target: 3–4 weeks, then however long parallel-run lasts)
 
 - [ ] v1 → v2 data migration scripts (reference data first, then in-flight cases as they close in v1).
 - [ ] Dual-report mode for scanners — both v1 and v2 receive, dedupe on idempotency key.
@@ -384,7 +384,7 @@ Goal: Tema, one FS6000, full case lifecycle end-to-end.
 
 **Acceptance:** one Location runs on v2 full-time, other Locations still on v1, all external submissions correctly attributed, zero duplicates.
 
-### Phase 6 — Edge node (post-cutover, target: 4–6 weeks)
+### Phase 7.6 — Edge node (post-cutover, target: 4–6 weeks)
 
 - [ ] Lightweight local node (`NickERP.Inspection.Edge`) per Location — SQLite-backed event log, scanner adapter co-located.
 - [ ] Sync protocol — event replay on reconnect, conflict resolution via idempotency.
@@ -395,7 +395,7 @@ Goal: Tema, one FS6000, full case lifecycle end-to-end.
 
 ---
 
-## 9. Repo layout (created in Phase 0)
+## 9. Repo layout (created in Phase 7.0)
 
 ```
 inspection-v2/
@@ -403,7 +403,7 @@ inspection-v2/
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── MIGRATION-FROM-V1.md
-│   └── PLUGIN-AUTHORING.md                           (Phase 0)
+│   └── PLUGIN-AUTHORING.md                           (Phase 7.0)
 ├── src/
 │   ├── NickERP.Inspection.Core/                      domain entities + events
 │   ├── NickERP.Inspection.Application/               use cases / command handlers
@@ -411,13 +411,13 @@ inspection-v2/
 │   ├── NickERP.Inspection.Api/                       REST + SignalR
 │   ├── NickERP.Inspection.Web/                       Blazor Server (analyst + admin UI)
 │   ├── NickERP.Inspection.Scanners.Abstractions/     IScannerAdapter + DTOs
-│   ├── NickERP.Inspection.Scanners.FS6000/           (Phase 1)
-│   ├── NickERP.Inspection.Scanners.ASE/              (Phase 2)
+│   ├── NickERP.Inspection.Scanners.FS6000/           (Phase 7.1)
+│   ├── NickERP.Inspection.Scanners.ASE/              (Phase 7.2)
 │   ├── NickERP.Inspection.ExternalSystems.Abstractions/
-│   ├── NickERP.Inspection.ExternalSystems.IcumsGh/   (Phase 1)
+│   ├── NickERP.Inspection.ExternalSystems.IcumsGh/   (Phase 7.1)
 │   ├── NickERP.Inspection.Authorities.Abstractions/
-│   ├── NickERP.Inspection.Authorities.CustomsGh/     (Phase 1)
-│   └── NickERP.Inspection.Edge/                      (Phase 6, later)
+│   ├── NickERP.Inspection.Authorities.CustomsGh/     (Phase 7.1)
+│   └── NickERP.Inspection.Edge/                      (Phase 7.6, later)
 ├── tests/
 │   ├── NickERP.Inspection.Core.Tests/
 │   ├── NickERP.Inspection.Application.Tests/
@@ -469,13 +469,13 @@ Point-in-time copies into v2 new files with rename. **No shared references.**
 
 | # | Question | When to settle |
 |---|---|---|
-| Q1 | **Conflict resolution on edge-node sync** — when the same case is touched offline at the edge and online at central, who wins? Last-writer? Field-level merge? Designed before Phase 6 starts. | Phase 5 |
-| Q2 | **Station assignment dynamics** — is Device-to-Station a permanent binding or can it rotate mid-day? Affects historical queries ("what scanned this case"). | Phase 2 |
-| Q3 | **Dual-review enforcement** — do high-value cases require two analysts? Orthogonal feature; schema supports it, UI work deferred. | Phase 3+ |
-| Q4 | **Post-hoc outcome capture** — how does customs seizure/clearance feedback flow back into v2 for ML labels? Probably a new adapter or a manual entry tool. | Phase 4 |
-| Q5 | **Rate limiting / throttling per ExternalSystemInstance** — some authorities will have strict QPS. Where does the token bucket live? | Phase 1 (before first real external call) |
+| Q1 | **Conflict resolution on edge-node sync** — when the same case is touched offline at the edge and online at central, who wins? Last-writer? Field-level merge? Designed before Phase 7.6 starts. | Phase 7.5 |
+| Q2 | **Station assignment dynamics** — is Device-to-Station a permanent binding or can it rotate mid-day? Affects historical queries ("what scanned this case"). | Phase 7.2 |
+| Q3 | **Dual-review enforcement** — do high-value cases require two analysts? Orthogonal feature; schema supports it, UI work deferred. | Phase 7.3+ |
+| Q4 | **Post-hoc outcome capture** — how does customs seizure/clearance feedback flow back into v2 for ML labels? Probably a new adapter or a manual entry tool. | Phase 7.4 |
+| Q5 | **Rate limiting / throttling per ExternalSystemInstance** — some authorities will have strict QPS. Where does the token bucket live? | Phase 7.1 (before first real external call) |
 | Q6 | **Data residency** — if a future tenant is in another country, does their data need to live in a separate cluster? | Before 2nd tenant |
-| Q7 | **Operator identity at the scanner** — does the FS6000 know who is operating it, or does v2 have to infer from Station assignment + time? | Phase 1 |
+| Q7 | **Operator identity at the scanner** — does the FS6000 know who is operating it, or does v2 have to infer from Station assignment + time? | Phase 7.1 |
 
 ---
 
@@ -485,7 +485,7 @@ Point-in-time copies into v2 new files with rename. **No shared references.**
   - [`../README.md`](../README.md) — entry point.
   - [`MIGRATION-FROM-V1.md`](MIGRATION-FROM-V1.md) — cutover plan.
 - **v1 repo (`C:\Shared\NSCIM_PRODUCTION\`) — sibling, not parent:**
-  - `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` — Phase 6 entry points back here.
+  - `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` — Phase 7 entry points back here.
   - `C:\Shared\NSCIM_PRODUCTION\PLATFORM.md` — shared platform contracts (what we consume).
   - `C:\Shared\NSCIM_PRODUCTION\CHANGELOG.md` — v1 history; provenance for ported logic.
 - **External plan files:**

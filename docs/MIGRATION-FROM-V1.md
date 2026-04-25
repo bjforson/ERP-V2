@@ -1,6 +1,6 @@
 # Migrating from NSCIM v1 to NickERP.Inspection v2
 
-> **Status:** stub. Grows one section per parallel-run concern as Phase 5 approaches.
+> **Status:** stub. Grows one section per parallel-run concern as Phase 7.5 approaches.
 > **Partner doc:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ---
@@ -20,19 +20,19 @@ This file exists from day 1 so migration is never "the thing we start thinking a
 
 ### Scanner dual-reporting
 
-(To be detailed during Phase 5.)
+(To be detailed during Phase 7.5.)
 
 Scanners during cutover may report scans to both v1 and v2 so we can compare pipelines. Each raw artifact carries a globally-unique source hash; v2's `Scan.idempotency_key` uses it; v1 continues its own path. Neither pipeline is aware of the other.
 
 ### External submission de-duplication
 
-(To be detailed during Phase 5.)
+(To be detailed during Phase 7.5.)
 
 Before v2 submits any verdict, it checks the **cutover register** — a table listing `(case_external_reference, external_system_instance, submitted_from_version, submitted_at)`. If v1 already submitted, v2 records locally but does not re-submit.
 
 ### In-flight case handoff
 
-(To be detailed during Phase 5.)
+(To be detailed during Phase 7.5.)
 
 At Location cutover moment T:
 
@@ -42,13 +42,13 @@ At Location cutover moment T:
 
 ### UI deep-link forwarding
 
-(To be detailed during Phase 5.)
+(To be detailed during Phase 7.5.)
 
 v1 URLs like `/container/{n}/details` map onto v2 URLs like `/cases/by-subject/{n}`. A small HTTP forwarder at the edge preserves user bookmarks, WhatsApp links, and emailed PDFs for a 90-day window.
 
 ### Reference data migration order
 
-(To be detailed during Phase 5.)
+(To be detailed during Phase 7.5.)
 
 Migrate in this order to respect foreign-key constraints:
 
@@ -73,6 +73,6 @@ Migrate in this order to respect foreign-key constraints:
 
 ---
 
-## Cutover checklist (grown during Phase 5)
+## Cutover checklist (grown during Phase 7.5)
 
-A living checklist per Location. Filled in as we approach Phase 5.
+A living checklist per Location. Filled in as we approach Phase 7.5.
