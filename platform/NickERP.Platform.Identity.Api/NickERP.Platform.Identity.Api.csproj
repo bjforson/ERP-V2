@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Platform.Identity.Api</RootNamespace>
+    <AssemblyName>NickERP.Platform.Identity.Api</AssemblyName>
+    <Description>NICKSCAN ERP SOLUTION — Platform Identity Admin API. Minimal-API endpoints for managing users, app scopes, scope grants, and service-token identities. Wired by hosts via `MapNickErpIdentityAdmin()`. Every endpoint gated by the `Identity.Admin` scope.</Description>
+    <Version>1.0.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pin EF Core to the version the Database project carries (10.0.7),
+         silencing MSB3277 conflicts between the SDK-bundled 10.0.4 and the
+         transitive 10.0.7 from the Database project ref. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+    <ProjectReference Include="..\NickERP.Platform.Identity.Database\NickERP.Platform.Identity.Database.csproj" />
+  </ItemGroup>
+
+</Project>

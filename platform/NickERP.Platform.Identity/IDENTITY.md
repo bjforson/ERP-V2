@@ -1,88 +1,304 @@
 # NickERP.Platform.Identity
 
-> Status: scaffolded (A.2.1, A.2.2). Auth middleware (A.2.4),
-> resolver (A.2.5), dev bypass (A.2.6), service tokens (A.2.7),
-> admin REST API (A.2.8), and demo app (A.2.9) are all open.
->
-> See `ROADMAP.md §A.2` for the task list.
+> Status (2026-04-25): A.2.1 – A.2.8 shipped. A.2.9 demo app at
+> `platform/demos/identity/` is the remaining open item. ROADMAP §A.2.
+
+The single contract every NickERP service uses to answer
+**"who is this caller, and what may they do?"**. Owns canonical user
+records, app-scope assignments, Cloudflare Access JWT validation,
+service-token authentication, and the admin REST API for managing
+all of the above.
 
 ---
 
-## What this layer does
+## Layer split — three projects
 
-Owns the canonical identity of every actor in the suite — humans and
-service callers alike — and exposes one resolver every NickERP service
-consumes:
+| Project | What it ships | Reference |
+|---|---|---|
+| `NickERP.Platform.Identity` | Auth scheme + JWT validator + claim contract — no DB knowledge | `AddNickErpIdentity()` |
+| `NickERP.Platform.Identity.Database` | EF Core `IdentityDbContext`, migrations, `DbIdentityResolver` (the real `IIdentityResolver` impl) | `AddNickErpIdentityCore()` |
+| `NickERP.Platform.Identity.Api` | Minimal-API admin endpoints under `/api/identity/...` | `MapNickErpIdentityAdmin()` |
+
+Hosts compose them based on need:
 
 ```csharp
-public interface IIdentityResolver
-{
-    Task<ResolvedIdentity?> ResolveAsync(HttpContext ctx, CancellationToken ct = default);
-}
+// A NickERP service that just needs to authenticate callers and read scopes:
+builder.Services
+    .AddNickErpIdentity(builder.Configuration, builder.Environment)  // auth scheme
+    .Services
+    .AddNickErpIdentityCore(builder.Configuration);                  // DbContext + DbIdentityResolver
+
+// The dedicated identity-admin service additionally maps the admin API:
+app.MapNickErpIdentityAdmin();   // /api/identity/users, /scopes, /service-tokens
 ```
 
-`ResolveAsync` reads either:
-- `CF-Access-Jwt-Assertion` header → human user (resolves to `IdentityUser`),
-- `CF-Access-Client-Id` + `CF-Access-Client-Secret` headers → service caller
-  (resolves to `ServiceTokenIdentity`),
-- in `Development` only, an `X-Dev-User: someone@nickscan.com` header → fake
-  human user for local work.
+A consumer can swap the resolver impl (e.g. an HTTP-client resolver
+that calls a remote identity service) without re-registering the auth
+scheme — that's why `Identity` and `Identity.Database` are separate.
 
-It returns a `ResolvedIdentity` with the canonical id, email/display name,
-and the active scope set. App code never parses the JWT itself.
+---
+
+## Header contract
+
+Every NickERP service trusts these on inbound requests; the auth
+handler resolves them in this order on every call:
+
+| Header | Source | Resolution path |
+|---|---|---|
+| `X-Dev-User: someone@nickscan.com` | Local dev only | Looked up by email in `identity.users`. **Throws at startup** if `DevBypass.Enabled=true` outside the `Development` environment — see `IdentityServiceCollectionExtensions`. |
+| `Cf-Access-Jwt-Assertion: <jwt>` | Cloudflare Access edge | Validated against CF's JWKS (`https://{TeamDomain}.cloudflareaccess.com/cdn-cgi/access/certs`). On success, `sub` is checked against `service_tokens.token_client_id` first; if no service-token match, `email` claim is looked up in `identity.users`. |
+| `Authorization: Bearer <jwt>` | Local testing fallback | Same JWT validation as the CF header. Disabled by setting `AcceptAuthorizationHeaderFallback: false`. |
+
+If none resolve cleanly, the auth handler returns
+`AuthenticateResult.NoResult()` — apps see an unauthenticated
+principal and (with `[Authorize]`) return `401`.
+
+---
 
 ## Domain model
 
-Four entities:
-
 | Entity | Role |
 |---|---|
-| `IdentityUser` | One row per real human. Email is the natural key matched against the JWT claim. Soft-delete via `IsActive=false`. |
-| `AppScope` | A named permission registered by an app at install time, e.g. `Finance.PettyCash.Approver`. |
-| `UserScope` | Link table grant. Time-boundable, revocable, never deleted (audit). |
-| `ServiceTokenIdentity` (+ `ServiceTokenScope`) | Non-human caller. Cloudflare Access service token client id is the natural key. Has its own scope set; never collapses into a user. |
+| `IdentityUser` | One row per real human. Email is the natural key. Soft-delete via `IsActive=false`. Auto-provisioned on first valid CF JWT for an unknown email. |
+| `AppScope` | A named permission registered at app install time, e.g. `Finance.PettyCash.Approver`. Code is dot-separated PascalCase — enforced by the admin API. |
+| `UserScope` | Link-table grant. Time-boundable (`ExpiresAt`), revocable (`RevokedAt` + `RevokedByUserId`), never deleted. The resolver excludes revoked / expired rows from the active set. |
+| `ServiceTokenIdentity` (+ `ServiceTokenScope`) | Non-human caller (CF Access service token). `token_client_id` is the natural key. Has its own scope set; never collapses into a user. |
+
+Schema: `identity` inside DB `nickerp_platform`. Migration history
+table is `identity.__ef_migrations_history`. First migration is
+`20260425205153_Initial_AddIdentitySchema`.
+
+---
+
+## Claims emitted by the auth handler
+
+`NickErpAuthenticationHandler` translates the resolved identity into
+ASP.NET Core claims. Use the constants in `Auth/NickErpClaims.cs`
+when reading them:
+
+| Claim | Value |
+|---|---|
+| `NickErpClaims.Id` (+ `ClaimTypes.NameIdentifier`) | Canonical id — `IdentityUser.Id` for humans, `ServiceTokenIdentity.Id` for service tokens. |
+| `NickErpClaims.DisplayName` (+ `ClaimTypes.Name`) | Friendly label for UIs and audit. Falls back to email for users with no `DisplayName`. |
+| `NickErpClaims.TenantId` | The tenant scope. |
+| `NickErpClaims.IsServiceToken` | `"true"` / `"false"`. |
+| `NickErpClaims.Email` (+ `ClaimTypes.Email`) | Lowercased email. Absent for service tokens. |
+| `NickErpClaims.ExternalSubject` | The CF JWT `sub` claim — preserved for audit. Absent for the dev-bypass path. |
+| `NickErpClaims.Scope` (one per scope) | The set of `AppScope.Code` values currently granted. |
+| `ClaimTypes.Role` (one per scope) | Each scope is mirrored as a Role so `[Authorize(Roles="Finance.PettyCash.Approver")]` works without custom policy plumbing. |
+
+---
+
+## Authorization patterns
+
+```csharp
+// Single scope:
+[Authorize(Roles = "Finance.PettyCash.Approver")]
+
+// Any-of:
+[Authorize(Roles = "HR.Admin,HR.Manager")]
+
+// Inside a handler (when you need branching, not just gate):
+public async Task<IResult> SomeEndpoint(HttpContext ctx, IIdentityResolver resolver)
+{
+    var who = await resolver.ResolveAsync(ctx);
+    if (who is null) return Results.Unauthorized();
+    if (!who.HasScope("Finance.PettyCash.Approver")) return Results.Forbid();
+    if (who.IsServiceToken) return Results.Forbid(); // humans only here
+    return Results.Ok($"Hello {who.DisplayName}");
+}
+```
+
+App code never parses the JWT itself, never calls a database for user
+lookup, never decides what email maps to what scope. The auth scheme +
+resolver own all of it.
+
+---
+
+## Admin REST API (`MapNickErpIdentityAdmin`)
+
+Mounted under `/api/identity/`. Every endpoint requires the
+`Identity.Admin` scope. All requests are paged where the response set
+could be large; defaults are page 1, page size 25, max page size 200.
+
+### Users
+
+| Verb | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/users` | — | `PagedResult<UserDto>` (filters: `q`, `tenantId`, `page`, `pageSize`) |
+| `GET` | `/users/{id}` | — | `UserDto` or 404 |
+| `POST` | `/users` | `CreateUserRequest` (email, displayName, tenantId, initialScopes) | `201 UserDto`, or `409` if email already taken in the tenant |
+| `PATCH` | `/users/{id}/scopes` | `UpdateUserScopesRequest` (grant[], revoke[], expiresAt, notes) | `200 UserDto` (revokes apply before grants so revoke+regrant in one call works) |
+| `DELETE` | `/users/{id}` | — | `204` (sets `IsActive=false`; idempotent) |
+
+### App scopes
+
+| Verb | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/scopes` | — | `AppScopeDto[]` (filters: `tenantId`, `app`) |
+| `POST` | `/scopes` | `CreateAppScopeRequest` (code regex-validated to PascalCase + dots) | `201 AppScopeDto`, or `409` |
+| `DELETE` | `/scopes/{id}` | — | `204` (sets `IsActive=false`; existing UserScope grants survive but resolver excludes them) |
+
+### Service tokens
+
+| Verb | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/service-tokens` | — | `ServiceTokenDto[]` (filters: `tenantId`) |
+| `POST` | `/service-tokens` | `CreateServiceTokenRequest` (tokenClientId, displayName, purpose, expiresAt, initialScopes) | `201 ServiceTokenDto`, or `409` |
+| `PATCH` | `/service-tokens/{id}/scopes` | `UpdateServiceTokenScopesRequest` (grant[], revoke[], expiresAt) | `200 ServiceTokenDto` |
+| `DELETE` | `/service-tokens/{id}` | — | `204` (sets `IsActive=false`; idempotent) |
+
+### Bootstrapping the first admin
+
+Chicken-and-egg: the API requires `Identity.Admin` scope to grant
+scopes, including `Identity.Admin`. Two supported bootstrap paths:
+
+1. **Dev environment** — set `NickErp:Identity:CfAccess:DevBypass:Enabled=true`
+   in `appsettings.Development.json`, hit any admin endpoint with the
+   `X-Dev-User` header, manually `INSERT` a `UserScope` row granting
+   `Identity.Admin` to the resolved user. Subsequent grants happen
+   through the API.
+2. **Production** — once via DBA: `INSERT` `Identity.Admin` for the
+   first human in `identity.user_scopes`. Document in your runbook;
+   never automate.
+
+The DI extension explicitly **throws at startup** if `DevBypass.Enabled`
+is true outside the `Development` environment, so path 1 cannot leak
+into prod.
+
+---
+
+## Migration patterns from legacy user stores (Track C.2)
+
+When wiring an existing v1 app (NickHR, NSCIM) to consume this layer,
+the path is:
+
+1. **Lookup** — replace the v1 user-by-email query with
+   `IIdentityResolver.ResolveAsync(HttpContext)`. Carry on using the
+   v1 user record (Employees, NSCIM Users, etc.) keyed by the
+   resolved email for *profile* data only.
+2. **Authorisation** — replace v1 role checks with scope checks
+   against `ResolvedIdentity.HasScope`. Translate v1 roles to v2
+   scopes via a one-time SQL backfill on `user_scopes`.
+3. **Provisioning** — let the auto-provision path create the
+   canonical user on first sign-in. Backfill historical users
+   ahead of cutover via a one-off script that reads the v1 store
+   and INSERTs into `identity.users`.
+4. **Soft-delete** — when a v1 app marks an employee inactive,
+   PATCH the canonical user via the admin API. Don't update
+   `identity.users.IsActive` directly from app code.
+
+Detailed runbook lives in Track C.2 entries of `ROADMAP.md` (one per
+v1 app cut over).
+
+---
 
 ## Open contract questions
 
-These get answered as A.2.4 onwards lands:
+- [x] **JWKS caching** — answered in `Auth/CfJwtValidator.cs`. Uses
+      `Microsoft.IdentityModel.Protocols.ConfigurationManager`
+      which auto-refreshes on TTL or unknown-kid. No bespoke logic.
+- [x] **First-login auto-provision** — answered in
+      `Database/Services/DbIdentityResolver.cs`. Unknown email +
+      valid JWT creates a new `IdentityUser` with **zero scopes** and
+      `IsActive=true`. Admin grants scopes after.
+- [x] **Service-token vs user precedence** — answered: JWT `sub` is
+      checked against `service_tokens.token_client_id` first; if no
+      match, `email` claim is looked up against `users`.
+      Cf-Access never issues a JWT where a single `sub` matches both,
+      so the precedence is unambiguous.
+- [ ] **Multi-email aliasing** — does
+      `angela@nickscan.com` and `angela.ayanful@nickscan.com` ever
+      resolve to the same user? Deferred until a real case forces it.
+- [ ] **Tenant resolution from JWT** — Cloudflare Access doesn't
+      carry tenant. Single-tenant for v1; revisit when Phase A.3
+      tenant bootstrap lands.
+- [ ] **Audit trail of admin API calls** — currently nothing. Phase
+      A.5 (Audit & Events) will plug in via outbox; until then,
+      admin actions are visible only via DB write history.
 
-- [ ] JWKS caching policy — refresh interval and behaviour during a CF outage.
-- [ ] First-login auto-provisioning — does an unknown email auto-create an
-      `IdentityUser` with no scopes, or require an admin to invite first?
-      (Leaning: auto-create + zero scopes; admin grants scopes after.)
-- [ ] Multi-email aliasing — does `angela@nickscan.com` and
-      `angela.ayanful@nickscan.com` ever resolve to the same user? Defer
-      until a real case forces it.
-- [ ] Tenant resolution from JWT — Cloudflare Access doesn't carry tenant.
-      Need a strategy for multi-tenant deployments. (Phase 5 problem;
-      single-tenant for v1.)
+---
 
-## Consumers
+## Module layout
 
-Apps wire this in via `services.AddNickErpIdentity()` (extension method
-shipped in A.2.5). Once wired, they call:
+```
+platform/NickERP.Platform.Identity/
+├── Auth/
+│   ├── CfAccessAuthenticationOptions.cs   — config + Validate()
+│   ├── CfJwtValidator.cs                  — JWT vs CF JWKS
+│   ├── NickErpAuthenticationHandler.cs    — ASP.NET Core auth scheme
+│   └── NickErpClaims.cs                   — claim-name constants
+├── Entities/
+│   ├── IdentityUser.cs
+│   ├── AppScope.cs
+│   ├── UserScope.cs
+│   └── ServiceTokenIdentity.cs            (+ ServiceTokenScope)
+├── Services/
+│   ├── IIdentityResolver.cs               — the contract apps consume
+│   └── ResolvedIdentity.cs                — record returned by resolver
+├── IdentityServiceCollectionExtensions.cs — AddNickErpIdentity()
+├── IDENTITY.md                            — this file
+└── NickERP.Platform.Identity.csproj
 
-```csharp
-var resolved = await resolver.ResolveAsync(HttpContext);
-if (resolved is null) return Results.Unauthorized();
-if (!resolved.HasScope("Finance.PettyCash.Approver")) return Results.Forbid();
+platform/NickERP.Platform.Identity.Database/
+├── Migrations/
+│   ├── 20260425205153_Initial_AddIdentitySchema.cs
+│   ├── 20260425205153_Initial_AddIdentitySchema.Designer.cs
+│   └── IdentityDbContextModelSnapshot.cs
+├── Services/
+│   └── DbIdentityResolver.cs              — IIdentityResolver impl
+├── IdentityDbContext.cs
+├── IdentityDatabaseServiceCollectionExtensions.cs — AddNickErpIdentityCore()
+└── NickERP.Platform.Identity.Database.csproj
+
+platform/NickERP.Platform.Identity.Api/
+├── Models/
+│   └── Dtos.cs                            — request + response DTOs
+├── IdentityAdminEndpoints.cs              — MapNickErpIdentityAdmin()
+└── NickERP.Platform.Identity.Api.csproj
 ```
 
-No JWT parsing. No PBKDF2. No `[Authorize(Roles=...)]`. The resolver
-owns it all.
+---
+
+## What's still open in A.2
+
+- **A.2.9 Demo app** at `platform/demos/identity/` — Blazor Server
+  app behind CF Access that exercises the full stack:
+  user-creates-scope-creates-user-creates-grant-then-resolves
+  round-trip. **Acceptance gate** for the layer per `ROADMAP §A.2`.
+- **First-admin bootstrap script** — a one-line `dotnet run` tool
+  that inserts the `Identity.Admin` grant for a given email so prod
+  setup doesn't require DBA-level SQL.
+- **OpenAPI spec generation** — `MapNickErpIdentityAdmin` exposes
+  endpoints with route metadata but no Swagger doc shipped yet.
+  Add an opinionated `MapNickErpIdentityAdminSwagger()` extension
+  next to it.
+
+None of these block consumers from wiring up auth + scope checks
+today.
+
+---
 
 ## Out of scope
 
-- Password storage. We don't have passwords; CF Access does email OTP
-  (today) or SSO/SAML (later). The platform never sees a password.
-- Group/role hierarchy beyond a flat scope list. If we need
-  hierarchies, build the resolver that flattens them on read; don't put
-  hierarchy in the schema.
-- Per-record authorisation. That's app-level; this layer says "Angela
-  has scope X", not "Angela can read row Y".
+- **Password storage.** We don't have passwords; CF Access does
+  email OTP / SAML / OIDC. The platform never sees a password.
+- **Group / role hierarchy beyond a flat scope list.** If a real
+  case demands it, build the resolver that flattens hierarchies on
+  read. Don't put hierarchy in the schema.
+- **Per-record authorisation.** App-level concern. This layer says
+  "Angela has scope X". Whether Angela can read row Y is the app's
+  call.
+- **Identity provider federation (Google / M365 / SAML).** Cloudflare
+  Access already handles this — `Identity:CfAccess:TeamDomain`
+  points at a CF team that can be configured for any IdP.
+
+---
 
 ## Related docs
 
-- `ROADMAP.md §A.2` — task list and acceptance criteria
-- `platform/NickERP.Portal/SSO.md` — the original Option-A-now,
-  Option-D-later decision that this layer enables
+- `ROADMAP.md` §A.2 — task list and acceptance criteria
+- `ROADMAP.md` §C.2 — v1 retrofit playbook (when each legacy app
+  cuts over to consume `IIdentityResolver`)
+- v1 repo `platform/NickERP.Portal/SSO.md` — the original
+  Option-A-now / Option-D-later decision this layer enables.
