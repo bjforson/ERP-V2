@@ -25,14 +25,22 @@
 </section>
 
 <section class="portal-section">
-    <h2>Apps</h2>
+    <h2>v2 modules</h2>
     <div class="portal-app-grid">
-        <AppCard Title="NickHR" Description="People, payroll, attendance" Href="https://hr.nickscan.net" Color="#7c3aed" Initial="H" />
-        <AppCard Title="NSCIM (v1)" Description="Customs cargo scan portal" Href="https://scan.nickscan.net" Color="#06b6d4" Initial="S" />
-        <AppCard Title="Inspection v2" Description="Federated inspection (in build)" Href="http://localhost:5410" Color="#0ea5e9" Initial="I" />
-        <AppCard Title="Petty Cash" Description="Track B.3.1 — pathfinder" Href="#" Color="#16a34a" Initial="F" Disabled="true" />
+        <AppCard Title="Inspection v2" Description="Federated inspection — admin skeleton live" Href="http://localhost:5410" Color="#0ea5e9" Initial="I" />
+        <AppCard Title="Petty Cash" Description="NickFinance pathfinder (B.3.1)" Href="#" Color="#16a34a" Initial="F" Disabled="true" />
+        <AppCard Title="HR v2" Description="Adapted from v1, not rebuilt — link lands when adapter shim ships" Href="#" Color="#7c3aed" Initial="H" Disabled="true" />
+        <AppCard Title="Comms v2" Description="Adapted from v1, not rebuilt" Href="#" Color="#06b6d4" Initial="C" Disabled="true" />
+    </div>
+</section>
+
+<section class="portal-section">
+    <h2>Platform tools</h2>
+    <div class="portal-app-grid">
+        <AppCard Title="Tenants" Description="Tenancy admin" Href="/tenants" Color="var(--nickerp-color-primary)" Initial="T" />
         <AppCard Title="Audit log" Description="Every event across the suite" Href="/audit" Color="#dc2626" Initial="A" />
         <AppCard Title="Health" Description="Service status rollup" Href="/health" Color="#475569" Initial="?" />
+        <AppCard Title="Seq" Description="Centralized logs + traces" Href="http://localhost:5341" Color="#0f172a" Initial="S" />
     </div>
 </section>
 

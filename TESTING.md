@@ -95,8 +95,9 @@ dotnet run
 
 ### Portal v2 (http://localhost:5400)
 
-1. **Land on home.** You should see "Welcome back, Local dev". Four stat tiles: Tenants / Users / App scopes / Audit events. Apps grid below with NickHR, NSCIM v1, Inspection v2, Petty Cash (disabled), Audit log, Health.
-2. **Click any stat tile or App switcher** in the top-right — they're meant to navigate (some go to other apps via hostname, those won't load locally; that's expected).
+1. **Land on home.** You should see "Welcome back, Local dev". Four stat tiles: Tenants / Users / App scopes / Audit events. Two grids: **v2 modules** (Inspection v2, plus disabled placeholders for Petty Cash / HR v2 / Comms v2) and **Platform tools** (Tenants, Audit log, Health, Seq).
+2. **Click stat tiles + module cards** — they navigate inside v2 (or to Seq). The v2 chrome **never links to v1 apps** (`hr.nickscan.net`, `scan.nickscan.net`); v1 stays untouched per the v1/v2 separation rule.
+3. **App switcher** in the TopNav (top-right grid icon) — should show only Portal + Inspection v2 today; more land as Track B modules ship.
 3. **/tenants** — list of tenants. Try adding one (Code: `customer-2`, Name: `Test customer`, defaults for the rest). The new row shows up. Behind the scenes, a `nickerp.tenancy.tenant_created` `DomainEvent` is emitted.
 4. **/audit** — verify the event you just emitted shows up at the top of the list. Filter by event-type prefix (`nickerp.tenancy`) to narrow.
 5. **/health** — should show 4 OK pills (identity, tenancy, audit DB schemas + Seq).

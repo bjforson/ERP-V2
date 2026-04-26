@@ -50,13 +50,16 @@
     /// <summary>One sub-app entry in the switcher.</summary>
     public sealed record AppEntry(string Code, string DisplayName, string Href, string Initial, string Color);
 
+    /// <summary>
+    /// Default v2-only app list. v1 apps (NSCIM, NickHR, NickComms running on
+    /// nickscan.net) are NOT listed here — the v1/v2 separation rule keeps the
+    /// v2 chrome pointing only at v2 destinations. When v1 apps need to surface
+    /// (e.g. during the parallel-run window), the host overrides this list
+    /// explicitly.
+    /// </summary>
     private static readonly IReadOnlyList<AppEntry> DefaultApps = new AppEntry[]
     {
-        new("portal",            "Portal",          "https://erp.nickscan.net",     "P", "#1d4ed8"),
-        new("nscim",             "NSCIM (v1)",      "https://scan.nickscan.net",    "S", "#06b6d4"),
-        new("nickhr",            "NickHR",          "https://hr.nickscan.net",      "H", "#7c3aed"),
-        new("inspection-v2",     "Inspection v2",   "https://inspection.nickscan.net", "I", "#0ea5e9"),
-        new("finance.petty-cash","Petty Cash",      "https://finance.nickscan.net/petty-cash", "F", "#16a34a"),
-        new("platform.admin",    "Platform Admin",  "https://admin.nickscan.net",   "A", "#475569"),
+        new("portal",        "Portal",        "http://localhost:5400", "P", "#1d4ed8"),
+        new("inspection-v2", "Inspection v2", "http://localhost:5410", "I", "#0ea5e9"),
     };
 }
