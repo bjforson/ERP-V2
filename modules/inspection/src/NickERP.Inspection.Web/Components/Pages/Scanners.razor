@@ -1,0 +1,129 @@
+@page "/scanners"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Scanners.Abstractions
+@using NickERP.Platform.Plugins
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject IPluginRegistry Plugins
+@inject ITenantContext Tenant
+
+<PageTitle>Scanners — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Scanner devices</h1>
+        <p class="inspection-page-subtitle">Pick a registered scanner plugin, name your unit, point it at a location.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-card">
+        <h2 class="inspection-card-title">Register scanner</h2>
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="add-scanner" class="inspection-form">
+            <div class="inspection-form-row">
+                <label>
+                    <span>Plugin</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.TypeCode">
+                        <option value="">— pick a plugin —</option>
+                        @foreach (var p in _scannerPlugins)
+                        {
+                            <option value="@p.TypeCode">@p.TypeCode — @p.Manifest.DisplayName (v@(p.Manifest.Version))</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label>
+                    <span>Location</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.LocationId">
+                        <option value="">— pick a location —</option>
+                        @foreach (var loc in _locations)
+                        {
+                            <option value="@loc.Id">@loc.Code — @loc.Name</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label><span>Display name</span><InputText class="inspection-input" @bind-Value="_form.DisplayName" placeholder="FS6000 #42" /></label>
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-button inspection-button-primary">Register</button>
+                @if (!string.IsNullOrEmpty(_message)) { <span class="inspection-form-message">@_message</span> }
+            </div>
+        </EditForm>
+    </div>
+
+    @if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0) { <p class="inspection-empty">No scanners registered yet.</p> }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>Plugin</th><th>Display name</th><th>Location</th><th>Active</th><th>Created</th></tr></thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td><code>@r.TypeCode</code></td>
+                        <td>@r.DisplayName</td>
+                        <td>@(_locationsById.GetValueOrDefault(r.LocationId)?.Code ?? "?")</td>
+                        <td>@(r.IsActive ? "✅" : "❌")</td>
+                        <td>@r.CreatedAt.ToString("yyyy-MM-dd")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<ScannerDeviceInstance>? _rows;
+    private List<Location> _locations = new();
+    private Dictionary<Guid, Location> _locationsById = new();
+    private List<RegisteredPlugin> _scannerPlugins = new();
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm] private ScannerForm _form { get; set; } = null!;
+    protected override void OnParametersSet() => _form ??= new ScannerForm();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _locations = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
+        _locationsById = _locations.ToDictionary(l => l.Id);
+        _scannerPlugins = Plugins.ForContract(typeof(IScannerAdapter)).ToList();
+        await Reload();
+    }
+
+    private async Task Reload() => _rows = await Db.ScannerDeviceInstances.AsNoTracking()
+        .OrderBy(s => s.LocationId).ThenBy(s => s.DisplayName).ToListAsync();
+
+    private async Task CreateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.TypeCode) || _form.LocationId == Guid.Empty || string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _message = "Plugin, location, and display name are required."; return;
+        }
+        if (!Tenant.IsResolved) Tenant.SetTenant(1);
+
+        Db.ScannerDeviceInstances.Add(new ScannerDeviceInstance
+        {
+            TypeCode = _form.TypeCode,
+            LocationId = _form.LocationId,
+            DisplayName = _form.DisplayName.Trim(),
+            ConfigJson = "{}",
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = Tenant.TenantId
+        });
+        await Db.SaveChangesAsync();
+        _form = new ScannerForm();
+        _message = "Registered.";
+        await Reload();
+    }
+
+    public sealed class ScannerForm
+    {
+        public string TypeCode { get; set; } = string.Empty;
+        public Guid LocationId { get; set; }
+        public string DisplayName { get; set; } = string.Empty;
+    }
+}

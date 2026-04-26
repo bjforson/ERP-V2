@@ -1,0 +1,42 @@
+@page "/plugins"
+@attribute [Authorize]
+@using NickERP.Platform.Plugins
+@inject IPluginRegistry Registry
+
+<PageTitle>Plugins — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Registered plugins</h1>
+        <p class="inspection-page-subtitle">Discovered from <code>{ContentRoot}/plugins/</code> at startup. Drop new adapters in and restart to register.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    @if (Registry.All.Count == 0)
+    {
+        <p class="inspection-empty">No plugins loaded. Add a <code>*.dll</code> + <code>plugin.json</code> pair to the plugins folder and restart.</p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>Type code</th><th>Display name</th><th>Version</th><th>Contracts</th></tr></thead>
+            <tbody>
+                @foreach (var p in Registry.All)
+                {
+                    <tr>
+                        <td><code>@p.TypeCode</code></td>
+                        <td>@p.Manifest.DisplayName</td>
+                        <td><code>@p.Manifest.Version</code></td>
+                        <td>
+                            @foreach (var c in p.ContractTypes.Where(t => t.IsInterface))
+                            {
+                                <span class="inspection-pill"><code>@c.Name</code></span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>

@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.ExternalSystems.Abstractions</RootNamespace>
+    <AssemblyName>NickERP.Inspection.ExternalSystems.Abstractions</AssemblyName>
+    <Description>NickERP Inspection v2 — IExternalSystemAdapter contract. Concrete external-system adapters (ICUMS-GH, GRA-eVAT, etc.) reference this + NickERP.Platform.Plugins.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,111 @@
+@page "/stations"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+
+<PageTitle>Stations — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Stations</h1>
+        <p class="inspection-page-subtitle">Lanes inside a location. Scanners bind to stations.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-card">
+        <h2 class="inspection-card-title">Add station</h2>
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="add-station" class="inspection-form">
+            <div class="inspection-form-row">
+                <label>
+                    <span>Location</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.LocationId">
+                        <option value="">— pick a location —</option>
+                        @foreach (var loc in _locations)
+                        {
+                            <option value="@loc.Id">@loc.Code — @loc.Name</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label><span>Code</span><InputText class="inspection-input" @bind-Value="_form.Code" placeholder="lane-1" /></label>
+                <label><span>Name</span><InputText class="inspection-input" @bind-Value="_form.Name" placeholder="Lane 1" /></label>
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-button inspection-button-primary">Create</button>
+                @if (!string.IsNullOrEmpty(_message)) { <span class="inspection-form-message">@_message</span> }
+            </div>
+        </EditForm>
+    </div>
+
+    @if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0) { <p class="inspection-empty">No stations yet — create one above (after adding at least one location).</p> }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>Location</th><th>Code</th><th>Name</th><th>Active</th><th>Created</th></tr></thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td>@(_locationsById.GetValueOrDefault(r.LocationId)?.Code ?? "?")</td>
+                        <td><code>@r.Code</code></td><td>@r.Name</td>
+                        <td>@(r.IsActive ? "✅" : "❌")</td><td>@r.CreatedAt.ToString("yyyy-MM-dd")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<Station>? _rows;
+    private List<Location> _locations = new();
+    private Dictionary<Guid, Location> _locationsById = new();
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm] private StationForm _form { get; set; } = null!;
+    protected override void OnParametersSet() => _form ??= new StationForm();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _locations = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
+        _locationsById = _locations.ToDictionary(l => l.Id);
+        await Reload();
+    }
+
+    private async Task Reload() => _rows = await Db.Stations.AsNoTracking().OrderBy(s => s.LocationId).ThenBy(s => s.Code).ToListAsync();
+
+    private async Task CreateAsync()
+    {
+        if (_form.LocationId == Guid.Empty || string.IsNullOrWhiteSpace(_form.Code) || string.IsNullOrWhiteSpace(_form.Name))
+        {
+            _message = "Location, Code, and Name are required."; return;
+        }
+        if (!Tenant.IsResolved) Tenant.SetTenant(1);
+
+        Db.Stations.Add(new Station
+        {
+            LocationId = _form.LocationId,
+            Code = _form.Code.Trim(),
+            Name = _form.Name.Trim(),
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = Tenant.TenantId
+        });
+        await Db.SaveChangesAsync();
+        _form = new StationForm();
+        _message = "Created.";
+        await Reload();
+    }
+
+    public sealed class StationForm
+    {
+        public Guid LocationId { get; set; }
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+    }
+}

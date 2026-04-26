@@ -1,0 +1,97 @@
+@page "/locations"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+
+<PageTitle>Locations — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Locations</h1>
+        <p class="inspection-page-subtitle">Physical inspection sites. Scanners and bindings live underneath.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-card">
+        <h2 class="inspection-card-title">Add location</h2>
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="add-location" class="inspection-form">
+            <div class="inspection-form-row">
+                <label><span>Code</span><InputText class="inspection-input" @bind-Value="_form.Code" placeholder="tema" /></label>
+                <label><span>Name</span><InputText class="inspection-input" @bind-Value="_form.Name" placeholder="Tema Port" /></label>
+                <label><span>Region</span><InputText class="inspection-input" @bind-Value="_form.Region" placeholder="Greater Accra" /></label>
+                <label><span>Time zone</span><InputText class="inspection-input" @bind-Value="_form.TimeZone" placeholder="Africa/Accra" /></label>
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-button inspection-button-primary">Create</button>
+                @if (!string.IsNullOrEmpty(_message)) { <span class="inspection-form-message">@_message</span> }
+            </div>
+        </EditForm>
+    </div>
+
+    @if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0) { <p class="inspection-empty">No locations yet — create the first one above.</p> }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>Code</th><th>Name</th><th>Region</th><th>TZ</th><th>Active</th><th>Created</th></tr></thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td><code>@r.Code</code></td><td>@r.Name</td><td>@r.Region</td><td>@r.TimeZone</td>
+                        <td>@(r.IsActive ? "✅" : "❌")</td><td>@r.CreatedAt.ToString("yyyy-MM-dd")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<Location>? _rows;
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm] private LocationForm _form { get; set; } = null!;
+    protected override void OnParametersSet() => _form ??= new LocationForm();
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload() => _rows = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
+
+    private async Task CreateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Code) || string.IsNullOrWhiteSpace(_form.Name))
+        {
+            _message = "Code and Name are required."; return;
+        }
+        if (!Tenant.IsResolved) Tenant.SetTenant(1);
+
+        Db.Locations.Add(new Location
+        {
+            Code = _form.Code.Trim(),
+            Name = _form.Name.Trim(),
+            Region = string.IsNullOrWhiteSpace(_form.Region) ? null : _form.Region.Trim(),
+            TimeZone = string.IsNullOrWhiteSpace(_form.TimeZone) ? "Africa/Accra" : _form.TimeZone.Trim(),
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = Tenant.TenantId
+        });
+        await Db.SaveChangesAsync();
+        _form = new LocationForm();
+        _message = "Created.";
+        await Reload();
+    }
+
+    public sealed class LocationForm
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Region { get; set; } = string.Empty;
+        public string TimeZone { get; set; } = "Africa/Accra";
+    }
+}

@@ -1,0 +1,121 @@
+@page "/external-systems"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.ExternalSystems.Abstractions
+@using NickERP.Platform.Plugins
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject IPluginRegistry Plugins
+@inject ITenantContext Tenant
+
+<PageTitle>External systems — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>External systems</h1>
+        <p class="inspection-page-subtitle">Authorities you fetch documents from and submit verdicts to (ICUMS, GRA, etc.).</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-card">
+        <h2 class="inspection-card-title">Register external system</h2>
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="add-external" class="inspection-form">
+            <div class="inspection-form-row">
+                <label>
+                    <span>Plugin</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.TypeCode">
+                        <option value="">— pick a plugin —</option>
+                        @foreach (var p in _externalPlugins)
+                        {
+                            <option value="@p.TypeCode">@p.TypeCode — @p.Manifest.DisplayName (v@(p.Manifest.Version))</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label><span>Display name</span><InputText class="inspection-input" @bind-Value="_form.DisplayName" placeholder="ICUMS Tema endpoint" /></label>
+                <label>
+                    <span>Scope</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.Scope">
+                        <option value="@ExternalSystemBindingScope.PerLocation">Per-location</option>
+                        <option value="@ExternalSystemBindingScope.Shared">Shared (national)</option>
+                    </InputSelect>
+                </label>
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-button inspection-button-primary">Register</button>
+                @if (!string.IsNullOrEmpty(_message)) { <span class="inspection-form-message">@_message</span> }
+            </div>
+        </EditForm>
+    </div>
+
+    @if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0) { <p class="inspection-empty">No external systems yet.</p> }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>Plugin</th><th>Display name</th><th>Scope</th><th>Active</th><th>Created</th></tr></thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td><code>@r.TypeCode</code></td>
+                        <td>@r.DisplayName</td>
+                        <td>@r.Scope</td>
+                        <td>@(r.IsActive ? "✅" : "❌")</td>
+                        <td>@r.CreatedAt.ToString("yyyy-MM-dd")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<ExternalSystemInstance>? _rows;
+    private List<RegisteredPlugin> _externalPlugins = new();
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm] private ExternalForm _form { get; set; } = null!;
+    protected override void OnParametersSet() => _form ??= new ExternalForm();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _externalPlugins = Plugins.ForContract(typeof(IExternalSystemAdapter)).ToList();
+        await Reload();
+    }
+
+    private async Task Reload() => _rows = await Db.ExternalSystemInstances.AsNoTracking().OrderBy(x => x.DisplayName).ToListAsync();
+
+    private async Task CreateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.TypeCode) || string.IsNullOrWhiteSpace(_form.DisplayName))
+        {
+            _message = "Plugin and display name are required."; return;
+        }
+        if (!Tenant.IsResolved) Tenant.SetTenant(1);
+
+        Db.ExternalSystemInstances.Add(new ExternalSystemInstance
+        {
+            TypeCode = _form.TypeCode,
+            DisplayName = _form.DisplayName.Trim(),
+            Scope = _form.Scope,
+            ConfigJson = "{}",
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = Tenant.TenantId
+        });
+        await Db.SaveChangesAsync();
+        _form = new ExternalForm();
+        _message = "Registered.";
+        await Reload();
+    }
+
+    public sealed class ExternalForm
+    {
+        public string TypeCode { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public ExternalSystemBindingScope Scope { get; set; } = ExternalSystemBindingScope.PerLocation;
+    }
+}

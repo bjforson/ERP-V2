@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.ExternalSystems.Mock</RootNamespace>
+    <AssemblyName>NickERP.Inspection.ExternalSystems.Mock</AssemblyName>
+    <Description>NickERP Inspection v2 — Mock IExternalSystemAdapter. Returns synthetic authority documents and accepts verdicts; useful for end-to-end testing of the case lifecycle without real ICUMS access.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.ExternalSystems.Abstractions\NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

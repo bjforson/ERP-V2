@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <RootNamespace>NickERP.Inspection.Web</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Web</AssemblyName>
+    <Description>NickERP Inspection v2 — admin Blazor Server app. Skeleton: tenant + location + station + scanner + external-system CRUD; lists registered plugins. Listens on port 5410.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Logging\NickERP.Platform.Logging.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Identity.Database\NickERP.Platform.Identity.Database.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Web.Shared\NickERP.Platform.Web.Shared.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.Scanners.Abstractions\NickERP.Inspection.Scanners.Abstractions.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.ExternalSystems.Abstractions\NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.Authorities.Abstractions\NickERP.Inspection.Authorities.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

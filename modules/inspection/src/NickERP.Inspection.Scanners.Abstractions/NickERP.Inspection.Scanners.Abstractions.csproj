@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Scanners.Abstractions</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Scanners.Abstractions</AssemblyName>
+    <Description>NickERP Inspection v2 — IScannerAdapter contract. Concrete scanner adapters (FS6000, ASE, Nuctech, etc.) reference this + NickERP.Platform.Plugins; they don't depend on the inspection module's runtime code.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

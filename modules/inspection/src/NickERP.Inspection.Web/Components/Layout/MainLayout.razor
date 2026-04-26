@@ -1,0 +1,24 @@
+@inherits LayoutComponentBase
+
+<TopNav AppName="Inspection v2" AppHomeHref="/" SearchEnabled="false" />
+
+<div class="inspection-shell">
+    <nav class="inspection-sidenav">
+        <NavLink href="/" Match="NavLinkMatch.All">Overview</NavLink>
+        <NavLink href="/locations">Locations</NavLink>
+        <NavLink href="/stations">Stations</NavLink>
+        <NavLink href="/scanners">Scanners</NavLink>
+        <NavLink href="/external-systems">External systems</NavLink>
+        <NavLink href="/plugins">Plugins</NavLink>
+    </nav>
+
+    <main class="inspection-main">
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>

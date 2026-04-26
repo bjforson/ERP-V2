@@ -1,0 +1,56 @@
+@page "/"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Database
+@using NickERP.Platform.Plugins
+@inject InspectionDbContext Db
+@inject IPluginRegistry Plugins
+
+<PageTitle>Inspection v2 — Overview</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Inspection — overview</h1>
+        <p class="inspection-page-subtitle">v2 admin skeleton. Locations, stations, scanners, external systems, registered plugins.</p>
+    </div>
+</header>
+
+<section class="inspection-stats">
+    <div class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-primary)">
+        <div class="inspection-stat-value">@_locationCount</div>
+        <div class="inspection-stat-label">Locations</div>
+    </div>
+    <div class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-accent)">
+        <div class="inspection-stat-value">@_stationCount</div>
+        <div class="inspection-stat-label">Stations</div>
+    </div>
+    <div class="inspection-stat-tile" style="border-top-color: #7c3aed">
+        <div class="inspection-stat-value">@_scannerCount</div>
+        <div class="inspection-stat-label">Scanner devices</div>
+    </div>
+    <div class="inspection-stat-tile" style="border-top-color: #16a34a">
+        <div class="inspection-stat-value">@_externalCount</div>
+        <div class="inspection-stat-label">External systems</div>
+    </div>
+    <div class="inspection-stat-tile" style="border-top-color: #dc2626">
+        <div class="inspection-stat-value">@_pluginCount</div>
+        <div class="inspection-stat-label">Plugins loaded</div>
+    </div>
+</section>
+
+@code {
+    private int _locationCount;
+    private int _stationCount;
+    private int _scannerCount;
+    private int _externalCount;
+    private int _pluginCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _locationCount = await Db.Locations.CountAsync(); } catch { }
+        try { _stationCount = await Db.Stations.CountAsync(); } catch { }
+        try { _scannerCount = await Db.ScannerDeviceInstances.CountAsync(); } catch { }
+        try { _externalCount = await Db.ExternalSystemInstances.CountAsync(); } catch { }
+        _pluginCount = Plugins.All.Count;
+    }
+}

@@ -1,0 +1,200 @@
+/*
+ * Inspection v2 admin app — page styles. Composes on the shared platform
+ * tokens (linked separately in App.razor).
+ */
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--nickerp-color-bg-page);
+    color: var(--nickerp-color-text);
+    font-family: var(--nickerp-font-sans);
+    font-size: var(--nickerp-font-size-base);
+    line-height: var(--nickerp-line-height-base);
+}
+
+a { color: var(--nickerp-color-primary); }
+
+.inspection-shell {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    min-height: calc(100vh - var(--nickerp-topnav-height));
+}
+
+.inspection-sidenav {
+    background: var(--nickerp-color-bg-surface);
+    border-right: 1px solid var(--nickerp-color-border);
+    padding: var(--nickerp-space-4) var(--nickerp-space-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--nickerp-space-1);
+}
+
+.inspection-sidenav a {
+    display: block;
+    padding: var(--nickerp-space-2) var(--nickerp-space-3);
+    border-radius: var(--nickerp-radius-md);
+    color: var(--nickerp-color-text);
+    text-decoration: none;
+    font-size: var(--nickerp-font-size-sm);
+    font-weight: var(--nickerp-font-weight-medium);
+}
+.inspection-sidenav a:hover {
+    background: var(--nickerp-color-bg-elevated);
+}
+.inspection-sidenav .active {
+    background: var(--nickerp-color-primary);
+    color: var(--nickerp-color-text-inverse);
+}
+
+.inspection-main {
+    padding: var(--nickerp-space-6) var(--nickerp-space-6);
+    max-width: 1200px;
+    width: 100%;
+}
+
+.inspection-page-header { margin-bottom: var(--nickerp-space-5); }
+.inspection-page-header h1 {
+    margin: 0;
+    font-size: var(--nickerp-font-size-xl);
+    font-weight: var(--nickerp-font-weight-semibold);
+}
+.inspection-page-subtitle {
+    margin: var(--nickerp-space-1) 0 0 0;
+    color: var(--nickerp-color-text-muted);
+    font-size: var(--nickerp-font-size-sm);
+}
+
+.inspection-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--nickerp-space-3);
+    margin-bottom: var(--nickerp-space-6);
+}
+
+.inspection-stat-tile {
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-top: 3px solid var(--nickerp-color-primary);
+    border-radius: var(--nickerp-radius-md);
+    padding: var(--nickerp-space-3);
+    box-shadow: var(--nickerp-shadow-sm);
+}
+.inspection-stat-value {
+    font-size: 1.6rem;
+    font-weight: var(--nickerp-font-weight-bold);
+    line-height: 1.1;
+}
+.inspection-stat-label {
+    margin-top: var(--nickerp-space-1);
+    color: var(--nickerp-color-text-muted);
+    font-size: var(--nickerp-font-size-xs);
+}
+
+.inspection-section { margin-bottom: var(--nickerp-space-6); }
+
+.inspection-card {
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    padding: var(--nickerp-space-4);
+    margin-bottom: var(--nickerp-space-4);
+    box-shadow: var(--nickerp-shadow-sm);
+}
+.inspection-card-title {
+    margin: 0 0 var(--nickerp-space-3) 0;
+    font-size: var(--nickerp-font-size-base);
+    font-weight: var(--nickerp-font-weight-semibold);
+}
+
+.inspection-form { display: grid; gap: var(--nickerp-space-3); }
+.inspection-form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--nickerp-space-3);
+}
+.inspection-form label {
+    display: flex;
+    flex-direction: column;
+    gap: var(--nickerp-space-1);
+    font-size: var(--nickerp-font-size-sm);
+    font-weight: var(--nickerp-font-weight-medium);
+}
+.inspection-form-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--nickerp-space-3);
+}
+.inspection-form-message {
+    font-size: var(--nickerp-font-size-sm);
+    color: var(--nickerp-color-success);
+}
+
+.inspection-input {
+    height: 36px;
+    padding: 0 var(--nickerp-space-3);
+    border-radius: var(--nickerp-radius-md);
+    border: 1px solid var(--nickerp-color-border-strong);
+    background: var(--nickerp-color-bg-surface);
+    color: inherit;
+    font-size: var(--nickerp-font-size-sm);
+    outline: none;
+}
+.inspection-input:focus { border-color: var(--nickerp-color-primary); }
+
+.inspection-button {
+    height: 36px;
+    padding: 0 var(--nickerp-space-4);
+    border-radius: var(--nickerp-radius-md);
+    border: 1px solid var(--nickerp-color-border-strong);
+    background: var(--nickerp-color-bg-surface);
+    color: inherit;
+    cursor: pointer;
+    font-weight: var(--nickerp-font-weight-medium);
+}
+.inspection-button-primary {
+    background: var(--nickerp-color-primary);
+    color: var(--nickerp-color-text-inverse);
+    border-color: var(--nickerp-color-primary);
+}
+.inspection-button-primary:hover { background: var(--nickerp-color-primary-hover); }
+
+.inspection-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    overflow: hidden;
+    font-size: var(--nickerp-font-size-sm);
+}
+.inspection-table thead { background: var(--nickerp-color-bg-elevated); }
+.inspection-table th, .inspection-table td {
+    padding: var(--nickerp-space-2) var(--nickerp-space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--nickerp-color-divider);
+}
+.inspection-table tr:last-child td { border-bottom: 0; }
+
+.inspection-empty {
+    color: var(--nickerp-color-text-muted);
+    font-style: italic;
+    padding: var(--nickerp-space-4) 0;
+}
+
+.inspection-pill {
+    display: inline-block;
+    margin: 0 var(--nickerp-space-1) 0 0;
+    padding: 2px 6px;
+    border-radius: var(--nickerp-radius-sm);
+    background: var(--nickerp-color-bg-elevated);
+    font-size: var(--nickerp-font-size-xs);
+}
+
+code {
+    font-family: var(--nickerp-font-mono);
+    font-size: 0.9em;
+    background: var(--nickerp-color-bg-elevated);
+    padding: 1px 4px;
+    border-radius: var(--nickerp-radius-sm);
+}

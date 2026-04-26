@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Scanners.Mock</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Scanners.Mock</AssemblyName>
+    <Description>NickERP Inspection v2 — Mock IScannerAdapter. Generates synthetic scan artifacts on a timer; useful for end-to-end testing of the inspection pipeline without real hardware.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Scanners.Abstractions\NickERP.Inspection.Scanners.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+{
+  "typeCode": "mock-external",
+  "displayName": "Mock External System (synthetic)",
+  "version": "0.1.0",
+  "description": "Synthetic external-authority adapter. Returns a single fake BOE per fetch; accepts every verdict submission. End-to-end pipeline testing without ICUMS access.",
+  "contracts": [
+    "NickERP.Inspection.ExternalSystems.Abstractions.IExternalSystemAdapter"
+  ],
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "endpoint": { "type": "string", "default": "mock://" }
+    }
+  }
+}

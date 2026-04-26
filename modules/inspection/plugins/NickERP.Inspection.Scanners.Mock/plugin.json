@@ -1,0 +1,16 @@
+{
+  "typeCode": "mock-scanner",
+  "displayName": "Mock Scanner (synthetic)",
+  "version": "0.1.0",
+  "description": "Synthetic scanner adapter — emits a 1x1 PNG every EmitIntervalSeconds (default 30) until cancelled. Useful for end-to-end pipeline tests without real hardware.",
+  "contracts": [
+    "NickERP.Inspection.Scanners.Abstractions.IScannerAdapter"
+  ],
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "EmitIntervalSeconds": { "type": "integer", "minimum": 1, "default": 30 }
+    }
+  }
+}

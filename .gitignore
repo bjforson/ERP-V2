@@ -64,3 +64,6 @@ secrets.json
 
 # EF Core temp
 *.efcache
+
+# Inspection v2 host plugins folder — populated from build output by deploy/CI scripts, not source-tracked.
+modules/inspection/src/NickERP.Inspection.Web/plugins/
