@@ -82,8 +82,7 @@
     private List<RegisteredPlugin> _scannerPlugins = new();
     private string _message = string.Empty;
 
-    [SupplyParameterFromForm] private ScannerForm _form { get; set; } = null!;
-    protected override void OnParametersSet() => _form ??= new ScannerForm();
+    [SupplyParameterFromForm] private ScannerForm _form { get; set; } = new();
 
     protected override async Task OnInitializedAsync()
     {

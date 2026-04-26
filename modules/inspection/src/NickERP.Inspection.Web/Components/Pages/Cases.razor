@@ -1,0 +1,132 @@
+@page "/cases"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@inject InspectionDbContext Db
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Cases — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Inspection cases</h1>
+        <p class="inspection-page-subtitle">Filtered to your assigned locations. <a href="/cases/new">Open a new case →</a></p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-filter-bar inspection-button-row">
+        <select class="inspection-input" @bind="_locationFilter" @bind:after="Reload">
+            <option value="">All my locations</option>
+            @foreach (var loc in _accessibleLocations)
+            {
+                <option value="@loc.Id">@loc.Code — @loc.Name</option>
+            }
+        </select>
+        <select class="inspection-input" @bind="_stateFilter" @bind:after="Reload">
+            <option value="">All states</option>
+            @foreach (var s in Enum.GetValues<InspectionWorkflowState>())
+            {
+                <option value="@s">@s</option>
+            }
+        </select>
+        <a href="/cases/new" class="inspection-button inspection-button-primary">New case</a>
+    </div>
+
+    @if (_assignmentsCount == 0 && _isAdmin == false)
+    {
+        <p class="inspection-empty">You have no location assignments yet. Ask an admin to assign you on the
+            <a href="/location-assignments">User assignments</a> page.</p>
+    }
+    else if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0)
+    {
+        <p class="inspection-empty">No cases match. <a href="/cases/new">Open the first one.</a></p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead>
+                <tr>
+                    <th>Subject</th>
+                    <th>Location</th>
+                    <th>State</th>
+                    <th>Assigned to</th>
+                    <th>Opened</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in _rows)
+                {
+                    <tr>
+                        <td>@c.SubjectType <code>@c.SubjectIdentifier</code></td>
+                        <td>@(_locationsById.GetValueOrDefault(c.LocationId)?.Code ?? "?")</td>
+                        <td><span class="inspection-pill-state is-@c.State.ToString().ToLowerInvariant()">@c.State</span></td>
+                        <td>@(c.AssignedAnalystUserId?.ToString()[..8] ?? "—")</td>
+                        <td>@c.OpenedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td><a href="/cases/@c.Id" class="inspection-button">Open</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<InspectionCase>? _rows;
+    private List<Location> _accessibleLocations = new();
+    private Dictionary<Guid, Location> _locationsById = new();
+    private string _locationFilter = string.Empty;
+    private string _stateFilter = string.Empty;
+    private Guid _userId;
+    private int _assignmentsCount;
+    private bool _isAdmin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+        Guid.TryParse(idClaim, out _userId);
+        _isAdmin = state.User?.IsInRole("platform.admin") == true
+                   || state.User?.IsInRole("Identity.Admin") == true
+                   || state.User?.HasClaim("nickerp:scope", "Identity.Admin") == true
+                   || state.User?.HasClaim("nickerp:scope", "platform.admin") == true;
+
+        // Locations the current user is allowed to see (or all locations for admins).
+        if (_isAdmin)
+        {
+            _accessibleLocations = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
+        }
+        else
+        {
+            var assigned = await Db.LocationAssignments.AsNoTracking()
+                .Where(a => a.IdentityUserId == _userId && a.IsActive
+                            && (a.ExpiresAt == null || a.ExpiresAt > DateTimeOffset.UtcNow))
+                .Select(a => a.LocationId)
+                .ToListAsync();
+            _assignmentsCount = assigned.Count;
+            _accessibleLocations = await Db.Locations.AsNoTracking()
+                .Where(l => assigned.Contains(l.Id))
+                .OrderBy(l => l.Code)
+                .ToListAsync();
+        }
+        _locationsById = _accessibleLocations.ToDictionary(l => l.Id);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        if (!_isAdmin && _accessibleLocations.Count == 0)
+        {
+            _rows = new();
+            return;
+        }
+        var allowedIds = _accessibleLocations.Select(l => l.Id).ToList();
+        var q = Db.Cases.AsNoTracking().Where(c => allowedIds.Contains(c.LocationId));
+        if (Guid.TryParse(_locationFilter, out var locId)) q = q.Where(c => c.LocationId == locId);
+        if (Enum.TryParse<InspectionWorkflowState>(_stateFilter, out var st)) q = q.Where(c => c.State == st);
+        _rows = await q.OrderByDescending(c => c.OpenedAt).Take(100).ToListAsync();
+    }
+}

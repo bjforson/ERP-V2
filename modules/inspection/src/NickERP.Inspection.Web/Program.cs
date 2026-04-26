@@ -60,6 +60,11 @@ builder.Services.AddAuthorization(opts =>
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddCascadingAuthenticationState();
 
+// Case workflow orchestration — single place where state transitions +
+// DomainEvent emission happen. Pages call this; pages don't open the
+// DbContext directly for workflow operations.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.CaseWorkflowService>();
+
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 

@@ -67,8 +67,7 @@
     private Dictionary<Guid, Location> _locationsById = new();
     private string _message = string.Empty;
 
-    [SupplyParameterFromForm] private StationForm _form { get; set; } = null!;
-    protected override void OnParametersSet() => _form ??= new StationForm();
+    [SupplyParameterFromForm] private StationForm _form { get; set; } = new();
 
     protected override async Task OnInitializedAsync()
     {

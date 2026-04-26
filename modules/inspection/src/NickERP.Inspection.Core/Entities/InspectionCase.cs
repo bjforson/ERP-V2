@@ -1,0 +1,60 @@
+using NickERP.Platform.Tenancy.Entities;
+
+namespace NickERP.Inspection.Core.Entities;
+
+/// <summary>
+/// One consignment going through inspection at one <see cref="Location"/>.
+/// The atom of the inspection workflow — every <see cref="Scan"/>,
+/// <see cref="AuthorityDocument"/>, <see cref="ReviewSession"/>, and
+/// <see cref="Verdict"/> hangs off a case.
+/// </summary>
+public sealed class InspectionCase : ITenantOwned
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>Where the inspection is happening.</summary>
+    public Guid LocationId { get; set; }
+    public Location? Location { get; set; }
+
+    /// <summary>Optional — which station was used (set when the first scan lands).</summary>
+    public Guid? StationId { get; set; }
+    public Station? Station { get; set; }
+
+    /// <summary>What kind of thing is being inspected.</summary>
+    public CaseSubjectType SubjectType { get; set; } = CaseSubjectType.Container;
+
+    /// <summary>The natural identifier — container number, plate / VIN, parcel barcode, etc.</summary>
+    public string SubjectIdentifier { get; set; } = string.Empty;
+
+    /// <summary>Type-specific subject details as JSON. Schema varies by <see cref="SubjectType"/>.</summary>
+    public string SubjectPayloadJson { get; set; } = "{}";
+
+    /// <summary>Current workflow state. Transitions emit DomainEvents.</summary>
+    public InspectionWorkflowState State { get; set; } = InspectionWorkflowState.Open;
+
+    /// <summary>When the case was opened.</summary>
+    public DateTimeOffset OpenedAt { get; set; }
+
+    /// <summary>When the current state was entered (for SLA / dwell-time analytics).</summary>
+    public DateTimeOffset StateEnteredAt { get; set; }
+
+    /// <summary>When the case reached a terminal state (Closed or Cancelled). Null while open.</summary>
+    public DateTimeOffset? ClosedAt { get; set; }
+
+    /// <summary>The user who opened the case (or null for system-opened cases).</summary>
+    public Guid? OpenedByUserId { get; set; }
+
+    /// <summary>Currently-assigned analyst, when in <see cref="InspectionWorkflowState.Assigned"/>.</summary>
+    public Guid? AssignedAnalystUserId { get; set; }
+
+    /// <summary>Cross-service correlation id (matches the structured-log <c>CorrelationId</c> for the request that created the case).</summary>
+    public string? CorrelationId { get; set; }
+
+    public long TenantId { get; set; }
+
+    public List<Scan> Scans { get; set; } = new();
+    public List<AuthorityDocument> Documents { get; set; } = new();
+    public List<ReviewSession> ReviewSessions { get; set; } = new();
+    public List<OutboundSubmission> Submissions { get; set; } = new();
+    public Verdict? Verdict { get; set; }
+}

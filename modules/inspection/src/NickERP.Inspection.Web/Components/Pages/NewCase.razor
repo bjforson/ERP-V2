@@ -1,0 +1,106 @@
+@page "/cases/new"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
+@inject InspectionDbContext Db
+@inject CaseWorkflowService Workflow
+@inject NavigationManager Nav
+
+<PageTitle>New case — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Open a new inspection case</h1>
+        <p class="inspection-page-subtitle">Manual creation. Real cases will materialize from scanner ingestion in B.1.1.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-card">
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="new-case" class="inspection-form">
+            <div class="inspection-form-row">
+                <label>
+                    <span>Location</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.LocationId">
+                        <option value="">— pick a location —</option>
+                        @foreach (var loc in _locations)
+                        {
+                            <option value="@loc.Id">@loc.Code — @loc.Name</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label>
+                    <span>Station (optional)</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.StationId">
+                        <option value="">— none —</option>
+                        @foreach (var s in _stations.Where(x => x.LocationId == _form.LocationId))
+                        {
+                            <option value="@s.Id">@s.Code — @s.Name</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label>
+                    <span>Subject type</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.SubjectType">
+                        @foreach (var t in Enum.GetValues<CaseSubjectType>())
+                        {
+                            <option value="@t">@t</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label>
+                    <span>Subject identifier</span>
+                    <InputText class="inspection-input" @bind-Value="_form.SubjectIdentifier" placeholder="MSCU1234567" />
+                </label>
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-button inspection-button-primary">Open case</button>
+                <a href="/cases" class="inspection-button">Cancel</a>
+                @if (!string.IsNullOrEmpty(_message)) { <span class="inspection-form-message">@_message</span> }
+            </div>
+        </EditForm>
+    </div>
+</section>
+
+@code {
+    private List<Location> _locations = new();
+    private List<Station> _stations = new();
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm] private NewCaseForm _form { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _locations = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
+        _stations = await Db.Stations.AsNoTracking().ToListAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_form.LocationId == Guid.Empty || string.IsNullOrWhiteSpace(_form.SubjectIdentifier))
+        {
+            _message = "Location and subject identifier are required."; return;
+        }
+        try
+        {
+            var c = await Workflow.OpenCaseAsync(
+                _form.LocationId, _form.SubjectType, _form.SubjectIdentifier,
+                _form.StationId == Guid.Empty ? null : _form.StationId);
+            Nav.NavigateTo($"/cases/{c.Id}");
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    public sealed class NewCaseForm
+    {
+        public Guid LocationId { get; set; }
+        public Guid StationId { get; set; }
+        public CaseSubjectType SubjectType { get; set; } = CaseSubjectType.Container;
+        public string SubjectIdentifier { get; set; } = string.Empty;
+    }
+}

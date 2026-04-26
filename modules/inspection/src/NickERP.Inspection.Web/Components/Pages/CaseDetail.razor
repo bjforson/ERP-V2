@@ -1,0 +1,258 @@
+@page "/cases/{CaseId:guid}"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
+@inject InspectionDbContext Db
+@inject CaseWorkflowService Workflow
+
+<PageTitle>Case @ShortId — Inspection v2</PageTitle>
+
+@if (_case is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <header class="inspection-page-header">
+        <div>
+            <h1>Case <code>@_case.SubjectIdentifier</code> &nbsp;
+                <span class="inspection-pill-state is-@_case.State.ToString().ToLowerInvariant()">@_case.State</span>
+            </h1>
+            <p class="inspection-page-subtitle">
+                @_case.SubjectType at @(_locationsById.GetValueOrDefault(_case.LocationId)?.Name ?? "?") •
+                opened @_case.OpenedAt.ToString("yyyy-MM-dd HH:mm") •
+                in this state since @_case.StateEnteredAt.ToString("yyyy-MM-dd HH:mm")
+            </p>
+        </div>
+    </header>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Workflow actions</h2>
+
+            <div class="inspection-button-row">
+                <select class="inspection-input" @bind="_selectedScannerId">
+                    <option value="">— pick scanner —</option>
+                    @foreach (var s in _scanners)
+                    {
+                        <option value="@s.Id">@s.TypeCode — @s.DisplayName</option>
+                    }
+                </select>
+                <button class="inspection-button" @onclick="SimulateScan" disabled="@(_selectedScannerId == Guid.Empty)">Simulate scan</button>
+
+                <select class="inspection-input" @bind="_selectedExternalId">
+                    <option value="">— pick external system —</option>
+                    @foreach (var e in _externals)
+                    {
+                        <option value="@e.Id">@e.TypeCode — @e.DisplayName</option>
+                    }
+                </select>
+                <button class="inspection-button" @onclick="FetchDocuments" disabled="@(_selectedExternalId == Guid.Empty)">Fetch documents</button>
+
+                <button class="inspection-button" @onclick="AssignSelf" disabled="@(_case.State == InspectionWorkflowState.Submitted || _case.State == InspectionWorkflowState.Closed)">Assign me + start review</button>
+            </div>
+
+            <div class="inspection-form-row" style="margin-top: var(--nickerp-space-3);">
+                <label>
+                    <span>Verdict</span>
+                    <InputSelect class="inspection-input" @bind-Value="_verdictDecision">
+                        @foreach (var d in Enum.GetValues<VerdictDecision>())
+                        {
+                            <option value="@d">@d</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label>
+                    <span>Confidence (0.0–1.0)</span>
+                    <InputNumber class="inspection-input" step="0.05" @bind-Value="_confidence" />
+                </label>
+                <label style="grid-column: 1 / -1;">
+                    <span>Basis</span>
+                    <InputTextArea class="inspection-input" rows="2" @bind-Value="_basis" placeholder="One or two sentences justifying the call." />
+                </label>
+            </div>
+            <div class="inspection-button-row" style="margin-top: var(--nickerp-space-2);">
+                <button class="inspection-button inspection-button-primary" @onclick="SetVerdict">Set verdict</button>
+
+                <select class="inspection-input" @bind="_submitToId">
+                    <option value="">— submit to —</option>
+                    @foreach (var e in _externals)
+                    {
+                        <option value="@e.Id">@e.TypeCode — @e.DisplayName</option>
+                    }
+                </select>
+                <button class="inspection-button" @onclick="Submit" disabled="@(_submitToId == Guid.Empty || _case.Verdict is null)">Submit verdict</button>
+
+                <button class="inspection-button" @onclick="Close" disabled="@(_case.State == InspectionWorkflowState.Closed)">Close case</button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_message))
+            {
+                <p class="inspection-form-message" style="margin-top: var(--nickerp-space-3);">@_message</p>
+            }
+        </div>
+    </section>
+
+    <div class="inspection-detail-grid">
+        <div>
+            <section class="inspection-section">
+                <h2>Scans (@_scans.Count)</h2>
+                @if (_scans.Count == 0) { <p class="inspection-empty">No scans yet.</p> }
+                else
+                {
+                    <table class="inspection-table">
+                        <thead><tr><th>Captured</th><th>Mode</th><th>Artifacts</th></tr></thead>
+                        <tbody>
+                            @foreach (var s in _scans)
+                            {
+                                <tr>
+                                    <td>@s.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td>@s.Mode</td>
+                                    <td>@_artifactsPerScan.GetValueOrDefault(s.Id, 0)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            <section class="inspection-section">
+                <h2>Authority documents (@_documents.Count)</h2>
+                @if (_documents.Count == 0) { <p class="inspection-empty">No documents fetched yet.</p> }
+                else
+                {
+                    <table class="inspection-table">
+                        <thead><tr><th>Type</th><th>Reference</th><th>Received</th></tr></thead>
+                        <tbody>
+                            @foreach (var d in _documents)
+                            {
+                                <tr><td>@d.DocumentType</td><td><code>@d.ReferenceNumber</code></td><td>@d.ReceivedAt.ToString("yyyy-MM-dd HH:mm")</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            <section class="inspection-section">
+                <h2>Submissions (@_submissions.Count)</h2>
+                @if (_submissions.Count == 0) { <p class="inspection-empty">No verdict submissions yet.</p> }
+                else
+                {
+                    <table class="inspection-table">
+                        <thead><tr><th>External system</th><th>Status</th><th>Submitted</th></tr></thead>
+                        <tbody>
+                            @foreach (var s in _submissions)
+                            {
+                                <tr><td>@(_externals.FirstOrDefault(e => e.Id == s.ExternalSystemInstanceId)?.DisplayName ?? "?")</td>
+                                    <td>@s.Status</td>
+                                    <td>@s.SubmittedAt.ToString("yyyy-MM-dd HH:mm")</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+        </div>
+
+        <aside>
+            <section class="inspection-section">
+                <h2>Verdict</h2>
+                <div class="inspection-card">
+                    @if (_case.Verdict is null)
+                    {
+                        <p class="inspection-empty">No verdict yet.</p>
+                    }
+                    else
+                    {
+                        <p><strong>@_case.Verdict.Decision</strong> by analyst <code>@_case.Verdict.DecidedByUserId.ToString()[..8]</code> at @_case.Verdict.DecidedAt.ToString("yyyy-MM-dd HH:mm")</p>
+                        <p>@_case.Verdict.Basis</p>
+                    }
+                </div>
+            </section>
+        </aside>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid CaseId { get; set; }
+
+    private InspectionCase? _case;
+    private List<Scan> _scans = new();
+    private List<AuthorityDocument> _documents = new();
+    private List<OutboundSubmission> _submissions = new();
+    private Dictionary<Guid, int> _artifactsPerScan = new();
+    private List<ScannerDeviceInstance> _scanners = new();
+    private List<ExternalSystemInstance> _externals = new();
+    private Dictionary<Guid, Location> _locationsById = new();
+
+    private Guid _selectedScannerId;
+    private Guid _selectedExternalId;
+    private Guid _submitToId;
+    private VerdictDecision _verdictDecision = VerdictDecision.Clear;
+    private double _confidence = 0.85;
+    private string _basis = string.Empty;
+    private string _message = string.Empty;
+
+    private string ShortId => _case is null ? "" : _case.Id.ToString()[..8];
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _case = await Db.Cases.Include(c => c.Verdict).FirstOrDefaultAsync(c => c.Id == CaseId);
+        if (_case is null) return;
+        _scans = await Db.Scans.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.CapturedAt).ToListAsync();
+        _documents = await Db.AuthorityDocuments.AsNoTracking().Where(d => d.CaseId == CaseId).OrderByDescending(d => d.ReceivedAt).ToListAsync();
+        _submissions = await Db.OutboundSubmissions.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.SubmittedAt).ToListAsync();
+        _artifactsPerScan = await Db.ScanArtifacts.AsNoTracking()
+            .Where(a => _scans.Select(s => s.Id).Contains(a.ScanId))
+            .GroupBy(a => a.ScanId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+
+        _scanners = await Db.ScannerDeviceInstances.AsNoTracking()
+            .Where(s => s.LocationId == _case.LocationId && s.IsActive)
+            .OrderBy(s => s.DisplayName).ToListAsync();
+        _externals = await Db.ExternalSystemInstances.AsNoTracking()
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.DisplayName).ToListAsync();
+        _locationsById = await Db.Locations.AsNoTracking().ToDictionaryAsync(l => l.Id);
+    }
+
+    private async Task SimulateScan()
+    {
+        try { await Workflow.SimulateScanAsync(CaseId, _selectedScannerId); _message = "Scan recorded."; await Reload(); }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+
+    private async Task FetchDocuments()
+    {
+        try { var docs = await Workflow.FetchDocumentsAsync(CaseId, _selectedExternalId); _message = $"Fetched {docs.Count} document(s)."; await Reload(); }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+
+    private async Task AssignSelf()
+    {
+        try { await Workflow.AssignSelfAndStartReviewAsync(CaseId); _message = "Assigned to you. Review session started."; await Reload(); }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+
+    private async Task SetVerdict()
+    {
+        try { await Workflow.SetVerdictAsync(CaseId, _verdictDecision, _basis, _confidence); _message = "Verdict recorded."; await Reload(); }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+
+    private async Task Submit()
+    {
+        try { var sub = await Workflow.SubmitAsync(CaseId, _submitToId); _message = $"Submission status: {sub.Status}."; await Reload(); }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+
+    private async Task Close()
+    {
+        try { await Workflow.CloseCaseAsync(CaseId); _message = "Case closed."; await Reload(); }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+}

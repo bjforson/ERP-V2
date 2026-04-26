@@ -42,6 +42,42 @@ a { color: var(--nickerp-color-primary); }
 .inspection-sidenav a:hover {
     background: var(--nickerp-color-bg-elevated);
 }
+
+.inspection-sidenav-section {
+    margin-top: var(--nickerp-space-3);
+    padding: 0 var(--nickerp-space-3);
+    font-size: 0.65rem;
+    font-weight: var(--nickerp-font-weight-bold);
+    color: var(--nickerp-color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.inspection-pill-state {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--nickerp-radius-full);
+    font-size: var(--nickerp-font-size-xs);
+    font-weight: var(--nickerp-font-weight-medium);
+    background: var(--nickerp-color-bg-elevated);
+    color: var(--nickerp-color-text);
+}
+.inspection-pill-state.is-open       { background: rgba(2, 132, 199, 0.12); color: var(--nickerp-color-info); }
+.inspection-pill-state.is-validated  { background: rgba(124, 58, 237, 0.12); color: #7c3aed; }
+.inspection-pill-state.is-assigned   { background: rgba(202, 138, 4, 0.12);  color: var(--nickerp-color-warning); }
+.inspection-pill-state.is-reviewed   { background: rgba(14, 165, 233, 0.12); color: #0ea5e9; }
+.inspection-pill-state.is-verdict    { background: rgba(124, 58, 237, 0.20); color: #7c3aed; }
+.inspection-pill-state.is-submitted  { background: rgba(22, 163, 74, 0.12);  color: var(--nickerp-color-success); }
+.inspection-pill-state.is-closed     { background: rgba(15, 23, 42, 0.10);   color: var(--nickerp-color-text-muted); }
+.inspection-pill-state.is-cancelled  { background: rgba(220, 38, 38, 0.12);  color: var(--nickerp-color-danger); }
+
+.inspection-detail-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: var(--nickerp-space-4);
+}
+
+.inspection-button-row { display: flex; gap: var(--nickerp-space-2); flex-wrap: wrap; }
 .inspection-sidenav .active {
     background: var(--nickerp-color-primary);
     color: var(--nickerp-color-text-inverse);

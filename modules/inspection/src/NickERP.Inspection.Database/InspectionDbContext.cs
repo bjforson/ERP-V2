@@ -19,6 +19,16 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<ScannerDeviceInstance> ScannerDeviceInstances => Set<ScannerDeviceInstance>();
     public DbSet<ExternalSystemInstance> ExternalSystemInstances => Set<ExternalSystemInstance>();
     public DbSet<ExternalSystemBinding> ExternalSystemBindings => Set<ExternalSystemBinding>();
+    public DbSet<LocationAssignment> LocationAssignments => Set<LocationAssignment>();
+    public DbSet<InspectionCase> Cases => Set<InspectionCase>();
+    public DbSet<Scan> Scans => Set<Scan>();
+    public DbSet<ScanArtifact> ScanArtifacts => Set<ScanArtifact>();
+    public DbSet<AuthorityDocument> AuthorityDocuments => Set<AuthorityDocument>();
+    public DbSet<ReviewSession> ReviewSessions => Set<ReviewSession>();
+    public DbSet<AnalystReview> AnalystReviews => Set<AnalystReview>();
+    public DbSet<Finding> Findings => Set<Finding>();
+    public DbSet<Verdict> Verdicts => Set<Verdict>();
+    public DbSet<OutboundSubmission> OutboundSubmissions => Set<OutboundSubmission>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -118,6 +128,208 @@ public sealed class InspectionDbContext : DbContext
                 .HasDatabaseName("ux_external_bindings_tenant_inst_loc");
 
             e.HasOne(x => x.Location).WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ----- LocationAssignment ---------------------------------------------------
+        modelBuilder.Entity<LocationAssignment>(e =>
+        {
+            e.ToTable("location_assignments");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.IdentityUserId).IsRequired();
+            e.Property(x => x.LocationId).IsRequired();
+            e.Property(x => x.Roles).IsRequired().HasMaxLength(500).HasDefaultValue(string.Empty);
+            e.Property(x => x.GrantedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.GrantedByUserId).IsRequired();
+            e.Property(x => x.IsActive).HasDefaultValue(true);
+            e.Property(x => x.Notes).HasMaxLength(500);
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.TenantId, x.IdentityUserId, x.LocationId }).IsUnique().HasDatabaseName("ux_location_assignments_tenant_user_loc");
+            e.HasIndex(x => x.IdentityUserId).HasDatabaseName("ix_location_assignments_user");
+            e.HasIndex(x => x.LocationId).HasDatabaseName("ix_location_assignments_loc");
+
+            e.HasOne(x => x.Location).WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ----- InspectionCase -------------------------------------------------------
+        modelBuilder.Entity<InspectionCase>(e =>
+        {
+            e.ToTable("cases");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.LocationId).IsRequired();
+            e.Property(x => x.SubjectType).HasConversion<int>().IsRequired();
+            e.Property(x => x.SubjectIdentifier).IsRequired().HasMaxLength(200);
+            e.Property(x => x.SubjectPayloadJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.State).HasConversion<int>().IsRequired();
+            e.Property(x => x.OpenedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.StateEnteredAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.CorrelationId).HasMaxLength(64);
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.TenantId, x.LocationId, x.State, x.OpenedAt }).HasDatabaseName("ix_cases_tenant_loc_state_time");
+            e.HasIndex(x => new { x.TenantId, x.SubjectIdentifier }).HasDatabaseName("ix_cases_tenant_subject");
+            e.HasIndex(x => x.AssignedAnalystUserId).HasDatabaseName("ix_cases_assigned_analyst");
+
+            e.HasOne(x => x.Location).WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Station).WithMany().HasForeignKey(x => x.StationId).OnDelete(DeleteBehavior.SetNull);
+            e.HasMany(x => x.Scans).WithOne(s => s.Case).HasForeignKey(s => s.CaseId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Documents).WithOne(d => d.Case).HasForeignKey(d => d.CaseId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.ReviewSessions).WithOne(rs => rs.Case).HasForeignKey(rs => rs.CaseId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Submissions).WithOne(o => o.Case).HasForeignKey(o => o.CaseId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Verdict).WithOne(v => v.Case!).HasForeignKey<Verdict>(v => v.CaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- Scan -----------------------------------------------------------------
+        modelBuilder.Entity<Scan>(e =>
+        {
+            e.ToTable("scans");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.ScannerDeviceInstanceId).IsRequired();
+            e.Property(x => x.Mode).HasMaxLength(64);
+            e.Property(x => x.IdempotencyKey).IsRequired().HasMaxLength(128);
+            e.Property(x => x.CorrelationId).HasMaxLength(64);
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.TenantId, x.CaseId, x.CapturedAt }).HasDatabaseName("ix_scans_tenant_case_time");
+            e.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique().HasDatabaseName("ux_scans_tenant_idempotency");
+            e.HasIndex(x => x.ScannerDeviceInstanceId).HasDatabaseName("ix_scans_device");
+
+            e.HasOne(x => x.ScannerDeviceInstance).WithMany().HasForeignKey(x => x.ScannerDeviceInstanceId).OnDelete(DeleteBehavior.Restrict);
+            e.HasMany(x => x.Artifacts).WithOne(a => a.Scan).HasForeignKey(a => a.ScanId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- ScanArtifact ---------------------------------------------------------
+        modelBuilder.Entity<ScanArtifact>(e =>
+        {
+            e.ToTable("scan_artifacts");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ScanId).IsRequired();
+            e.Property(x => x.ArtifactKind).IsRequired().HasMaxLength(32).HasDefaultValue("Primary");
+            e.Property(x => x.StorageUri).IsRequired().HasMaxLength(500);
+            e.Property(x => x.MimeType).IsRequired().HasMaxLength(64);
+            e.Property(x => x.ContentHash).IsRequired().HasMaxLength(128);
+            e.Property(x => x.MetadataJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => x.ContentHash).HasDatabaseName("ix_scan_artifacts_content_hash");
+            e.HasIndex(x => new { x.TenantId, x.ScanId }).HasDatabaseName("ix_scan_artifacts_tenant_scan");
+        });
+
+        // ----- AuthorityDocument ----------------------------------------------------
+        modelBuilder.Entity<AuthorityDocument>(e =>
+        {
+            e.ToTable("authority_documents");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.ExternalSystemInstanceId).IsRequired();
+            e.Property(x => x.DocumentType).IsRequired().HasMaxLength(64);
+            e.Property(x => x.ReferenceNumber).IsRequired().HasMaxLength(200);
+            e.Property(x => x.PayloadJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.ReceivedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.TenantId, x.CaseId }).HasDatabaseName("ix_authority_docs_tenant_case");
+            e.HasIndex(x => new { x.TenantId, x.ReferenceNumber }).HasDatabaseName("ix_authority_docs_tenant_ref");
+
+            e.HasOne(x => x.ExternalSystemInstance).WithMany().HasForeignKey(x => x.ExternalSystemInstanceId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ----- ReviewSession --------------------------------------------------------
+        modelBuilder.Entity<ReviewSession>(e =>
+        {
+            e.ToTable("review_sessions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.AnalystUserId).IsRequired();
+            e.Property(x => x.StartedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.Outcome).IsRequired().HasMaxLength(32).HasDefaultValue("in-progress");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.TenantId, x.CaseId, x.StartedAt }).HasDatabaseName("ix_review_sessions_tenant_case_time");
+            e.HasIndex(x => x.AnalystUserId).HasDatabaseName("ix_review_sessions_analyst");
+
+            e.HasMany(x => x.Reviews).WithOne(r => r.Session).HasForeignKey(r => r.ReviewSessionId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- AnalystReview --------------------------------------------------------
+        modelBuilder.Entity<AnalystReview>(e =>
+        {
+            e.ToTable("analyst_reviews");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ReviewSessionId).IsRequired();
+            e.Property(x => x.RoiInteractionsJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
+            e.Property(x => x.VerdictChangesJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
+            e.Property(x => x.PostHocOutcomeJson).HasColumnType("jsonb");
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasMany(x => x.Findings).WithOne(f => f.Review).HasForeignKey(f => f.AnalystReviewId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- Finding --------------------------------------------------------------
+        modelBuilder.Entity<Finding>(e =>
+        {
+            e.ToTable("findings");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.AnalystReviewId).IsRequired();
+            e.Property(x => x.FindingType).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Severity).IsRequired().HasMaxLength(16).HasDefaultValue("info");
+            e.Property(x => x.LocationInImageJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.Note).HasMaxLength(2000);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.TenantId, x.FindingType }).HasDatabaseName("ix_findings_tenant_type");
+            e.HasIndex(x => x.Severity).HasDatabaseName("ix_findings_severity");
+        });
+
+        // ----- Verdict --------------------------------------------------------------
+        modelBuilder.Entity<Verdict>(e =>
+        {
+            e.ToTable("verdicts");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.Decision).HasConversion<int>().IsRequired();
+            e.Property(x => x.Basis).HasMaxLength(2000);
+            e.Property(x => x.DecidedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.DecidedByUserId).IsRequired();
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => x.CaseId).IsUnique().HasDatabaseName("ux_verdicts_case");
+            e.HasIndex(x => new { x.TenantId, x.Decision, x.DecidedAt }).HasDatabaseName("ix_verdicts_tenant_decision_time");
+        });
+
+        // ----- OutboundSubmission ---------------------------------------------------
+        modelBuilder.Entity<OutboundSubmission>(e =>
+        {
+            e.ToTable("outbound_submissions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.ExternalSystemInstanceId).IsRequired();
+            e.Property(x => x.PayloadJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.IdempotencyKey).IsRequired().HasMaxLength(128);
+            e.Property(x => x.Status).IsRequired().HasMaxLength(32).HasDefaultValue("pending");
+            e.Property(x => x.ResponseJson).HasColumnType("jsonb");
+            e.Property(x => x.ErrorMessage).HasMaxLength(2000);
+            e.Property(x => x.SubmittedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique().HasDatabaseName("ux_outbound_tenant_idempotency");
+            e.HasIndex(x => new { x.TenantId, x.Status }).HasDatabaseName("ix_outbound_tenant_status");
+
+            e.HasOne(x => x.ExternalSystemInstance).WithMany().HasForeignKey(x => x.ExternalSystemInstanceId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

@@ -95,9 +95,7 @@
     private string _message = string.Empty;
 
     [SupplyParameterFromForm]
-    private TenantForm _form { get; set; } = null!;
-
-    protected override void OnParametersSet() => _form ??= new TenantForm();
+    private TenantForm _form { get; set; } = new();
 
     protected override async Task OnInitializedAsync() => await Reload();
 

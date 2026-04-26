@@ -1,6 +1,7 @@
 @page "/"
 @attribute [Authorize]
 @using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
 @using NickERP.Platform.Plugins
 @inject InspectionDbContext Db
@@ -11,30 +12,59 @@
 <header class="inspection-page-header">
     <div>
         <h1>Inspection — overview</h1>
-        <p class="inspection-page-subtitle">v2 admin skeleton. Locations, stations, scanners, external systems, registered plugins.</p>
+        <p class="inspection-page-subtitle">v2 case lifecycle live. Operations counts on top, setup counts below.</p>
     </div>
 </header>
 
-<section class="inspection-stats">
-    <div class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-primary)">
-        <div class="inspection-stat-value">@_locationCount</div>
-        <div class="inspection-stat-label">Locations</div>
+<section class="inspection-section">
+    <h2>Operations</h2>
+    <div class="inspection-stats">
+        <a href="/cases" class="inspection-stat-tile" style="border-top-color: #0ea5e9; text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_caseCount</div>
+            <div class="inspection-stat-label">Total cases</div>
+        </a>
+        <a href="/cases" class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-warning); text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_openCaseCount</div>
+            <div class="inspection-stat-label">Open / in-progress</div>
+        </a>
+        <a href="/cases" class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-success); text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_submittedCaseCount</div>
+            <div class="inspection-stat-label">Submitted / closed</div>
+        </a>
+        <a href="/cases/new" class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-primary); text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">+</div>
+            <div class="inspection-stat-label">Open new case</div>
+        </a>
     </div>
-    <div class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-accent)">
-        <div class="inspection-stat-value">@_stationCount</div>
-        <div class="inspection-stat-label">Stations</div>
-    </div>
-    <div class="inspection-stat-tile" style="border-top-color: #7c3aed">
-        <div class="inspection-stat-value">@_scannerCount</div>
-        <div class="inspection-stat-label">Scanner devices</div>
-    </div>
-    <div class="inspection-stat-tile" style="border-top-color: #16a34a">
-        <div class="inspection-stat-value">@_externalCount</div>
-        <div class="inspection-stat-label">External systems</div>
-    </div>
-    <div class="inspection-stat-tile" style="border-top-color: #dc2626">
-        <div class="inspection-stat-value">@_pluginCount</div>
-        <div class="inspection-stat-label">Plugins loaded</div>
+</section>
+
+<section class="inspection-section">
+    <h2>Setup</h2>
+    <div class="inspection-stats">
+        <a href="/locations" class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-primary); text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_locationCount</div>
+            <div class="inspection-stat-label">Locations</div>
+        </a>
+        <a href="/stations" class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-accent); text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_stationCount</div>
+            <div class="inspection-stat-label">Stations</div>
+        </a>
+        <a href="/scanners" class="inspection-stat-tile" style="border-top-color: #7c3aed; text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_scannerCount</div>
+            <div class="inspection-stat-label">Scanner devices</div>
+        </a>
+        <a href="/external-systems" class="inspection-stat-tile" style="border-top-color: #16a34a; text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_externalCount</div>
+            <div class="inspection-stat-label">External systems</div>
+        </a>
+        <a href="/location-assignments" class="inspection-stat-tile" style="border-top-color: var(--nickerp-color-warning); text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_assignmentCount</div>
+            <div class="inspection-stat-label">User assignments</div>
+        </a>
+        <a href="/plugins" class="inspection-stat-tile" style="border-top-color: #dc2626; text-decoration: none; color: inherit;">
+            <div class="inspection-stat-value">@_pluginCount</div>
+            <div class="inspection-stat-label">Plugins loaded</div>
+        </a>
     </div>
 </section>
 
@@ -43,7 +73,11 @@
     private int _stationCount;
     private int _scannerCount;
     private int _externalCount;
+    private int _assignmentCount;
     private int _pluginCount;
+    private int _caseCount;
+    private int _openCaseCount;
+    private int _submittedCaseCount;
 
     protected override async Task OnInitializedAsync()
     {
@@ -51,6 +85,19 @@
         try { _stationCount = await Db.Stations.CountAsync(); } catch { }
         try { _scannerCount = await Db.ScannerDeviceInstances.CountAsync(); } catch { }
         try { _externalCount = await Db.ExternalSystemInstances.CountAsync(); } catch { }
+        try { _assignmentCount = await Db.LocationAssignments.CountAsync(a => a.IsActive); } catch { }
         _pluginCount = Plugins.All.Count;
+        try
+        {
+            _caseCount = await Db.Cases.CountAsync();
+            _openCaseCount = await Db.Cases.CountAsync(c =>
+                c.State != InspectionWorkflowState.Submitted &&
+                c.State != InspectionWorkflowState.Closed &&
+                c.State != InspectionWorkflowState.Cancelled);
+            _submittedCaseCount = await Db.Cases.CountAsync(c =>
+                c.State == InspectionWorkflowState.Submitted ||
+                c.State == InspectionWorkflowState.Closed);
+        }
+        catch { }
     }
 }

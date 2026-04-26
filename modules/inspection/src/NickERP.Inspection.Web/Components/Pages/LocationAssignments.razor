@@ -1,0 +1,168 @@
+@page "/location-assignments"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Platform.Identity.Database
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject IdentityDbContext Identity
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>User assignments — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>User → location assignments</h1>
+        <p class="inspection-page-subtitle">Who can see which locations' cases. The federation lever from the original vision.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-card">
+        <h2 class="inspection-card-title">Add assignment</h2>
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="add-assignment" class="inspection-form">
+            <div class="inspection-form-row">
+                <label>
+                    <span>User</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.UserId">
+                        <option value="">— pick user —</option>
+                        @foreach (var u in _users)
+                        {
+                            <option value="@u.Id">@u.Email — @u.DisplayName</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label>
+                    <span>Location</span>
+                    <InputSelect class="inspection-input" @bind-Value="_form.LocationId">
+                        <option value="">— pick location —</option>
+                        @foreach (var l in _locations)
+                        {
+                            <option value="@l.Id">@l.Code — @l.Name</option>
+                        }
+                    </InputSelect>
+                </label>
+                <label>
+                    <span>Roles (comma-separated)</span>
+                    <InputText class="inspection-input" @bind-Value="_form.Roles" placeholder="analyst, supervisor" />
+                </label>
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-button inspection-button-primary">Assign</button>
+                @if (!string.IsNullOrEmpty(_message)) { <span class="inspection-form-message">@_message</span> }
+            </div>
+        </EditForm>
+    </div>
+
+    @if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0) { <p class="inspection-empty">No assignments yet.</p> }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>User</th><th>Location</th><th>Roles</th><th>Active</th><th>Granted</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td>@_usersById.GetValueOrDefault(r.IdentityUserId)?.Email</td>
+                        <td>@_locationsById.GetValueOrDefault(r.LocationId)?.Code</td>
+                        <td><code>@r.Roles</code></td>
+                        <td>@(r.IsActive ? "✅" : "❌")</td>
+                        <td>@r.GrantedAt.ToString("yyyy-MM-dd")</td>
+                        <td>
+                            @if (r.IsActive)
+                            {
+                                <button class="inspection-button" @onclick="() => RevokeAsync(r.Id)">Revoke</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<LocationAssignment>? _rows;
+    private List<NickERP.Platform.Identity.Entities.IdentityUser> _users = new();
+    private Dictionary<Guid, NickERP.Platform.Identity.Entities.IdentityUser> _usersById = new();
+    private List<Location> _locations = new();
+    private Dictionary<Guid, Location> _locationsById = new();
+    private string _message = string.Empty;
+    private Guid _currentUserId;
+
+    [SupplyParameterFromForm] private AssignForm _form { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        Guid.TryParse(state.User?.FindFirst("nickerp:id")?.Value, out _currentUserId);
+
+        _users = await Identity.Users.AsNoTracking().OrderBy(u => u.Email).ToListAsync();
+        _usersById = _users.ToDictionary(u => u.Id);
+        _locations = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
+        _locationsById = _locations.ToDictionary(l => l.Id);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _rows = await Db.LocationAssignments.AsNoTracking().OrderByDescending(a => a.GrantedAt).ToListAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_form.UserId == Guid.Empty || _form.LocationId == Guid.Empty)
+        {
+            _message = "User and location are required."; return;
+        }
+        if (!Tenant.IsResolved) Tenant.SetTenant(1);
+
+        var existing = await Db.LocationAssignments
+            .FirstOrDefaultAsync(a => a.IdentityUserId == _form.UserId && a.LocationId == _form.LocationId);
+        if (existing is not null && existing.IsActive)
+        {
+            _message = "Already assigned. Update or revoke first."; return;
+        }
+        if (existing is not null)
+        {
+            existing.IsActive = true;
+            existing.Roles = _form.Roles?.Trim() ?? string.Empty;
+        }
+        else
+        {
+            Db.LocationAssignments.Add(new LocationAssignment
+            {
+                IdentityUserId = _form.UserId,
+                LocationId = _form.LocationId,
+                Roles = _form.Roles?.Trim() ?? string.Empty,
+                IsActive = true,
+                GrantedAt = DateTimeOffset.UtcNow,
+                GrantedByUserId = _currentUserId == Guid.Empty ? _form.UserId : _currentUserId,
+                TenantId = Tenant.TenantId
+            });
+        }
+        await Db.SaveChangesAsync();
+        _form = new AssignForm();
+        _message = "Assigned.";
+        await Reload();
+    }
+
+    private async Task RevokeAsync(Guid assignmentId)
+    {
+        var row = await Db.LocationAssignments.FirstOrDefaultAsync(a => a.Id == assignmentId);
+        if (row is null) return;
+        row.IsActive = false;
+        await Db.SaveChangesAsync();
+        await Reload();
+    }
+
+    public sealed class AssignForm
+    {
+        public Guid UserId { get; set; }
+        public Guid LocationId { get; set; }
+        public string Roles { get; set; } = "analyst";
+    }
+}
