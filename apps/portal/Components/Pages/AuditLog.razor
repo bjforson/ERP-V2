@@ -1,0 +1,83 @@
+@page "/audit"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Audit.Database
+@inject AuditDbContext Audit
+
+<PageTitle>Audit log — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Audit log</h1>
+        <p class="portal-page-subtitle">Every state-change event across the platform, append-only.</p>
+    </div>
+</header>
+
+<section class="portal-section">
+    <div class="portal-filter-bar">
+        <input class="portal-input" placeholder="Filter by event type (e.g. nickerp.identity)" @bind="_typeFilter" @bind:event="oninput" />
+        <input class="portal-input" placeholder="Filter by entity type" @bind="_entityFilter" @bind:event="oninput" />
+        <button class="portal-button" @onclick="Reload">Refresh</button>
+    </div>
+
+    @if (_rows is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_rows.Count == 0)
+    {
+        <p class="portal-empty">No events match. Emit something via <code>IEventPublisher</code> to populate this table.</p>
+    }
+    else
+    {
+        <table class="portal-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Event type</th>
+                    <th>Entity</th>
+                    <th>Actor</th>
+                    <th>Tenant</th>
+                    <th>Correlation</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td><code>@r.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                        <td><code>@r.EventType</code></td>
+                        <td>@r.EntityType <code>@r.EntityId</code></td>
+                        <td>@(r.ActorUserId?.ToString()[..8] ?? "—")</td>
+                        <td>@r.TenantId</td>
+                        <td><code>@(r.CorrelationId?[..Math.Min(12, r.CorrelationId.Length)] ?? "—")</code></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private string _typeFilter = string.Empty;
+    private string _entityFilter = string.Empty;
+    private List<DomainEventRow>? _rows;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        var q = Audit.Events.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(_typeFilter))
+        {
+            var f = _typeFilter.Trim();
+            q = q.Where(e => e.EventType.StartsWith(f));
+        }
+        if (!string.IsNullOrWhiteSpace(_entityFilter))
+        {
+            var f = _entityFilter.Trim();
+            q = q.Where(e => e.EntityType == f);
+        }
+        _rows = await q.OrderByDescending(e => e.OccurredAt).Take(100).ToListAsync();
+    }
+}

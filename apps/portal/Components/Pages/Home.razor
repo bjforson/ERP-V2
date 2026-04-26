@@ -1,0 +1,53 @@
+@page "/"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Audit.Database
+@using NickERP.Platform.Identity.Database
+@using NickERP.Platform.Tenancy.Database
+@inject IdentityDbContext Identity
+@inject TenancyDbContext Tenancy
+@inject AuditDbContext Audit
+
+<PageTitle>NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Welcome back<AuthorizeView Context="auth">, <span class="portal-page-greeting">@auth.User.FindFirst("nickerp:display_name")?.Value</span></AuthorizeView></h1>
+        <p class="portal-page-subtitle">One pane for the whole NickERP suite.</p>
+    </div>
+</header>
+
+<section class="portal-stats">
+    <StatTile Label="Tenants" Value="@_tenantCount" Color="var(--nickerp-color-primary)" Href="/tenants" />
+    <StatTile Label="Users" Value="@_userCount" Color="var(--nickerp-color-accent)" />
+    <StatTile Label="App scopes" Value="@_scopeCount" Color="#7c3aed" />
+    <StatTile Label="Audit events" Value="@_eventCount" Color="#16a34a" Href="/audit" />
+</section>
+
+<section class="portal-section">
+    <h2>Apps</h2>
+    <div class="portal-app-grid">
+        <AppCard Title="NickHR" Description="People, payroll, attendance" Href="https://hr.nickscan.net" Color="#7c3aed" Initial="H" />
+        <AppCard Title="NSCIM (v1)" Description="Customs cargo scan portal" Href="https://scan.nickscan.net" Color="#06b6d4" Initial="S" />
+        <AppCard Title="Inspection v2" Description="Federated inspection (in build)" Href="http://localhost:5410" Color="#0ea5e9" Initial="I" />
+        <AppCard Title="Petty Cash" Description="Track B.3.1 — pathfinder" Href="#" Color="#16a34a" Initial="F" Disabled="true" />
+        <AppCard Title="Audit log" Description="Every event across the suite" Href="/audit" Color="#dc2626" Initial="A" />
+        <AppCard Title="Health" Description="Service status rollup" Href="/health" Color="#475569" Initial="?" />
+    </div>
+</section>
+
+@code {
+    private long _tenantCount;
+    private long _userCount;
+    private long _scopeCount;
+    private long _eventCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Best-effort — surface zeros if any of the three DBs is unreachable rather than blowing up the home page.
+        try { _tenantCount = await Tenancy.Tenants.LongCountAsync(); } catch { _tenantCount = 0; }
+        try { _userCount = await Identity.Users.LongCountAsync(); } catch { _userCount = 0; }
+        try { _scopeCount = await Identity.AppScopes.LongCountAsync(); } catch { _scopeCount = 0; }
+        try { _eventCount = await Audit.Events.LongCountAsync(); } catch { _eventCount = 0; }
+    }
+}

@@ -24,7 +24,13 @@ public sealed class AuditDbContext : DbContext
 
     public AuditDbContext(DbContextOptions<AuditDbContext> options) : base(options) { }
 
-    internal DbSet<DomainEventRow> Events => Set<DomainEventRow>();
+    /// <summary>
+    /// Audit-event rows. Exposed publicly so the audit-admin UI (Portal) can
+    /// read them. Modules NEVER query this directly — they emit via
+    /// <see cref="Events.IEventPublisher"/>. This DbSet is read-mostly; the
+    /// only writer is <see cref="DbEventPublisher"/>.
+    /// </summary>
+    public DbSet<DomainEventRow> Events => Set<DomainEventRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

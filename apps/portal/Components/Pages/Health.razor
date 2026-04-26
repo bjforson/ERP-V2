@@ -1,0 +1,107 @@
+@page "/health"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Audit.Database
+@using NickERP.Platform.Identity.Database
+@using NickERP.Platform.Tenancy.Database
+@inject IdentityDbContext Identity
+@inject TenancyDbContext Tenancy
+@inject AuditDbContext Audit
+@inject IHttpClientFactory HttpFactory
+
+<PageTitle>Health — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Health</h1>
+        <p class="portal-page-subtitle">Live status of every NickERP service the Portal knows about.</p>
+    </div>
+</header>
+
+<section class="portal-section">
+    @if (_results is null)
+    {
+        <p>Probing services…</p>
+    }
+    else
+    {
+        <table class="portal-table">
+            <thead><tr><th>Service</th><th>Status</th><th>Detail</th></tr></thead>
+            <tbody>
+                @foreach (var r in _results)
+                {
+                    <tr>
+                        <td>@r.Name</td>
+                        <td>
+                            <span class="portal-pill @(r.Healthy ? "is-ok" : "is-down")">
+                                @(r.Healthy ? "OK" : "DOWN")
+                            </span>
+                        </td>
+                        <td><code>@r.Detail</code></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<HealthRow>? _results;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        var rows = new List<HealthRow>();
+
+        await Probe(rows, "Postgres / identity schema", async () =>
+        {
+            await Identity.Database.CanConnectAsync();
+            return $"connected ({await Identity.Users.CountAsync()} users)";
+        });
+        await Probe(rows, "Postgres / tenancy schema", async () =>
+        {
+            await Tenancy.Database.CanConnectAsync();
+            return $"connected ({await Tenancy.Tenants.CountAsync()} tenants)";
+        });
+        await Probe(rows, "Postgres / audit schema", async () =>
+        {
+            await Audit.Database.CanConnectAsync();
+            return $"connected ({await Audit.Events.CountAsync()} events)";
+        });
+
+        await ProbeHttp(rows, "Seq", "http://localhost:5341/api");
+
+        _results = rows;
+    }
+
+    private static async Task Probe(List<HealthRow> rows, string name, Func<Task<string>> body)
+    {
+        try
+        {
+            var detail = await body();
+            rows.Add(new HealthRow(name, true, detail));
+        }
+        catch (Exception ex)
+        {
+            rows.Add(new HealthRow(name, false, ex.Message));
+        }
+    }
+
+    private async Task ProbeHttp(List<HealthRow> rows, string name, string url)
+    {
+        try
+        {
+            using var http = HttpFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(2);
+            using var resp = await http.GetAsync(url);
+            rows.Add(new HealthRow(name, resp.IsSuccessStatusCode, $"HTTP {(int)resp.StatusCode} from {url}"));
+        }
+        catch (Exception ex)
+        {
+            rows.Add(new HealthRow(name, false, ex.Message));
+        }
+    }
+
+    private sealed record HealthRow(string Name, bool Healthy, string Detail);
+}

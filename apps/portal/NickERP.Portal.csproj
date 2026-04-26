@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <RootNamespace>NickERP.Portal</RootNamespace>
+    <AssemblyName>NickERP.Portal</AssemblyName>
+    <Description>NickERP Portal v2 — suite landing page. Live stats from the platform, audit log search, tenants admin, health rollup, and the AppSwitcher hub. Runs on the new platform stack (Identity / Tenancy / Audit / Web.Shared) end-to-end.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Logging\NickERP.Platform.Logging.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Identity.Database\NickERP.Platform.Identity.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy.Database\NickERP.Platform.Tenancy.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Web.Shared\NickERP.Platform.Web.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

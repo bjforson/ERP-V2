@@ -1,0 +1,260 @@
+/*
+ * Portal-specific styles. Composes on top of the shared tokens defined in
+ * NickERP.Platform.Web.Shared/wwwroot/tokens.css.
+ */
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--nickerp-color-bg-page);
+    color: var(--nickerp-color-text);
+    font-family: var(--nickerp-font-sans);
+    font-size: var(--nickerp-font-size-base);
+    line-height: var(--nickerp-line-height-base);
+}
+
+a { color: var(--nickerp-color-primary); }
+
+.portal-main {
+    min-height: calc(100vh - var(--nickerp-topnav-height));
+}
+
+.portal-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--nickerp-space-8) var(--nickerp-space-4);
+}
+
+.portal-page-header {
+    margin-bottom: var(--nickerp-space-6);
+}
+
+.portal-page-header h1 {
+    margin: 0;
+    font-size: var(--nickerp-font-size-xl);
+    font-weight: var(--nickerp-font-weight-semibold);
+}
+
+.portal-page-greeting {
+    color: var(--nickerp-color-primary);
+}
+
+.portal-page-subtitle {
+    margin: var(--nickerp-space-1) 0 0 0;
+    color: var(--nickerp-color-text-muted);
+    font-size: var(--nickerp-font-size-sm);
+}
+
+.portal-section { margin-bottom: var(--nickerp-space-8); }
+.portal-section h2 {
+    margin: 0 0 var(--nickerp-space-3) 0;
+    font-size: var(--nickerp-font-size-lg);
+    font-weight: var(--nickerp-font-weight-semibold);
+}
+
+/* Stat tiles ------------------------------------------------------------- */
+.portal-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--nickerp-space-4);
+    margin-bottom: var(--nickerp-space-8);
+}
+
+.portal-stat-tile {
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-top: 3px solid var(--nickerp-color-primary);
+    border-radius: var(--nickerp-radius-md);
+    padding: var(--nickerp-space-4);
+    box-shadow: var(--nickerp-shadow-sm);
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+.portal-stat-tile-link:hover {
+    box-shadow: var(--nickerp-shadow-md);
+    transform: translateY(-1px);
+    transition: all 120ms;
+}
+
+.portal-stat-value {
+    font-size: 2rem;
+    font-weight: var(--nickerp-font-weight-bold);
+    line-height: 1.1;
+}
+
+.portal-stat-label {
+    margin-top: var(--nickerp-space-1);
+    color: var(--nickerp-color-text-muted);
+    font-size: var(--nickerp-font-size-sm);
+}
+
+/* App grid -------------------------------------------------------------- */
+.portal-app-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--nickerp-space-3);
+}
+
+.portal-app-card {
+    display: flex;
+    align-items: center;
+    gap: var(--nickerp-space-3);
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    padding: var(--nickerp-space-3) var(--nickerp-space-4);
+    text-decoration: none;
+    color: inherit;
+    transition: box-shadow 120ms, transform 120ms;
+}
+
+.portal-app-card:hover {
+    box-shadow: var(--nickerp-shadow-md);
+    transform: translateY(-1px);
+}
+
+.portal-app-card-disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.portal-app-card-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--nickerp-radius-md);
+    color: var(--nickerp-color-text-inverse);
+    font-weight: var(--nickerp-font-weight-bold);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.portal-app-card-text { flex: 1; }
+.portal-app-card-title { font-weight: var(--nickerp-font-weight-semibold); }
+.portal-app-card-desc {
+    font-size: var(--nickerp-font-size-sm);
+    color: var(--nickerp-color-text-muted);
+}
+
+/* Tables / cards / forms ----------------------------------------------- */
+.portal-card {
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    padding: var(--nickerp-space-4);
+    margin-bottom: var(--nickerp-space-4);
+    box-shadow: var(--nickerp-shadow-sm);
+}
+
+.portal-card-title {
+    margin: 0 0 var(--nickerp-space-3) 0;
+    font-size: var(--nickerp-font-size-base);
+    font-weight: var(--nickerp-font-weight-semibold);
+}
+
+.portal-form { display: grid; gap: var(--nickerp-space-3); }
+.portal-form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--nickerp-space-3);
+}
+.portal-form label {
+    display: flex;
+    flex-direction: column;
+    gap: var(--nickerp-space-1);
+    font-size: var(--nickerp-font-size-sm);
+    font-weight: var(--nickerp-font-weight-medium);
+}
+.portal-form-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--nickerp-space-3);
+}
+.portal-form-message {
+    font-size: var(--nickerp-font-size-sm);
+    color: var(--nickerp-color-success);
+}
+
+.portal-input {
+    height: 36px;
+    padding: 0 var(--nickerp-space-3);
+    border-radius: var(--nickerp-radius-md);
+    border: 1px solid var(--nickerp-color-border-strong);
+    background: var(--nickerp-color-bg-surface);
+    color: inherit;
+    font-size: var(--nickerp-font-size-sm);
+    outline: none;
+}
+.portal-input:focus { border-color: var(--nickerp-color-primary); }
+
+.portal-button {
+    height: 36px;
+    padding: 0 var(--nickerp-space-4);
+    border-radius: var(--nickerp-radius-md);
+    border: 1px solid var(--nickerp-color-border-strong);
+    background: var(--nickerp-color-bg-surface);
+    color: inherit;
+    cursor: pointer;
+    font-weight: var(--nickerp-font-weight-medium);
+}
+.portal-button:hover { background: var(--nickerp-color-bg-elevated); }
+.portal-button-primary {
+    background: var(--nickerp-color-primary);
+    color: var(--nickerp-color-text-inverse);
+    border-color: var(--nickerp-color-primary);
+}
+.portal-button-primary:hover { background: var(--nickerp-color-primary-hover); }
+
+.portal-filter-bar {
+    display: flex;
+    gap: var(--nickerp-space-2);
+    margin-bottom: var(--nickerp-space-3);
+    flex-wrap: wrap;
+}
+
+.portal-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    overflow: hidden;
+    font-size: var(--nickerp-font-size-sm);
+}
+.portal-table thead {
+    background: var(--nickerp-color-bg-elevated);
+}
+.portal-table th, .portal-table td {
+    padding: var(--nickerp-space-2) var(--nickerp-space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--nickerp-color-divider);
+}
+.portal-table tr:last-child td { border-bottom: 0; }
+
+.portal-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--nickerp-radius-full);
+    font-size: var(--nickerp-font-size-xs);
+    font-weight: var(--nickerp-font-weight-medium);
+    background: var(--nickerp-color-bg-elevated);
+}
+.portal-pill.is-ok { background: rgba(22, 163, 74, 0.12); color: var(--nickerp-color-success); }
+.portal-pill.is-down { background: rgba(220, 38, 38, 0.12); color: var(--nickerp-color-danger); }
+.portal-pill.is-coming-soon { background: rgba(202, 138, 4, 0.12); color: var(--nickerp-color-warning); }
+
+.portal-empty {
+    color: var(--nickerp-color-text-muted);
+    font-style: italic;
+    padding: var(--nickerp-space-4) 0;
+}
+
+code {
+    font-family: var(--nickerp-font-mono);
+    font-size: 0.9em;
+    background: var(--nickerp-color-bg-elevated);
+    padding: 1px 4px;
+    border-radius: var(--nickerp-radius-sm);
+}

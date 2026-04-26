@@ -5,11 +5,10 @@ namespace NickERP.Platform.Audit.Database;
 /// <summary>
 /// EF-mapped row shape for <c>audit.events</c>. Mirrors
 /// <see cref="Audit.Events.DomainEvent"/> but is mutable to satisfy EF's
-/// materialisation. Application code never sees this — it sees
-/// <see cref="Audit.Events.DomainEvent"/>; mapping happens inside
-/// <see cref="DbEventPublisher"/>.
+/// materialisation. Public so the audit-admin UI (Portal) can project
+/// rows directly; module code mostly works with <see cref="Audit.Events.DomainEvent"/>.
 /// </summary>
-internal sealed class DomainEventRow
+public sealed class DomainEventRow
 {
     public Guid EventId { get; set; }
     public long TenantId { get; set; }

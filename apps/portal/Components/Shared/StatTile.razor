@@ -1,0 +1,25 @@
+@*
+ * StatTile — one of the four big-number tiles on the home page.
+ *@
+
+@if (string.IsNullOrEmpty(Href))
+{
+    <div class="portal-stat-tile" style="border-top-color: @Color">
+        <div class="portal-stat-value">@Value.ToString("N0")</div>
+        <div class="portal-stat-label">@Label</div>
+    </div>
+}
+else
+{
+    <a class="portal-stat-tile portal-stat-tile-link" style="border-top-color: @Color" href="@Href">
+        <div class="portal-stat-value">@Value.ToString("N0")</div>
+        <div class="portal-stat-label">@Label</div>
+    </a>
+}
+
+@code {
+    [Parameter] public string Label { get; set; } = string.Empty;
+    [Parameter] public long Value { get; set; }
+    [Parameter] public string Color { get; set; } = "var(--nickerp-color-primary)";
+    [Parameter] public string? Href { get; set; }
+}
