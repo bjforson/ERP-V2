@@ -1,0 +1,62 @@
+.nickerp-bell {
+    position: relative;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    padding: var(--nickerp-space-2);
+    border-radius: var(--nickerp-radius-md);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nickerp-bell:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.nickerp-bell-icon {
+    color: var(--nickerp-color-text-on-topnav);
+}
+
+.nickerp-bell-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: var(--nickerp-radius-full);
+    background: var(--nickerp-color-danger);
+    color: var(--nickerp-color-text-inverse);
+    font-size: 0.65rem;
+    font-weight: var(--nickerp-font-weight-bold);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nickerp-bell-dropdown {
+    position: absolute;
+    top: calc(var(--nickerp-topnav-height) - var(--nickerp-space-3));
+    right: var(--nickerp-space-12);
+    min-width: 320px;
+    background: var(--nickerp-color-bg-surface);
+    color: var(--nickerp-color-text);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    box-shadow: var(--nickerp-shadow-lg);
+    z-index: 50;
+}
+
+.nickerp-bell-header {
+    padding: var(--nickerp-space-3) var(--nickerp-space-4);
+    font-weight: var(--nickerp-font-weight-semibold);
+    border-bottom: 1px solid var(--nickerp-color-divider);
+}
+
+.nickerp-bell-empty {
+    padding: var(--nickerp-space-4);
+    color: var(--nickerp-color-text-muted);
+    font-size: var(--nickerp-font-size-sm);
+}

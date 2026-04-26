@@ -1,0 +1,99 @@
+.nickerp-usermenu {
+    position: relative;
+    cursor: pointer;
+    user-select: none;
+}
+
+.nickerp-usermenu-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--nickerp-radius-full);
+    background: var(--nickerp-color-accent);
+    color: var(--nickerp-color-text-inverse);
+    font-weight: var(--nickerp-font-weight-semibold);
+    font-size: var(--nickerp-font-size-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 120ms;
+}
+
+.nickerp-usermenu-avatar:hover {
+    background: var(--nickerp-color-accent-hover);
+}
+
+.nickerp-usermenu-dropdown {
+    position: absolute;
+    top: calc(var(--nickerp-topnav-height) - var(--nickerp-space-3));
+    right: 0;
+    min-width: 280px;
+    background: var(--nickerp-color-bg-surface);
+    color: var(--nickerp-color-text);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    box-shadow: var(--nickerp-shadow-lg);
+    z-index: 50;
+    font-size: var(--nickerp-font-size-sm);
+    cursor: default;
+}
+
+.nickerp-usermenu-header {
+    padding: var(--nickerp-space-3) var(--nickerp-space-4);
+    border-bottom: 1px solid var(--nickerp-color-divider);
+}
+
+.nickerp-usermenu-name {
+    font-weight: var(--nickerp-font-weight-semibold);
+    font-size: var(--nickerp-font-size-base);
+}
+
+.nickerp-usermenu-email {
+    color: var(--nickerp-color-text-muted);
+    font-size: var(--nickerp-font-size-xs);
+    margin-top: var(--nickerp-space-1);
+}
+
+.nickerp-usermenu-section {
+    padding: var(--nickerp-space-3) var(--nickerp-space-4);
+    border-bottom: 1px solid var(--nickerp-color-divider);
+}
+
+.nickerp-usermenu-section-title {
+    font-size: var(--nickerp-font-size-xs);
+    text-transform: uppercase;
+    color: var(--nickerp-color-text-muted);
+    letter-spacing: 0.4px;
+    margin-bottom: var(--nickerp-space-2);
+}
+
+.nickerp-usermenu-scopes {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--nickerp-space-1);
+}
+
+.nickerp-usermenu-scopes li {
+    background: var(--nickerp-color-bg-elevated);
+    color: var(--nickerp-color-text);
+    padding: 2px 8px;
+    border-radius: var(--nickerp-radius-sm);
+    font-size: var(--nickerp-font-size-xs);
+    font-family: var(--nickerp-font-mono);
+}
+
+.nickerp-usermenu-footer {
+    padding: var(--nickerp-space-3) var(--nickerp-space-4);
+}
+
+.nickerp-usermenu-link {
+    color: var(--nickerp-color-primary);
+    text-decoration: none;
+    font-weight: var(--nickerp-font-weight-medium);
+}
+
+.nickerp-usermenu-link:hover {
+    text-decoration: underline;
+}

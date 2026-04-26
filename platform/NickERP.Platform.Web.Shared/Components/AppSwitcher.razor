@@ -1,0 +1,62 @@
+@*
+ * AppSwitcher — grid of NickERP sub-apps the user can jump to. Hops
+ * between hostnames (hr.nickscan.net, scan.nickscan.net, finance.nickscan.net,
+ * etc.) — Cloudflare Access shares the SSO session so no re-login.
+ *
+ * Default app list mirrors the well-known scopes from
+ * NickERP.Platform.Identity.Entities.AppScope.WellKnown. Hosts can
+ * override the list if they have additional or fewer apps.
+ *
+ * Roadmap: A.6.6.
+ *@
+
+<div class="nickerp-appswitcher" @onclick="Toggle" tabindex="0">
+    <button class="nickerp-appswitcher-trigger" type="button" aria-label="Switch app">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="6" height="6" rx="1.5" />
+            <rect x="12" y="2" width="6" height="6" rx="1.5" />
+            <rect x="2" y="12" width="6" height="6" rx="1.5" />
+            <rect x="12" y="12" width="6" height="6" rx="1.5" />
+        </svg>
+    </button>
+
+    @if (_open)
+    {
+        <div class="nickerp-appswitcher-grid" @onclick:stopPropagation>
+            @foreach (var app in Apps)
+            {
+                var isCurrent = string.Equals(app.Code, CurrentApp, StringComparison.OrdinalIgnoreCase);
+                <a class="nickerp-appswitcher-card @(isCurrent ? "is-current" : null)"
+                   href="@app.Href" target="@(isCurrent ? null : "_self")">
+                    <div class="nickerp-appswitcher-mark" style="background: @app.Color">@app.Initial</div>
+                    <div class="nickerp-appswitcher-name">@app.DisplayName</div>
+                </a>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private bool _open;
+
+    /// <summary>The current app's <c>AppScope.Code</c>, used to highlight the current entry.</summary>
+    [Parameter] public string? CurrentApp { get; set; }
+
+    /// <summary>App list to render. Defaults to the well-known suite.</summary>
+    [Parameter] public IReadOnlyList<AppEntry> Apps { get; set; } = DefaultApps;
+
+    private void Toggle() => _open = !_open;
+
+    /// <summary>One sub-app entry in the switcher.</summary>
+    public sealed record AppEntry(string Code, string DisplayName, string Href, string Initial, string Color);
+
+    private static readonly IReadOnlyList<AppEntry> DefaultApps = new AppEntry[]
+    {
+        new("portal",            "Portal",          "https://erp.nickscan.net",     "P", "#1d4ed8"),
+        new("nscim",             "NSCIM (v1)",      "https://scan.nickscan.net",    "S", "#06b6d4"),
+        new("nickhr",            "NickHR",          "https://hr.nickscan.net",      "H", "#7c3aed"),
+        new("inspection-v2",     "Inspection v2",   "https://inspection.nickscan.net", "I", "#0ea5e9"),
+        new("finance.petty-cash","Petty Cash",      "https://finance.nickscan.net/petty-cash", "F", "#16a34a"),
+        new("platform.admin",    "Platform Admin",  "https://admin.nickscan.net",   "A", "#475569"),
+    };
+}

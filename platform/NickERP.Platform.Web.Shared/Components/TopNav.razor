@@ -1,0 +1,99 @@
+@*
+ * TopNav — the shared chrome that renders at the top of every NickERP
+ * sub-app. Brand on the left, search in the middle, notifications +
+ * user menu on the right. Composes UserMenu, NotificationBell, and
+ * AppSwitcher.
+ *
+ * Sub-app usage in MainLayout.razor:
+ *
+ *   <NickERP.Platform.Web.Shared.Components.TopNav
+ *       AppName="NickHR"
+ *       AppHomeHref="/" />
+ *
+ * Roadmap: A.6.2.
+ *@
+
+<header class="nickerp-topnav">
+    <div class="nickerp-topnav-inner">
+        <div class="nickerp-topnav-brand">
+            <a class="nickerp-topnav-brand-link" href="@AppHomeHref">
+                <span class="nickerp-topnav-brand-mark">N</span>
+                <span class="nickerp-topnav-brand-text">@(string.IsNullOrWhiteSpace(AppName) ? "NickERP" : AppName)</span>
+            </a>
+        </div>
+
+        @if (ShowSearch)
+        {
+            <div class="nickerp-topnav-search">
+                @if (SearchSlot is not null)
+                {
+                    @SearchSlot
+                }
+                else
+                {
+                    <input type="search" class="nickerp-topnav-search-input"
+                           placeholder="@SearchPlaceholder" aria-label="@SearchPlaceholder"
+                           disabled="@(SearchSlot is null && !SearchEnabled)" />
+                }
+            </div>
+        }
+
+        <nav class="nickerp-topnav-actions" aria-label="App actions">
+            @if (AppSwitcherSlot is not null)
+            {
+                @AppSwitcherSlot
+            }
+            else
+            {
+                <AppSwitcher CurrentApp="@AppName" />
+            }
+
+            @if (NotificationsSlot is not null)
+            {
+                @NotificationsSlot
+            }
+            else
+            {
+                <NotificationBell />
+            }
+
+            @if (UserMenuSlot is not null)
+            {
+                @UserMenuSlot
+            }
+            else
+            {
+                <UserMenu />
+            }
+        </nav>
+    </div>
+</header>
+
+@code {
+    /// <summary>Display name of the current app (e.g. "NickHR", "NSCIM"). Shown next to the brand mark.</summary>
+    [Parameter] public string AppName { get; set; } = "NickERP";
+
+    /// <summary>URL the brand link points at — usually the app's home route.</summary>
+    [Parameter] public string AppHomeHref { get; set; } = "/";
+
+    /// <summary>Render the search slot. Default true.</summary>
+    [Parameter] public bool ShowSearch { get; set; } = true;
+
+    /// <summary>Whether the default placeholder input is enabled. Set true once the app's search hook is wired.</summary>
+    [Parameter] public bool SearchEnabled { get; set; }
+
+    /// <summary>Placeholder text on the default search input.</summary>
+    [Parameter] public string SearchPlaceholder { get; set; } = "Search across the suite…";
+
+    /// <summary>Optional search override — supply a real search component (e.g. an autocomplete) instead of the placeholder input.</summary>
+    [Parameter] public RenderFragment? SearchSlot { get; set; }
+
+    /// <summary>Optional notifications-bell override.</summary>
+    [Parameter] public RenderFragment? NotificationsSlot { get; set; }
+
+    /// <summary>Optional user-menu override.</summary>
+    [Parameter] public RenderFragment? UserMenuSlot { get; set; }
+
+    /// <summary>Optional app-switcher override.</summary>
+    [Parameter] public RenderFragment? AppSwitcherSlot { get; set; }
+}

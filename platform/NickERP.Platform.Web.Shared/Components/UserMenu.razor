@@ -1,0 +1,87 @@
+@*
+ * UserMenu — circle avatar with the current user's initials, opens a
+ * dropdown with display name, email, scopes, sign-out link.
+ *
+ * Reads HttpContext.User claims emitted by NickERP.Platform.Identity
+ * (NickErpClaims.DisplayName / Email / Scope).
+ *
+ * Roadmap: A.6.5.
+ *@
+
+@using System.Security.Claims
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+
+<div class="nickerp-usermenu" @onclick="Toggle" tabindex="0">
+    <div class="nickerp-usermenu-avatar" title="@DisplayName">@Initials</div>
+
+    @if (_open)
+    {
+        <div class="nickerp-usermenu-dropdown" @onclick:stopPropagation>
+            <div class="nickerp-usermenu-header">
+                <div class="nickerp-usermenu-name">@DisplayName</div>
+                @if (!string.IsNullOrEmpty(Email))
+                {
+                    <div class="nickerp-usermenu-email">@Email</div>
+                }
+            </div>
+
+            @if (Scopes.Count > 0)
+            {
+                <div class="nickerp-usermenu-section">
+                    <div class="nickerp-usermenu-section-title">Scopes</div>
+                    <ul class="nickerp-usermenu-scopes">
+                        @foreach (var scope in Scopes)
+                        {
+                            <li>@scope</li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="nickerp-usermenu-footer">
+                <a class="nickerp-usermenu-link" href="@SignOutHref">Sign out</a>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool _open;
+
+    /// <summary>URL the sign-out link navigates to. Defaults to CF Access logout.</summary>
+    [Parameter] public string SignOutHref { get; set; } = "/cdn-cgi/access/logout";
+
+    private string DisplayName { get; set; } = "Signed out";
+    private string Email { get; set; } = string.Empty;
+    private List<string> Scopes { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            DisplayName = user.FindFirst("nickerp:display_name")?.Value
+                ?? user.FindFirst(ClaimTypes.Name)?.Value
+                ?? "Authenticated";
+            Email = user.FindFirst("nickerp:email")?.Value
+                ?? user.FindFirst(ClaimTypes.Email)?.Value
+                ?? string.Empty;
+            Scopes = user.FindAll("nickerp:scope").Select(c => c.Value).OrderBy(s => s).ToList();
+        }
+    }
+
+    private string Initials
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(DisplayName)) return "?";
+            var parts = DisplayName.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == 1) return parts[0][..1].ToUpperInvariant();
+            return $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
+        }
+    }
+
+    private void Toggle() => _open = !_open;
+}

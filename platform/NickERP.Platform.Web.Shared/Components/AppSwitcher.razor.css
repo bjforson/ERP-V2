@@ -1,0 +1,75 @@
+.nickerp-appswitcher {
+    position: relative;
+}
+
+.nickerp-appswitcher-trigger {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    padding: var(--nickerp-space-2);
+    border-radius: var(--nickerp-radius-md);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nickerp-appswitcher-trigger:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.nickerp-appswitcher-grid {
+    position: absolute;
+    top: calc(var(--nickerp-topnav-height) - var(--nickerp-space-3));
+    right: 0;
+    background: var(--nickerp-color-bg-surface);
+    color: var(--nickerp-color-text);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    box-shadow: var(--nickerp-shadow-lg);
+    padding: var(--nickerp-space-3);
+    z-index: 50;
+    display: grid;
+    grid-template-columns: repeat(3, 96px);
+    gap: var(--nickerp-space-2);
+}
+
+.nickerp-appswitcher-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--nickerp-space-2);
+    padding: var(--nickerp-space-3);
+    border-radius: var(--nickerp-radius-md);
+    text-decoration: none;
+    color: inherit;
+    transition: background 120ms;
+    text-align: center;
+}
+
+.nickerp-appswitcher-card:hover {
+    background: var(--nickerp-color-bg-elevated);
+}
+
+.nickerp-appswitcher-card.is-current {
+    background: var(--nickerp-color-bg-elevated);
+    outline: 2px solid var(--nickerp-color-primary);
+}
+
+.nickerp-appswitcher-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--nickerp-radius-md);
+    color: var(--nickerp-color-text-inverse);
+    font-weight: var(--nickerp-font-weight-bold);
+    font-size: var(--nickerp-font-size-base);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nickerp-appswitcher-name {
+    font-size: var(--nickerp-font-size-xs);
+    color: var(--nickerp-color-text);
+    font-weight: var(--nickerp-font-weight-medium);
+}

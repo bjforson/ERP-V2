@@ -1,0 +1,40 @@
+@*
+ * NotificationBell — bell icon in the TopNav showing an unread-count
+ * badge. Pulls from a future notifications inbox endpoint backed by
+ * the audit-events projection (A.5 backlog). Today it's a placeholder
+ * with a fixed badge so the chrome looks complete.
+ *
+ * Roadmap: A.6.4 (placeholder). Real wiring lands when the inbox
+ * endpoint ships.
+ *@
+
+<button class="nickerp-bell" type="button" @onclick="Toggle" aria-label="Notifications">
+    <svg class="nickerp-bell-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 8a5 5 0 0 1 10 0v3l1.5 2.5h-13L5 11V8Z" />
+        <path d="M8 16a2 2 0 0 0 4 0" />
+    </svg>
+    @if (UnreadCount > 0)
+    {
+        <span class="nickerp-bell-badge">@(UnreadCount > 99 ? "99+" : UnreadCount.ToString())</span>
+    }
+</button>
+
+@if (_open)
+{
+    <div class="nickerp-bell-dropdown">
+        <div class="nickerp-bell-header">Notifications</div>
+        <div class="nickerp-bell-empty">
+            Notifications inbox lands once the audit-events projection ships (ROADMAP A.5 backlog).
+        </div>
+    </div>
+}
+
+@code {
+    private bool _open;
+
+    /// <summary>Unread count for the badge. Defaults to 0; set from the host once the inbox endpoint exists.</summary>
+    [Parameter] public int UnreadCount { get; set; }
+
+    private void Toggle() => _open = !_open;
+}
