@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Platform.Tenancy</RootNamespace>
+    <AssemblyName>NickERP.Platform.Tenancy</AssemblyName>
+    <Description>NICKSCAN ERP SOLUTION — Multi-tenancy plumbing. Tenant entity, ITenantContext + middleware, ITenantOwned marker, EF Core SaveChanges + connection interceptors that stamp + push tenant_id (the latter for Postgres RLS). Every NickERP service consumes this via AddNickErpTenancy() + UseNickErpTenancy(). Modules NEVER query without a tenant in scope.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- EF Core abstractions for ISaveChangesInterceptor + IDbConnectionInterceptor. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.7" />
+  </ItemGroup>
+
+</Project>
