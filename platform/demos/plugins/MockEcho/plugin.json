@@ -1,0 +1,9 @@
+{
+  "typeCode": "mock-echo",
+  "displayName": "Mock Echo Plugin",
+  "version": "0.1.0",
+  "description": "Reference plugin used by the platform's plugin-loader smoke tests. Echoes back its input, prefixed with 'echo('.",
+  "contracts": [
+    "NickERP.Platform.Plugins.Demos.MockEcho.IEchoPlugin"
+  ]
+}
