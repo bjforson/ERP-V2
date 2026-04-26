@@ -1,0 +1,40 @@
+{
+  "typeCode": "fs6000",
+  "displayName": "FS6000 (vendor)",
+  "version": "0.1.0",
+  "description": "FS6000 cargo X-ray scanner adapter. Watches a directory for completed scan sets — three sibling .img files ({stem}high.img, {stem}low.img, {stem}material.img). Decodes the 36-byte header + big-endian payload, vertically flips to vendor orientation, renders a percentile-normalized grayscale PNG preview from the high-energy channel.",
+  "contracts": [
+    "NickERP.Inspection.Scanners.Abstractions.IScannerAdapter"
+  ],
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["WatchPath"],
+    "properties": {
+      "WatchPath": {
+        "type": "string",
+        "description": "Absolute path the adapter polls for completed scan sets. Each scan is a set of three sibling .img files with matching stem (e.g. 0001high.img, 0001low.img, 0001material.img)."
+      },
+      "PollIntervalSeconds": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 5,
+        "description": "How often to scan WatchPath for new completed sets."
+      },
+      "PreviewPercentileLow": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 49.0,
+        "default": 1.0,
+        "description": "Lower percentile clip (0–49) used when normalizing the 16-bit high-energy channel to 8-bit grayscale."
+      },
+      "PreviewPercentileHigh": {
+        "type": "number",
+        "minimum": 51.0,
+        "maximum": 100.0,
+        "default": 99.0,
+        "description": "Upper percentile clip (51–100) used when normalizing the 16-bit high-energy channel to 8-bit grayscale."
+      }
+    }
+  }
+}

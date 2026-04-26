@@ -73,6 +73,7 @@ The Inspection admin loads plugins from `modules/inspection/src/NickERP.Inspecti
 cd "/c/Shared/ERP V2"
 dotnet build modules/inspection/plugins/NickERP.Inspection.Scanners.Mock
 dotnet build modules/inspection/plugins/NickERP.Inspection.ExternalSystems.Mock
+dotnet build modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000
 
 DEST="modules/inspection/src/NickERP.Inspection.Web/plugins"
 mkdir -p "$DEST"
@@ -80,6 +81,9 @@ cp modules/inspection/plugins/NickERP.Inspection.Scanners.Mock/bin/Debug/net10.0
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.Mock/bin/Debug/net10.0/plugin.json "$DEST/NickERP.Inspection.Scanners.Mock.plugin.json"
 cp modules/inspection/plugins/NickERP.Inspection.ExternalSystems.Mock/bin/Debug/net10.0/NickERP.Inspection.ExternalSystems.Mock.dll "$DEST/"
 cp modules/inspection/plugins/NickERP.Inspection.ExternalSystems.Mock/bin/Debug/net10.0/plugin.json "$DEST/NickERP.Inspection.ExternalSystems.Mock.plugin.json"
+cp modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/bin/Debug/net10.0/NickERP.Inspection.Scanners.FS6000.dll "$DEST/"
+cp modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/bin/Debug/net10.0/plugin.json "$DEST/NickERP.Inspection.Scanners.FS6000.plugin.json"
+cp modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/bin/Debug/net10.0/SixLabors.ImageSharp.dll "$DEST/"
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.Mock/bin/Debug/net10.0/NickERP.Inspection.Scanners.Abstractions.dll "$DEST/"
 cp modules/inspection/plugins/NickERP.Inspection.ExternalSystems.Mock/bin/Debug/net10.0/NickERP.Inspection.ExternalSystems.Abstractions.dll "$DEST/"
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.Mock/bin/Debug/net10.0/NickERP.Platform.Plugins.dll "$DEST/"
@@ -104,11 +108,11 @@ dotnet run
 
 ### Inspection v2 admin (http://localhost:5410)
 
-1. **/** (overview) — five stat tiles. Plugins should already show **2 loaded** (mock-scanner + mock-external).
-2. **/plugins** — confirms both mocks are registered with their contracts (`IScannerAdapter`, `IExternalSystemAdapter`) detected via reflection.
+1. **/** (overview) — five stat tiles. Plugins should already show **3 loaded** (mock-scanner + mock-external + fs6000).
+2. **/plugins** — confirms all three are registered with their contracts (`IScannerAdapter`, `IExternalSystemAdapter`) detected via reflection. The `fs6000` plugin is the real adapter ported from v1's `FS6000FormatDecoder` (header parse + 16-bit big-endian byte-swap + vertical flip).
 3. **/locations** — add `tema` / `Tema Port` / `Greater Accra` / `Africa/Accra`. Row appears.
 4. **/stations** — add `lane-1` / `Lane 1` against the Tema location. Row appears.
-5. **/scanners** — pick the `mock-scanner` plugin from the dropdown, point it at Tema, name it `Test FS6000`. Row appears.
+5. **/scanners** — pick the `fs6000` plugin from the dropdown, point it at Tema, name it `Test FS6000`. Set `WatchPath` in the config JSON to a directory you have read access to (e.g. `C:\\fs6000\\incoming`). Row appears. (`mock-scanner` is also still available if you want to test the synthetic-stream path.)
 6. **/external-systems** — pick `mock-external`, name it `Test ICUMS`, scope = `Per-location`. Row appears.
 
 After clicking through both apps, **open Seq at http://localhost:5341** and filter by `ServiceName = 'NickERP.Portal'` then `ServiceName = 'NickERP.Inspection.Web'` — you should see structured log entries for every page load + DB write, plus OpenTelemetry traces correlating the request → DB span.
@@ -165,6 +169,7 @@ C:\Shared\ERP V2\                                     ← github.com/bjforson/ER
         │   └── NickERP.Inspection.Web/               ← admin Blazor app (port 5410)
         └── plugins/
             ├── NickERP.Inspection.Scanners.Mock/     ← mock-scanner reference impl
+            ├── NickERP.Inspection.Scanners.FS6000/   ← real FS6000 adapter (decoder ported from v1)
             └── NickERP.Inspection.ExternalSystems.Mock/ ← mock-external reference impl
 ```
 

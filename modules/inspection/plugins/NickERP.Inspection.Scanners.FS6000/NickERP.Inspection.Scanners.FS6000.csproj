@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Scanners.FS6000</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Scanners.FS6000</AssemblyName>
+    <Description>NickERP Inspection v2 — FS6000 IScannerAdapter. Reads the vendor's three-channel raw .img files (high / low / material) from a watched directory, decodes them via the ported v1 FS6000FormatDecoder, and emits a percentile-normalized grayscale preview as the ParsedArtifact.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!--
+      Class libraries don't copy NuGet PackageReference DLLs to output by default,
+      but plugins are loaded from a sibling directory at runtime, not from the
+      host's resolved deps. Force NuGet deps next to the plugin DLL so the
+      plugin loader can resolve them via AssemblyLoadContext.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Scanners.Abstractions\NickERP.Inspection.Scanners.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
