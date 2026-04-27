@@ -6,7 +6,7 @@
   "contracts": [
     "NickERP.Inspection.ExternalSystems.Abstractions.IExternalSystemAdapter"
   ],
-  "minHostContractVersion": "1.0",
+  "minHostContractVersion": "1.1",
   "configSchema": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

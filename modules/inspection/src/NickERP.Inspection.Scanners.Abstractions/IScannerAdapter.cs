@@ -39,11 +39,19 @@ public sealed record ScannerCapabilities(
     bool SupportsLiveStream,
     bool SupportsDualEnergy);
 
-/// <summary>Per-instance config blob the host passes to every adapter call.</summary>
+/// <summary>
+/// Per-instance config blob the host passes to every adapter call.
+/// <para>
+/// <c>TenantId</c> is the resolved tenant for this invocation; adapters that
+/// keep static / process-wide caches MUST partition them by <c>TenantId</c>
+/// so two tenants pointing at the same physical resource don't share state.
+/// </para>
+/// </summary>
 public sealed record ScannerDeviceConfig(
     Guid DeviceId,
     Guid LocationId,
     Guid? StationId,
+    long TenantId,
     string ConfigJson);
 
 /// <summary>Outcome of a connectivity test.</summary>

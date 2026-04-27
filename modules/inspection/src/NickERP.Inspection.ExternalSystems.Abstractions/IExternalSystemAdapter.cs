@@ -40,9 +40,17 @@ public sealed record ExternalSystemCapabilities(
     bool SupportsPushNotifications,
     bool SupportsBulkFetch);
 
-/// <summary>Per-instance config the host passes on every call.</summary>
+/// <summary>
+/// Per-instance config the host passes on every call.
+/// <para>
+/// <c>TenantId</c> is the resolved tenant for this invocation; adapters that
+/// keep static / process-wide caches MUST partition them by <c>TenantId</c>
+/// so two tenants pointing at the same physical resource don't share state.
+/// </para>
+/// </summary>
 public sealed record ExternalSystemConfig(
     Guid InstanceId,
+    long TenantId,
     string ConfigJson);
 
 /// <summary>Lookup criteria for fetching authority documents.</summary>
