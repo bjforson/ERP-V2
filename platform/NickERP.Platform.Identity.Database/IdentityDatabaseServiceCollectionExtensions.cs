@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NickERP.Platform.Identity.Database.Services;
 using NickERP.Platform.Identity.Services;
+using NickERP.Platform.Tenancy;
 
 namespace NickERP.Platform.Identity.Database;
 
@@ -31,8 +32,16 @@ public static class IdentityDatabaseServiceCollectionExtensions
                 "Postgres connection string for nickerp_platform was not provided and "
                 + "NICKERP_PLATFORM_DB_CONNECTION env var is not set.");
 
-        services.AddDbContext<IdentityDbContext>(opts => opts.UseNpgsql(resolved, npgsql =>
-            npgsql.MigrationsAssembly(typeof(IdentityDbContext).Assembly.GetName().Name)));
+        services.AddDbContext<IdentityDbContext>((sp, opts) =>
+        {
+            opts.UseNpgsql(resolved, npgsql =>
+                npgsql.MigrationsAssembly(typeof(IdentityDbContext).Assembly.GetName().Name));
+            // Phase F1 — push app.tenant_id to Postgres on connection open
+            // (RLS) and stamp TenantId on inserts (defense-in-depth).
+            opts.AddInterceptors(
+                sp.GetRequiredService<TenantConnectionInterceptor>(),
+                sp.GetRequiredService<TenantOwnedEntityInterceptor>());
+        });
 
         services.AddScoped<IIdentityResolver, DbIdentityResolver>();
         return services;

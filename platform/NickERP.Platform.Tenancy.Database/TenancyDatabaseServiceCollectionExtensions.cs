@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
+// NickERP.Platform.Tenancy is referenced via ProjectReference; the
+// interceptor types live in the parent namespace.
 namespace NickERP.Platform.Tenancy.Database;
 
 /// <summary>
@@ -29,8 +31,19 @@ public static class TenancyDatabaseServiceCollectionExtensions
                 "Postgres connection string for nickerp_platform was not provided and "
                 + "NICKERP_PLATFORM_DB_CONNECTION env var is not set.");
 
-        services.AddDbContext<TenancyDbContext>(opts => opts.UseNpgsql(resolved, npgsql =>
-            npgsql.MigrationsAssembly(typeof(TenancyDbContext).Assembly.GetName().Name)));
+        services.AddDbContext<TenancyDbContext>((sp, opts) =>
+        {
+            opts.UseNpgsql(resolved, npgsql =>
+                npgsql.MigrationsAssembly(typeof(TenancyDbContext).Assembly.GetName().Name));
+            // Phase F1 — push app.tenant_id to Postgres on connection open
+            // (RLS) and stamp TenantId on inserts. Note: tenancy.tenants is
+            // intentionally NOT under RLS (root of the tenant graph), but
+            // future tenant-owned tables in this schema will be — so the
+            // interceptors stay attached.
+            opts.AddInterceptors(
+                sp.GetRequiredService<TenantConnectionInterceptor>(),
+                sp.GetRequiredService<TenantOwnedEntityInterceptor>());
+        });
 
         return services;
     }
