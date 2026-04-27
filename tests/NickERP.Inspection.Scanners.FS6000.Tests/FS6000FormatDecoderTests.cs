@@ -62,7 +62,15 @@ public sealed class FS6000FormatDecoderTests
     /// 16-bit channels get a u16 ramp (BE on disk, native after decode);
     /// 8-bit channels get a u8 ramp.
     /// </summary>
-    internal static byte[] BuildChannel(int bitDepth, byte fillSeed)
+    /// <remarks>
+    /// Sprint D4 — promoted to <c>public</c> so the E2E test
+    /// (<c>tests/NickERP.Inspection.E2E.Tests</c>) can reuse the same
+    /// synthesis logic that produced the recorded byte-parity constants
+    /// above. Keeping the synthesizer in one place is a soft contract:
+    /// the e2e test asserts the worker pipes these exact bytes through
+    /// to a thumbnail without needing to re-derive the SHA-256s.
+    /// </remarks>
+    public static byte[] BuildChannel(int bitDepth, byte fillSeed)
     {
         int payloadBytes = Width * Height * (bitDepth / 8);
         var blob = new byte[FS6000FormatDecoder.HeaderSize + payloadBytes];

@@ -1,0 +1,92 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sprint D4: End-to-End demo smoke test. Drives the whole case
+    lifecycle (FS6000 scan drop, ScannerIngestionWorker pickup, case
+    opened, thumbnail rendered, ICUMS BOE fetched, rules auto-fired,
+    verdict, submission, audit) inside a single xUnit fact, against a
+    real Postgres + the inspection web host stood up via
+    WebApplicationFactory of Program.
+
+    Docker is not available on this build host (F2's environment audit
+    flagged the same), so we use the dev Postgres on localhost:5432 and
+    create unique-suffixed databases per run; teardown drops them. The
+    plugin output directory is staged into the test's bin folder by the
+    StagePluginsForE2E target below so plugin DLLs + their plugin.json
+    sidecars are reachable by the host's PluginLoader.
+
+    Mark tests with the Integration category so unit-test runs
+    (dotnet test, filter Category not equal Integration) skip the e2e,
+    preserving F2's sub-5s unit-test runtime AC.
+  -->
+  <PropertyGroup>
+    <UseRazorBuildServer>false</UseRazorBuildServer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 10.0.7 matches the host's ASP.NET Core to avoid version drift. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.7" />
+    <PackageReference Include="Npgsql" Version="10.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Web\NickERP.Inspection.Web.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Imaging\NickERP.Inspection.Imaging.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Scanners.Abstractions\NickERP.Inspection.Scanners.Abstractions.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.ExternalSystems.Abstractions\NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Authorities.Abstractions\NickERP.Inspection.Authorities.Abstractions.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Scanners.FS6000\NickERP.Inspection.Scanners.FS6000.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.ExternalSystems.IcumsGh\NickERP.Inspection.ExternalSystems.IcumsGh.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Authorities.CustomsGh\NickERP.Inspection.Authorities.CustomsGh.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Identity.Database\NickERP.Platform.Identity.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy.Database\NickERP.Platform.Tenancy.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <!--
+      Reuse the FS6000 channel-blob synthesizer that already powers the
+      decoder's byte-parity test (FS6000FormatDecoderTests.BuildChannel).
+      The e2e test drops three of these into the watch folder; sharing
+      the synthesizer means the SHA-256 constants in the parity test stay
+      authoritative for the e2e fixture too.
+    -->
+    <ProjectReference Include="..\NickERP.Inspection.Scanners.FS6000.Tests\NickERP.Inspection.Scanners.FS6000.Tests.csproj" />
+  </ItemGroup>
+
+  <!--
+    Stage every plugin DLL + its plugin.json into a "plugins" folder
+    next to the test assembly's output, mirroring TESTING.md's manual
+    deployment recipe. The WebApplicationFactory's content root points
+    at this directory so AddNickErpPluginsEager picks them up. The
+    PluginAssembly items collect each plugin project's binary + sidecar
+    at build time.
+  -->
+  <ItemGroup>
+    <PluginDll Include="..\..\modules\inspection\plugins\NickERP.Inspection.Scanners.FS6000\bin\$(Configuration)\$(TargetFramework)\NickERP.Inspection.Scanners.FS6000.dll" />
+    <PluginDll Include="..\..\modules\inspection\plugins\NickERP.Inspection.ExternalSystems.IcumsGh\bin\$(Configuration)\$(TargetFramework)\NickERP.Inspection.ExternalSystems.IcumsGh.dll" />
+    <PluginDll Include="..\..\modules\inspection\plugins\NickERP.Inspection.Authorities.CustomsGh\bin\$(Configuration)\$(TargetFramework)\NickERP.Inspection.Authorities.CustomsGh.dll" />
+
+    <PluginManifestSrc Include="..\..\modules\inspection\plugins\NickERP.Inspection.Scanners.FS6000\bin\$(Configuration)\$(TargetFramework)\plugin.json">
+      <DestName>NickERP.Inspection.Scanners.FS6000.plugin.json</DestName>
+    </PluginManifestSrc>
+    <PluginManifestSrc Include="..\..\modules\inspection\plugins\NickERP.Inspection.ExternalSystems.IcumsGh\bin\$(Configuration)\$(TargetFramework)\plugin.json">
+      <DestName>NickERP.Inspection.ExternalSystems.IcumsGh.plugin.json</DestName>
+    </PluginManifestSrc>
+    <PluginManifestSrc Include="..\..\modules\inspection\plugins\NickERP.Inspection.Authorities.CustomsGh\bin\$(Configuration)\$(TargetFramework)\plugin.json">
+      <DestName>NickERP.Inspection.Authorities.CustomsGh.plugin.json</DestName>
+    </PluginManifestSrc>
+  </ItemGroup>
+
+  <Target Name="StagePluginsForE2E" AfterTargets="Build">
+    <Copy SourceFiles="@(PluginDll)"
+          DestinationFolder="$(OutputPath)plugins"
+          SkipUnchangedFiles="true"
+          Condition="Exists('%(PluginDll.Identity)')" />
+    <Copy SourceFiles="@(PluginManifestSrc)"
+          DestinationFiles="@(PluginManifestSrc->'$(OutputPath)plugins\%(DestName)')"
+          SkipUnchangedFiles="true"
+          Condition="Exists('%(PluginManifestSrc.Identity)')" />
+  </Target>
+
+</Project>
