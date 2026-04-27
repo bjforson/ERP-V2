@@ -2,7 +2,7 @@
 
 > **Purpose.** Operational source of truth for the next sprint (Foundation + Demo). Each work item is self-contained: an agent reading just its card has everything needed to execute. **`ROADMAP.md` says *what* and *why*; this document says *how*, *who*, and *in what order*.**
 >
-> **Updated:** 2026-04-27. Refresh the **Status** column on each work item as work lands.
+> **Updated:** 2026-04-27 (waves 1+2 shipped — main `3dee869`). Refresh the **Status** column on each work item as work lands.
 
 ---
 
@@ -515,18 +515,43 @@ After F merges, repeat for D1+D3 in parallel, then D2 (which depends on D1), the
 
 Update this table as items move. Source of truth for "where are we?"
 
-| ID | Status | Branch | PR |
+| ID | Status | Branch | Merge commit |
 |---|---|---|---|
-| F1 | pending | `plan/f1-rls-interceptors` | — |
-| F2 | pending | `plan/f2-test-foundation` | — |
-| F3 | pending | `plan/f3-plugin-contract-versions` | — |
-| F4 | pending | `plan/f4-tenant-on-plugin-configs` | — |
-| F5 | pending | `plan/f5-prod-minimum` | — |
+| F1 | **done** | merged + cleaned | `90f0d67` |
+| F2 | **done** | merged + cleaned | `2dde6db` |
+| F3 | **done** | merged + cleaned | `f941f71` |
+| F4 | **done** | merged + cleaned | `aa9abb9` |
+| F5 (slices 1+2) | **done** | merged + cleaned | `91cb390` |
+| F5 (slice 3) | **deferred** — needs identity-tenancy interlock first | `plan/f5-prod-minimum` (commit `8b29407` kept on origin) | — |
 | D1 | pending | `plan/d1-ingest-helper` | — |
 | D2 | pending | `plan/d2-scanner-ingestion-worker` | — |
-| D3 | pending | `plan/d3-auto-fire-rules` | — |
+| D3 | **done** | merged + cleaned | `3dee869` |
 | D4 | pending | `plan/d4-e2e-smoke` | — |
+
+### F5 slice 3 deferral note (added 2026-04-27)
+
+F5 slice 3 (commit `8b29407` on `plan/f5-prod-minimum`) creates a non-superuser `nscim_app` Postgres role with `LOGIN NOSUPERUSER NOBYPASSRLS`, grants per-schema CRUD, and updates `appsettings.json` to connect as `nscim_app`. The role + grants migrations are correct; verified manually that under `nscim_app`, RLS actually enforces (where as `postgres` — which has `BYPASSRLS` — silently nullified the policies F1 added).
+
+**Why deferred:** the appsettings switch breaks `DbIdentityResolver.FindUserByEmailAsync`. Auth runs *before* the tenancy middleware sets `app.tenant_id`, so under a `NOBYPASSRLS` connection the user-lookup query returns 0 rows → 401 → demo dies. The fix is architectural: either bypass tenancy on the user-lookup path (`SET app.tenant_id = '0'` for that one query, since `identity.users` is the root that establishes the tenant), or mark `IdentityUser` reads as `SECURITY DEFINER` callable. Needs design, not a hot-fix.
+
+**New work item to schedule before merging slice 3:**
+
+### F6 — Identity-Tenancy Interlock (NEW, deferred)
+
+| | |
+|---|---|
+| **Status** | pending (blocking F5 slice 3) |
+| **Predecessors** | F1 (interceptors must be in place — done) |
+| **Effort** | ~0.5–1 day |
+| **Branch** | `plan/f6-identity-tenancy-interlock` |
+
+**Deliverable.** Teach `DbIdentityResolver` (and the `NickErpAuthenticationHandler` that calls it) to perform the user-lookup hop with tenancy disabled — either by injecting an `ITenantContext.SetSystemContext()` for that one query, by using a connection-string variant that opts out of the interceptor, or by making the `identity.users` read SECURITY DEFINER on the Postgres side. Pick the least-invasive option after reviewing the auth handler's lifecycle. After this, slice 3 can merge — and `nscim_app` becomes the production posture.
+
+**Acceptance.** Switch the dev host's connection string to `nscim_app`; `/cases` still renders 200; `/healthz/ready` still returns 200; `psql -U nscim_app -d nickerp_inspection -c "SELECT count(*) FROM inspection.cases;"` (no `app.tenant_id`) still returns 0.
 
 ---
 
 *Last updated: 2026-04-27. When this plan changes substantively, bump the date and note the rationale at the top.*
+
+### Change log
+- 2026-04-27: Initial sprint draft. Wave 1 (F1+F2+F3) dispatched, merged at `2dde6db`. Wave 2 (F4+F5+D3) dispatched, merged at `3dee869`. F5 slice 3 deferred pending F6 (identity-tenancy interlock); branch + commit preserved on origin.
