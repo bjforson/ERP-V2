@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.ExternalSystems.IcumsGh\NickERP.Inspection.ExternalSystems.IcumsGh.csproj" />
+  </ItemGroup>
+
+</Project>
