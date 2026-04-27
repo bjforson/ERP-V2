@@ -6,7 +6,7 @@
   "contracts": [
     "NickERP.Inspection.Scanners.Abstractions.IScannerAdapter"
   ],
-  "minHostContractVersion": "1.0",
+  "minHostContractVersion": "1.1",
   "configSchema": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

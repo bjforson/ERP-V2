@@ -135,7 +135,7 @@ public sealed class CaseWorkflowService
 
         // Resolve the adapter plugin and stream one synthetic artifact.
         var adapter = _plugins.Resolve<IScannerAdapter>(device.TypeCode, _services);
-        var config = new ScannerDeviceConfig(device.Id, device.LocationId, device.StationId, device.ConfigJson);
+        var config = new ScannerDeviceConfig(device.Id, device.LocationId, device.StationId, tenantId, device.ConfigJson);
 
         RawScanArtifact? raw = null;
         await foreach (var item in adapter.StreamAsync(config, ct))
@@ -206,7 +206,7 @@ public sealed class CaseWorkflowService
 
         var adapter = _plugins.Resolve<IExternalSystemAdapter>(instance.TypeCode, _services);
         var docs = await adapter.FetchDocumentsAsync(
-            new ExternalSystemConfig(instance.Id, instance.ConfigJson),
+            new ExternalSystemConfig(instance.Id, tenantId, instance.ConfigJson),
             new CaseLookupCriteria(c.SubjectIdentifier, null, null),
             ct);
 
@@ -550,7 +550,7 @@ public sealed class CaseWorkflowService
         {
             var adapter = _plugins.Resolve<IExternalSystemAdapter>(instance.TypeCode, _services);
             var result = await adapter.SubmitAsync(
-                new ExternalSystemConfig(instance.Id, instance.ConfigJson),
+                new ExternalSystemConfig(instance.Id, tenantId, instance.ConfigJson),
                 new OutboundSubmissionRequest(idempotencyKey, c.SubjectIdentifier, payload),
                 ct);
 

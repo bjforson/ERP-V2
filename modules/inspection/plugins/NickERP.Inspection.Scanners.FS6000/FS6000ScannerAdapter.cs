@@ -39,7 +39,12 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
     private const string LowSuffix = "low.img";
     private const string MaterialSuffix = "material.img";
 
-    /// <summary>Stems we've already emitted this run. Bounded to avoid unbounded growth on long-lived processes.</summary>
+    /// <summary>
+    /// Stems we've already emitted this run, keyed as <c>{tenantId}|{stem}</c>
+    /// so two tenants pointing at the same physical watch path don't suppress
+    /// each other's first emission (Sprint PT, contract 1.1). Bounded to
+    /// avoid unbounded growth on long-lived processes.
+    /// </summary>
     private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _seenLock = new();
     private const int SeenMaxEntries = 4096;
@@ -92,7 +97,8 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
             foreach (var set in EnumerateScanSets(cfg.WatchPath))
             {
                 if (ct.IsCancellationRequested) yield break;
-                if (!ShouldEmit(set.Stem)) continue;
+                var seenKey = SeenKey(config.TenantId, set.Stem);
+                if (!ShouldEmit(seenKey)) continue;
 
                 RawScanArtifact? artifact = null;
                 try
@@ -103,7 +109,7 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
                 {
                     // File is mid-write or briefly locked — skip this cycle, the
                     // next pass will pick it up.
-                    Forget(set.Stem);
+                    Forget(seenKey);
                 }
 
                 if (artifact is not null)
@@ -235,11 +241,18 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
         return null;
     }
 
-    private bool ShouldEmit(string stem)
+    /// <summary>
+    /// Compose the <c>_seen</c>-set entry key. Tenant-prefixed so two tenants
+    /// can share a physical watch path without one suppressing the other.
+    /// </summary>
+    private static string SeenKey(long tenantId, string stem) =>
+        $"{tenantId}|{stem}";
+
+    private bool ShouldEmit(string seenKey)
     {
         lock (_seenLock)
         {
-            if (_seen.Contains(stem)) return false;
+            if (_seen.Contains(seenKey)) return false;
             if (_seen.Count >= SeenMaxEntries)
             {
                 // Defensive: drop the oldest half. We don't bother with
@@ -249,14 +262,14 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
                 _seen.Clear();
                 foreach (var k in trimTo) _seen.Add(k);
             }
-            _seen.Add(stem);
+            _seen.Add(seenKey);
             return true;
         }
     }
 
-    private void Forget(string stem)
+    private void Forget(string seenKey)
     {
-        lock (_seenLock) { _seen.Remove(stem); }
+        lock (_seenLock) { _seen.Remove(seenKey); }
     }
 
     private RawScanArtifact BuildRawArtifact(ScannerDeviceConfig config, ScanSetFiles set)

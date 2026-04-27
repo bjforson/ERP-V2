@@ -25,6 +25,15 @@ namespace NickERP.Inspection.ExternalSystems.IcumsGh;
 /// implementation built a Polly retry/circuit-breaker stack against
 /// <c>ICUMS:FetchBatchUrl</c>; that lands in §4.5 if/when ICUMS exposes a
 /// per-container query endpoint.
+///
+/// <para>
+/// <b>Tenant isolation.</b> The static <c>_indexes</c> cache is keyed by
+/// <c>{tenantId}|{instanceId}|{path}|{ttl}</c> as of contract version 1.1
+/// (Sprint PT). Two tenants whose <c>ExternalSystemInstance</c> rows happen
+/// to point at the same physical drop folder get isolated cache entries —
+/// no cross-tenant leak via the index. Static-cache lifetime is the host
+/// process; tenant churn does not evict (known follow-up).
+/// </para>
 /// </summary>
 [Plugin("icums-gh")]
 public sealed class IcumsGhAdapter : IExternalSystemAdapter
@@ -61,7 +70,7 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
         if (problems.Count > 0)
             return Task.FromResult(new ConnectionTestResult(false, string.Join("; ", problems)));
 
-        var index = GetOrCreateIndex(config.InstanceId, cfg);
+        var index = GetOrCreateIndex(config.TenantId, config.InstanceId, cfg);
         index.RefreshIfStale();
         var (files, docs, _) = index.Stats();
         return Task.FromResult(new ConnectionTestResult(
@@ -79,7 +88,7 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
         if (string.IsNullOrWhiteSpace(cfg.BatchDropPath))
             return Task.FromResult<IReadOnlyList<AuthorityDocument>>(Array.Empty<AuthorityDocument>());
 
-        var index = GetOrCreateIndex(config.InstanceId, cfg);
+        var index = GetOrCreateIndex(config.TenantId, config.InstanceId, cfg);
         index.RefreshIfStale();
 
         var matches = new List<AuthorityDocument>();
@@ -198,9 +207,11 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
         }
     }
 
-    private static IcumBatchIndex GetOrCreateIndex(Guid instanceId, AdapterConfig cfg)
+    private static IcumBatchIndex GetOrCreateIndex(long tenantId, Guid instanceId, AdapterConfig cfg)
     {
-        var key = $"{instanceId}|{cfg.BatchDropPath}|{cfg.CacheTtlSeconds}";
+        // Tenant-prefixed: two tenants pointing at the same physical
+        // BatchDropPath get isolated index entries (Sprint PT, contract 1.1).
+        var key = $"{tenantId}|{instanceId}|{cfg.BatchDropPath}|{cfg.CacheTtlSeconds}";
         return _indexes.GetOrAdd(key, _ => new IcumBatchIndex(
             cfg.BatchDropPath,
             TimeSpan.FromSeconds(Math.Max(1, cfg.CacheTtlSeconds))));
