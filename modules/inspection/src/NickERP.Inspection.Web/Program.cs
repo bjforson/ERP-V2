@@ -13,6 +13,7 @@ using NickERP.Platform.Logging;
 using NickERP.Platform.Plugins;
 using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
+using NickERP.Platform.Tenancy.Database;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +33,10 @@ var inspectionConn = builder.Configuration.GetConnectionString("Inspection");
 builder.Services.AddNickErpIdentity(builder.Configuration, builder.Environment);
 builder.Services.AddNickErpIdentityCore(platformConn);
 builder.Services.AddNickErpTenancy();
+// D2 — TenancyDbContext registered so the ScannerIngestionWorker can
+// enumerate active tenants for cross-tenant scanner discovery
+// (`tenancy.tenants` is the only table not under RLS).
+builder.Services.AddNickErpTenancyCore(platformConn);
 builder.Services.AddNickErpAuditCore(platformConn);
 
 // Inspection's own DbContext. Phase F1 — wires the tenancy interceptors
@@ -76,6 +81,13 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.CaseWorkflowService>(
 // IImageStore + the PreRenderWorker background service. The render
 // endpoint is mapped below after app.Build().
 builder.Services.AddNickErpImaging(builder.Configuration);
+
+// D2 — ScannerIngestionWorker: drives every active ScannerDeviceInstance
+// through IScannerAdapter.StreamAsync and creates/reuses a case for each
+// emitted artifact. Closes the demo loop so dropping a real FS6000
+// triplet into a watch folder produces a case end-to-end without a
+// button click.
+builder.Services.AddHostedService<NickERP.Inspection.Web.Services.ScannerIngestionWorker>();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -128,8 +140,14 @@ var app = builder.Build();
         {
             sp.GetRequiredService<IdentityDbContext>().Database.Migrate();
             sp.GetRequiredService<NickERP.Platform.Audit.Database.AuditDbContext>().Database.Migrate();
+            // D2 — TenancyDbContext is registered (used by the
+            // ScannerIngestionWorker for cross-tenant discovery); apply
+            // its migrations at startup so the worker doesn't hit a
+            // missing-table on first poll if Inspection boots before
+            // the portal app has had a chance to seed.
+            sp.GetRequiredService<TenancyDbContext>().Database.Migrate();
             sp.GetRequiredService<InspectionDbContext>().Database.Migrate();
-            migrateLogger.LogInformation("Migrations applied for Identity, Audit, Inspection.");
+            migrateLogger.LogInformation("Migrations applied for Identity, Audit, Tenancy, Inspection.");
         }
         catch (Exception ex)
         {
