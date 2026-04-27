@@ -31,4 +31,30 @@ public sealed class ImagingOptions
 
     /// <summary>HTTP <c>Cache-Control: s-maxage</c> seconds (CDN/shared cache).</summary>
     public int HttpCacheSharedMaxAgeSeconds { get; set; } = 604800;
+
+    /// <summary>
+    /// Phase F5 — maximum number of render attempts per
+    /// <c>ScanRenderArtifact</c> before <see cref="PreRenderWorker"/>
+    /// gives up and stamps <c>PermanentlyFailedAt</c>. Five is the v1
+    /// rule of thumb: enough for transient adapter / decoder hiccups;
+    /// short enough that a poison message stops spamming the logs.
+    /// </summary>
+    public int MaxRenderAttempts { get; set; } = 5;
+
+    /// <summary>
+    /// Phase F5 — minimum age (in days) a source blob must reach before
+    /// the <c>SourceJanitorWorker</c> may evict it. Only blobs whose
+    /// only-referencing case is in <c>Closed</c> or <c>Cancelled</c>
+    /// state are eligible; this is an additional grace period on top of
+    /// that. 30 days matches the v1 retention default.
+    /// </summary>
+    public int SourceRetentionDays { get; set; } = 30;
+
+    /// <summary>
+    /// Phase F5 — how often the <c>SourceJanitorWorker</c> wakes up and
+    /// scans for evictable source blobs. One hour is the default;
+    /// shorter values make sense in environments with tight disk
+    /// budgets but trade off Postgres pressure.
+    /// </summary>
+    public int SourceJanitorIntervalMinutes { get; set; } = 60;
 }

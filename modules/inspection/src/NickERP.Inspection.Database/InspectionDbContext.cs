@@ -24,6 +24,7 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<Scan> Scans => Set<Scan>();
     public DbSet<ScanArtifact> ScanArtifacts => Set<ScanArtifact>();
     public DbSet<ScanRenderArtifact> ScanRenderArtifacts => Set<ScanRenderArtifact>();
+    public DbSet<ScanRenderAttempt> ScanRenderAttempts => Set<ScanRenderAttempt>();
     public DbSet<AuthorityDocument> AuthorityDocuments => Set<AuthorityDocument>();
     public DbSet<ReviewSession> ReviewSessions => Set<ReviewSession>();
     public DbSet<AnalystReview> AnalystReviews => Set<AnalystReview>();
@@ -241,6 +242,27 @@ public sealed class InspectionDbContext : DbContext
             // One row per (artifact, kind) — re-renders update in place.
             e.HasIndex(x => new { x.ScanArtifactId, x.Kind }).IsUnique().HasDatabaseName("ux_render_artifact_kind");
             e.HasIndex(x => new { x.TenantId, x.ScanArtifactId }).HasDatabaseName("ix_render_tenant_artifact");
+        });
+
+        // ----- ScanRenderAttempt (Phase F5) -----------------------------------------
+        // Sibling tracking table for the PreRenderWorker. Records every
+        // failed render so we can stop retrying poison messages after
+        // ImagingOptions.MaxRenderAttempts.
+        modelBuilder.Entity<ScanRenderAttempt>(e =>
+        {
+            e.ToTable("scan_render_attempts");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ScanArtifactId).IsRequired();
+            e.Property(x => x.Kind).IsRequired().HasMaxLength(32);
+            e.Property(x => x.AttemptCount).HasDefaultValue(0);
+            e.Property(x => x.LastError).HasMaxLength(2000);
+            e.Property(x => x.LastAttemptAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => new { x.ScanArtifactId, x.Kind }).IsUnique().HasDatabaseName("ux_render_attempt_artifact_kind");
+            e.HasIndex(x => x.PermanentlyFailedAt).HasDatabaseName("ix_render_attempt_failed");
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_render_attempt_tenant");
         });
 
         // ----- AuthorityDocument ----------------------------------------------------

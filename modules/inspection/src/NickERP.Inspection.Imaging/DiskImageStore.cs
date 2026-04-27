@@ -58,6 +58,15 @@ public sealed class DiskImageStore : IImageStore
     private string SourceRoot() => Path.Combine(_opts.StorageRoot, "source");
     private string RenderRoot() => Path.Combine(_opts.StorageRoot, "render");
 
+    /// <summary>
+    /// Phase F5 — exposes the on-disk source path for the
+    /// <c>SourceJanitorWorker</c>. The path is content-addressed and
+    /// stable so the janitor can evict blobs without owning a storage
+    /// API surface of its own.
+    /// </summary>
+    public string GetSourcePath(string contentHash, string fileExtension)
+        => SourcePath(contentHash, fileExtension);
+
     private string SourcePath(string contentHash, string fileExtension)
     {
         var ext = SanitizeExt(fileExtension);
