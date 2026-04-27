@@ -23,6 +23,7 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<InspectionCase> Cases => Set<InspectionCase>();
     public DbSet<Scan> Scans => Set<Scan>();
     public DbSet<ScanArtifact> ScanArtifacts => Set<ScanArtifact>();
+    public DbSet<ScanRenderArtifact> ScanRenderArtifacts => Set<ScanRenderArtifact>();
     public DbSet<AuthorityDocument> AuthorityDocuments => Set<AuthorityDocument>();
     public DbSet<ReviewSession> ReviewSessions => Set<ReviewSession>();
     public DbSet<AnalystReview> AnalystReviews => Set<AnalystReview>();
@@ -219,6 +220,27 @@ public sealed class InspectionDbContext : DbContext
 
             e.HasIndex(x => x.ContentHash).HasDatabaseName("ix_scan_artifacts_content_hash");
             e.HasIndex(x => new { x.TenantId, x.ScanId }).HasDatabaseName("ix_scan_artifacts_tenant_scan");
+
+            e.HasMany<ScanRenderArtifact>().WithOne(r => r.ScanArtifact).HasForeignKey(r => r.ScanArtifactId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- ScanRenderArtifact ---------------------------------------------------
+        modelBuilder.Entity<ScanRenderArtifact>(e =>
+        {
+            e.ToTable("scan_render_artifacts");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ScanArtifactId).IsRequired();
+            e.Property(x => x.Kind).IsRequired().HasMaxLength(32);
+            e.Property(x => x.StorageUri).IsRequired().HasMaxLength(500);
+            e.Property(x => x.MimeType).IsRequired().HasMaxLength(64);
+            e.Property(x => x.ContentHash).IsRequired().HasMaxLength(128);
+            e.Property(x => x.RenderedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            // One row per (artifact, kind) — re-renders update in place.
+            e.HasIndex(x => new { x.ScanArtifactId, x.Kind }).IsUnique().HasDatabaseName("ux_render_artifact_kind");
+            e.HasIndex(x => new { x.TenantId, x.ScanArtifactId }).HasDatabaseName("ix_render_tenant_artifact");
         });
 
         // ----- AuthorityDocument ----------------------------------------------------

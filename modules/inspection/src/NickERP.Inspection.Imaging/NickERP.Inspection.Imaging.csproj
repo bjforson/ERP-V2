@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Imaging</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Imaging</AssemblyName>
+    <Description>NickERP Inspection v2 — image pre-rendering pipeline (ARCHITECTURE §7.7). Source-bytes stash, IImageRenderer (ImageSharp) for 256px thumbnails + 1024px previews, IImageStore disk implementation, PreRenderWorker BackgroundService, content-addressed storage. Skeleton — Redis tier and SQL-backed durable queue land in later slices; this gets the pipe end-to-end.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+  </ItemGroup>
+
+</Project>

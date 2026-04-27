@@ -34,7 +34,7 @@ psql -U postgres -c "CREATE DATABASE nickerp_inspection;" # done
 
 Migrations applied:
 - `nickerp_platform`: `identity` schema (5 tables), `tenancy` schema (1 table), `audit` schema (1 table)
-- `nickerp_inspection`: `inspection` schema (5 tables)
+- `nickerp_inspection`: `inspection` schema (16 tables — case lifecycle + scan-render derivatives)
 
 Bootstrap row:
 - `identity.identity_users` has `dev@nickscan.com` (display name "Local dev") with the `Identity.Admin` scope. Used for the dev-bypass authentication.
@@ -124,14 +124,29 @@ dotnet run
 
 After clicking through both apps, **open Seq at http://localhost:5341** and filter by `ServiceName = 'NickERP.Portal'` then `ServiceName = 'NickERP.Inspection.Web'` — you should see structured log entries for every page load + DB write, plus OpenTelemetry traces correlating the request → DB span.
 
+### Image pre-rendering pipeline (ARCHITECTURE §7.7)
+
+When you simulate a scan, the FS6000 / mock scanner adapter's bytes are
+stashed under `<StorageRoot>/source/{hash[0..2]}/{hash}.png`. A
+`PreRenderWorker` background service (every 3s in dev) picks up unrendered
+`ScanArtifact` rows and produces:
+
+- 256 px thumbnail at `/api/images/{scanArtifactId}/thumbnail`
+- 1024 px preview at `/api/images/{scanArtifactId}/preview`
+
+Both stream with `Cache-Control: public, max-age=86400, s-maxage=604800, immutable`
+and an ETag = source hash (first 16 chars). Conditional `If-None-Match` returns 304.
+
+`StorageRoot` defaults to `C:\Shared\ERP V2\.imaging-store` in dev (gitignored).
+
 ---
 
 ## What's deliberately not finished yet
 
-- **Inspection case lifecycle** — `InspectionCase`, `Scan`, `ScanArtifact`, `Review`, `Verdict`, `OutboundSubmission`. That's the next chunk (B.1.1).
-- **Real scanner adapters** — FS6000, ASE etc. The plugin contracts exist; concrete implementations are next.
-- **Image pre-rendering pipeline** — designed (per `docs/ARCHITECTURE.md` §7.7); built in B.1.1.
-- **Analyst review UI** — viewer ports from v1 (W/L sliders, ROI inspector, pixel probe).
+- **Inspection case lifecycle** — ✅ shipped (ROADMAP §4.1). 12 entities, 7 workflow transitions, DomainEvents on every state change.
+- **Real scanner / external-system / authority adapters** — ✅ shipped (ROADMAP §4.2). FS6000, IcumsGh, CustomsGh ported point-in-time from v1. Authority rules surface in CaseDetail.
+- **Image pre-rendering pipeline** — ✅ skeleton shipped (ROADMAP §4.3.a). `IImageRenderer` (ImageSharp), `IImageStore` (disk), `PreRenderWorker`, `/api/images/{id}/{kind}` endpoint with ETag/Cache-Control. Redis tier + SQL durable queue + SignalR `AssetReady` push come in later slices.
+- **Analyst review UI** — viewer ports from v1 (W/L sliders, ROI inspector, pixel probe). Next.
 - **Audit search deep-dive** — Portal's `/audit` shows the rows; clicking into one to see the full payload jsonb is a backlog item.
 - **Notification bell** — placeholder until the audit-events projection lands.
 - **Federated cross-app search** — `TopNav` exposes the slot; the search API depends on Portal v2 maturity.

@@ -7,6 +7,7 @@ using NickERP.Inspection.Authorities.Abstractions;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.ExternalSystems.Abstractions;
+using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Platform.Audit;
 using NickERP.Platform.Audit.Events;
@@ -29,6 +30,7 @@ public sealed class CaseWorkflowService
     private readonly IServiceProvider _services;
     private readonly ITenantContext _tenant;
     private readonly AuthenticationStateProvider _auth;
+    private readonly IImageStore _imageStore;
     private readonly ILogger<CaseWorkflowService> _logger;
 
     public CaseWorkflowService(
@@ -38,6 +40,7 @@ public sealed class CaseWorkflowService
         IServiceProvider services,
         ITenantContext tenant,
         AuthenticationStateProvider auth,
+        IImageStore imageStore,
         ILogger<CaseWorkflowService> logger)
     {
         _db = db;
@@ -46,6 +49,7 @@ public sealed class CaseWorkflowService
         _services = services;
         _tenant = tenant;
         _auth = auth;
+        _imageStore = imageStore;
         _logger = logger;
     }
 
@@ -136,16 +140,24 @@ public sealed class CaseWorkflowService
         };
         _db.Scans.Add(scan);
 
+        // Stash the adapter's parsed bytes into the content-addressed image
+        // store so the pre-render worker (and re-render after configuration
+        // change later) can reach back for them. StorageUri points to the
+        // disk location instead of the adapter's transient SourcePath.
+        var contentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(parsed.Bytes));
+        var ext = MimeToExtension(parsed.MimeType);
+        var storageUri = await _imageStore.SaveSourceAsync(contentHash, ext, parsed.Bytes, ct);
+
         var artifact = new ScanArtifact
         {
             ScanId = scan.Id,
             ArtifactKind = "Primary",
-            StorageUri = raw.SourcePath,
+            StorageUri = storageUri,
             MimeType = parsed.MimeType,
             WidthPx = parsed.WidthPx,
             HeightPx = parsed.HeightPx,
             Channels = parsed.Channels,
-            ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(parsed.Bytes)),
+            ContentHash = contentHash,
             MetadataJson = JsonSerializer.Serialize(parsed.Metadata),
             CreatedAt = now,
             TenantId = tenantId
@@ -351,6 +363,21 @@ public sealed class CaseWorkflowService
 
         return new RulesEvaluationResult(allViolations, allMutations, providerErrors);
     }
+
+    /// <summary>
+    /// Best-effort MIME → file extension. The image store needs an extension
+    /// for the on-disk filename so external tools can identify the format
+    /// without sniffing.
+    /// </summary>
+    private static string MimeToExtension(string? mime) => mime?.ToLowerInvariant() switch
+    {
+        "image/png" => ".png",
+        "image/jpeg" or "image/jpg" => ".jpg",
+        "image/tiff" => ".tiff",
+        "image/webp" => ".webp",
+        "image/bmp" => ".bmp",
+        _ => ".bin"
+    };
 
     /// <summary>
     /// Flatten every artifact's <c>MetadataJson</c> into a single dictionary.

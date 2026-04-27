@@ -70,3 +70,6 @@ modules/inspection/src/NickERP.Inspection.Web/plugins/
 
 # Local-machine test fixtures (synthetic ICUMS batches, FS6000 scan sets, etc.)
 .test/
+
+# Local-machine pre-render store (sources + rendered thumbnails/previews) — populated at runtime, not source-tracked.
+.imaging-store/
