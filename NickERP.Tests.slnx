@@ -28,6 +28,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/NickERP.Inspection.Authorities.CustomsGh.Tests/NickERP.Inspection.Authorities.CustomsGh.Tests.csproj" />
+    <Project Path="tests/NickERP.Inspection.E2E.Tests/NickERP.Inspection.E2E.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Scanners.FS6000.Tests/NickERP.Inspection.Scanners.FS6000.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Web.Tests/NickERP.Inspection.Web.Tests.csproj" />

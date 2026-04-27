@@ -257,3 +257,9 @@ app.MapHealthChecks("/healthz/ready", new Microsoft.AspNetCore.Diagnostics.Healt
 }).AllowAnonymous();
 
 app.Run();
+
+// Sprint D4 — expose the auto-generated top-level Program type so the
+// E2E test project (tests/NickERP.Inspection.E2E.Tests) can spin up the
+// host via `WebApplicationFactory<Program>`. Without this, the generated
+// Program is internal and the factory can't see it. No runtime cost.
+public partial class Program;

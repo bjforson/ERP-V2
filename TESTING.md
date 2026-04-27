@@ -141,6 +141,33 @@ and an ETag = source hash (first 16 chars). Conditional `If-None-Match` returns 
 
 ---
 
+## Demo walkthrough
+
+The end-to-end demo lives in two flavours:
+
+- **Manual.** [`docs/runbooks/demo-walkthrough.md`](docs/runbooks/demo-walkthrough.md) — a step-by-step that an analyst (or a sales engineer) can follow in under five minutes. Drops a real FS6000 triplet into a watch folder; the `ScannerIngestionWorker` picks it up, the `PreRenderWorker` thumbnails it, the analyst fetches an ICUMS BOE, the gh-customs rules fire, the analyst clears the case, the verdict lands in the ICUMS outbox as a JSON file, and ≥8 `nickerp.inspection.*` events show up on `/audit`.
+- **Automated.** `tests/NickERP.Inspection.E2E.Tests/FullCaseLifecycleTests.cs` — the same lifecycle as a single xUnit `[Fact]`. Stands up an isolated Postgres pair (per-run unique-suffixed DBs on the dev `localhost:5432`), boots the inspection host via `WebApplicationFactory<Program>`, runs the workflow, and asserts every checkpoint plus an RLS sanity probe with a non-superuser role. Marked `[Trait("Category","Integration")]` so unit-test runs skip it.
+
+Run it:
+
+```bash
+# All tests including the e2e (~35s; needs NICKSCAN_DB_PASSWORD).
+dotnet test NickERP.Tests.slnx
+
+# Unit-only — fast (<10s on a warm cache), no Postgres dependency.
+dotnet test NickERP.Tests.slnx --filter "Category!=Integration"
+
+# Integration-only — runs the e2e in isolation.
+dotnet test NickERP.Tests.slnx --filter "Category=Integration"
+```
+
+The e2e teardown drops its scratch databases on success. On a hard
+crash (Ctrl-C, host kill), leftover DBs and roles are prefixed
+`nickerp_e2e_*` so a manual `psql -c "DROP DATABASE ..."` sweep cleans
+them up.
+
+---
+
 ## What's deliberately not finished yet
 
 - **Inspection case lifecycle** — ✅ shipped (ROADMAP §4.1). 12 entities, 7 workflow transitions, DomainEvents on every state change.
