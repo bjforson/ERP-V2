@@ -44,18 +44,39 @@ Bootstrap row:
 
 ## Running the apps
 
+Phase F5 — the app hosts now connect as the non-superuser `nscim_app` role
+(`LOGIN NOSUPERUSER NOBYPASSRLS`). This is what makes the F1 RLS policies
+actually enforce; running as `postgres` bypasses RLS silently. Set the
+role password once after applying the F5 migrations:
+
+```bash
+export NICKSCAN_DB_PASSWORD="<the rotated postgres superuser password>"
+export NICKERP_APP_DB_PASSWORD="$NICKSCAN_DB_PASSWORD"   # dev — same value
+./tools/migrations/phase-f5/set-nscim-app-password.sh
+```
+
+In prod, `NICKERP_APP_DB_PASSWORD` is a separate secret rotated independently
+of the superuser password.
+
 Both apps need two env vars set in your shell:
 
 ```bash
 export NICKSCAN_DB_PASSWORD="<the rotated postgres password>"
-export ConnectionStrings__Platform="Host=localhost;Port=5432;Database=nickerp_platform;Username=postgres;Password=$NICKSCAN_DB_PASSWORD"
+export ConnectionStrings__Platform="Host=localhost;Port=5432;Database=nickerp_platform;Username=nscim_app;Password=$NICKERP_APP_DB_PASSWORD"
 ```
 
 Plus, for Inspection only:
 
 ```bash
-export ConnectionStrings__Inspection="Host=localhost;Port=5432;Database=nickerp_inspection;Username=postgres;Password=$NICKSCAN_DB_PASSWORD"
+export ConnectionStrings__Inspection="Host=localhost;Port=5432;Database=nickerp_inspection;Username=nscim_app;Password=$NICKERP_APP_DB_PASSWORD"
 ```
+
+Migrations themselves still run as `postgres` (they need superuser to
+create roles + grants). Use `dotnet ef database update` with
+`NICKERP_INSPECTION_DB_CONNECTION` / `NICKERP_PLATFORM_DB_CONNECTION`
+pointed at `Username=postgres`. The host's `RunMigrationsOnStartup` flag
+defaults to `true` in dev so you don't need to do this manually after
+the first time.
 
 ### Portal v2
 
