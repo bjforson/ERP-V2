@@ -123,6 +123,32 @@ public class ScannerOnboardingService
 
 ---
 
+## Contract versioning (`minHostContractVersion`)
+
+Each Abstractions assembly is stamped with a `[ContractVersion("major.minor")]` attribute (via an MSBuild `<AssemblyAttribute>` ItemGroup in the Abstractions csproj). Plugin manifests declare the **minimum** host contract version they require:
+
+```json
+{
+  "typeCode": "my-vendor",
+  "contracts": [
+    "NickERP.Inspection.Scanners.Abstractions.IScannerAdapter"
+  ],
+  "minHostContractVersion": "1.0",
+  ...
+}
+```
+
+At startup the loader resolves each contract type, reads its assembly's `[ContractVersion]`, and rejects the plugin (with a clear error log line — `"Plugin '<TypeCode>' requires <Contract>@<Min> but host has @<Host>; skipping."`) if the host's version is older than the plugin's declared minimum. Other plugins continue to load.
+
+**Semver-lite rules.**
+
+- Bump **minor** on additive changes (new optional record field, new method on an interface that has a default implementation, new value in an enum that adapters don't switch on).
+- Bump **major** on breaking changes (record arity change without a default, removed/renamed members, repurposed semantics).
+
+The loader compares as `host >= min`, matching NuGet's lower-bound contract — a host at `1.5` accepts plugins requiring any value in `1.0`–`1.5`. A plugin built against `1.5` that depends on a member added in `1.5` declares `"minHostContractVersion": "1.5"` and won't load against an older host.
+
+**Backwards-compatibility note.** Plugins shipped before the contract-version layer existed simply omit `minHostContractVersion`; the loader treats that as "any host version" and registers the plugin without a version check. Abstractions assemblies that haven't been stamped yet fall back to `1.0` with a one-line warning. New plugins should always declare a minimum so drift surfaces at startup, not at first call.
+
 ## What the loader DOES NOT do (yet)
 
 - **No JSON-Schema validation.** The `configSchema` is captured but not enforced at registration. Admin UI uses it to render forms; the loader trusts the manifest.

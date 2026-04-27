@@ -13,4 +13,21 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+  </ItemGroup>
+
+  <!--
+    Stamp this Abstractions assembly with a [ContractVersion]. Currently 1.1
+    because InspectionCaseData was extended this session with the Scans
+    field (IReadOnlyList<ScanSnapshot>) — an additive change. Plugins that
+    rely on Scans (e.g. gh-customs) declare minHostContractVersion "1.1".
+    Bump major on breaking changes; bump minor on additive changes.
+  -->
+  <ItemGroup>
+    <AssemblyAttribute Include="NickERP.Platform.Plugins.ContractVersionAttribute">
+      <_Parameter1>1.1</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

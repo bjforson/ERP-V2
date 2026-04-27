@@ -92,6 +92,11 @@ public sealed class PluginLoader
                 continue;
             }
 
+            if (!CheckContractVersions(manifest))
+            {
+                continue;
+            }
+
             var contracts = match.GetInterfaces();
             found.Add(new RegisteredPlugin(manifest.TypeCode, match, contracts, manifest));
             _logger.LogInformation(
@@ -100,6 +105,113 @@ public sealed class PluginLoader
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// Validate the plugin's <see cref="PluginManifest.MinHostContractVersion"/>
+    /// against the host's <see cref="ContractVersionAttribute"/>-stamped
+    /// Abstractions assemblies for each contract listed in the manifest.
+    /// Returns <see langword="true"/> if the plugin should be registered,
+    /// <see langword="false"/> if it should be skipped (with the reason
+    /// already logged at Error level).
+    /// </summary>
+    private bool CheckContractVersions(PluginManifest manifest)
+    {
+        // No declared minimum → legacy plugin; skip the check (loader is
+        // permissive by default to keep older plugins loading).
+        if (string.IsNullOrWhiteSpace(manifest.MinHostContractVersion))
+        {
+            return true;
+        }
+
+        if (!Version.TryParse(manifest.MinHostContractVersion, out var minVersion))
+        {
+            _logger.LogError(
+                "Plugin '{TypeCode}' has invalid minHostContractVersion '{Min}' (expected major.minor); skipping.",
+                manifest.TypeCode, manifest.MinHostContractVersion);
+            return false;
+        }
+
+        // Validate against every contract the manifest declares. If any
+        // contract type is reachable and stamped with [ContractVersion]
+        // older than the plugin's minimum, reject. Unstamped contract
+        // assemblies fall back to 1.0 with a single warning per check.
+        if (manifest.Contracts is null || manifest.Contracts.Count == 0)
+        {
+            // No contracts declared — nothing to compare against. Treat as
+            // pass; the [Plugin] attribute scan will catch unusable types.
+            return true;
+        }
+
+        foreach (var contractTypeName in manifest.Contracts)
+        {
+            if (string.IsNullOrWhiteSpace(contractTypeName)) continue;
+
+            var contractType = ResolveContractType(contractTypeName);
+            if (contractType is null)
+            {
+                // Type couldn't be resolved from any loaded assembly — let
+                // the [Plugin] interface scan handle this; don't fail the
+                // version check on a missing contract.
+                _logger.LogWarning(
+                    "Plugin '{TypeCode}' declares contract '{Contract}' but the type could not be resolved at version-check time; assuming 1.0.",
+                    manifest.TypeCode, contractTypeName);
+                continue;
+            }
+
+            var hostVersionAttr = contractType.Assembly.GetCustomAttribute<ContractVersionAttribute>();
+            Version hostVersion;
+            if (hostVersionAttr is null)
+            {
+                _logger.LogWarning(
+                    "Contract assembly for '{Contract}' has no [ContractVersion]; assuming 1.0 for plugin '{TypeCode}'.",
+                    contractType.FullName ?? contractType.Name, manifest.TypeCode);
+                hostVersion = new Version(1, 0);
+            }
+            else
+            {
+                hostVersion = hostVersionAttr.Version;
+            }
+
+            if (hostVersion < minVersion)
+            {
+                _logger.LogError(
+                    "Plugin '{TypeCode}' requires {Contract}@{Min} but host has @{Host}; skipping.",
+                    manifest.TypeCode, contractType.Name, minVersion, hostVersion);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolve a contract type by its fully-qualified name from any
+    /// currently-loaded assembly. The contract Abstractions assemblies are
+    /// already loaded by the host before <see cref="LoadFrom"/> runs (the
+    /// host project-references them), so a simple
+    /// <see cref="AppDomain.GetAssemblies"/> sweep is sufficient.
+    /// </summary>
+    private static Type? ResolveContractType(string contractTypeName)
+    {
+        // Try the fast path first.
+        var t = Type.GetType(contractTypeName);
+        if (t is not null) return t;
+
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                t = asm.GetType(contractTypeName, throwOnError: false, ignoreCase: false);
+                if (t is not null) return t;
+            }
+            catch
+            {
+                // Some dynamic assemblies (Razor compiled views, etc.) throw
+                // here — ignore and keep searching.
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -126,6 +238,10 @@ public sealed class PluginLoader
                 if (!manifestsByTypeCode.TryGetValue(attr.TypeCode, out var manifest))
                 {
                     _logger.LogError("[Plugin(\"{TypeCode}\")] type {Type} has no matching manifest entry; skipping.", attr.TypeCode, type.FullName);
+                    continue;
+                }
+                if (!CheckContractVersions(manifest))
+                {
                     continue;
                 }
                 var contracts = type.GetInterfaces();
