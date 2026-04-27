@@ -7,6 +7,7 @@
 @inject InspectionDbContext Db
 @inject CaseWorkflowService Workflow
 @inject NavigationManager Nav
+@inject ILogger<NewCase> Logger
 
 <PageTitle>New case — Inspection v2</PageTitle>
 
@@ -92,7 +93,7 @@
         }
         catch (Exception ex)
         {
-            _message = ex.Message;
+            _message = UserFacingError.Render(Logger, ex, "INSP-CASE-OPEN-FAILED", "Failed to open the new case.");
         }
     }
 

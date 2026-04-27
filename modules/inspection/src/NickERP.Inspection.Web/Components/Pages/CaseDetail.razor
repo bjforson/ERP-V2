@@ -6,6 +6,7 @@
 @using NickERP.Inspection.Web.Services
 @inject InspectionDbContext Db
 @inject CaseWorkflowService Workflow
+@inject ILogger<CaseDetail> Logger
 
 <PageTitle>Case @ShortId — Inspection v2</PageTitle>
 
@@ -301,37 +302,37 @@ else
     private async Task SimulateScan()
     {
         try { await Workflow.SimulateScanAsync(CaseId, _selectedScannerId); _message = "Scan recorded."; await Reload(); }
-        catch (Exception ex) { _message = ex.Message; }
+        catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-SIMULATE-SCAN-FAILED", "Failed to record scan."); }
     }
 
     private async Task FetchDocuments()
     {
         try { var docs = await Workflow.FetchDocumentsAsync(CaseId, _selectedExternalId); _message = $"Fetched {docs.Count} document(s)."; await Reload(); }
-        catch (Exception ex) { _message = ex.Message; }
+        catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-FETCH-DOCS-FAILED", "Failed to fetch documents."); }
     }
 
     private async Task AssignSelf()
     {
         try { await Workflow.AssignSelfAndStartReviewAsync(CaseId); _message = "Assigned to you. Review session started."; await Reload(); }
-        catch (Exception ex) { _message = ex.Message; }
+        catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-ASSIGN-SELF-FAILED", "Failed to assign case to you."); }
     }
 
     private async Task SetVerdict()
     {
         try { await Workflow.SetVerdictAsync(CaseId, _verdictDecision, _basis, _confidence); _message = "Verdict recorded."; await Reload(); }
-        catch (Exception ex) { _message = ex.Message; }
+        catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-SET-VERDICT-FAILED", "Failed to record verdict."); }
     }
 
     private async Task Submit()
     {
         try { var sub = await Workflow.SubmitAsync(CaseId, _submitToId); _message = $"Submission status: {sub.Status}."; await Reload(); }
-        catch (Exception ex) { _message = ex.Message; }
+        catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-SUBMIT-FAILED", "Failed to submit case."); }
     }
 
     private async Task Close()
     {
         try { await Workflow.CloseCaseAsync(CaseId); _message = "Case closed."; await Reload(); }
-        catch (Exception ex) { _message = ex.Message; }
+        catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-CLOSE-FAILED", "Failed to close case."); }
     }
 
     private async Task EvaluateRules()
@@ -343,6 +344,6 @@ else
             var m = _rulesResult.Mutations.Count;
             _message = $"Evaluated. {v} violation(s), {m} suggested mutation(s).";
         }
-        catch (Exception ex) { _message = ex.Message; }
+        catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-EVALUATE-RULES-FAILED", "Failed to evaluate authority rules."); }
     }
 }

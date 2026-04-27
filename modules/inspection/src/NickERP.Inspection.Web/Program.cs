@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Web.Components;
+using NickERP.Inspection.Web.HealthChecks;
 using NickERP.Platform.Audit.Database;
 using NickERP.Platform.Identity;
 using NickERP.Platform.Identity.Auth;
@@ -78,7 +80,69 @@ builder.Services.AddNickErpImaging(builder.Configuration);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+// ---------------------------------------------------------------------------
+// Phase F5 — health checks. /healthz/live is unconditional; /healthz/ready
+// asserts every dependency the host needs to serve a real request:
+//   - Postgres reachable on nickerp_platform (Identity + Audit DBs)
+//   - Postgres reachable on nickerp_inspection
+//   - Plugin registry populated (≥ 1 plugin loaded)
+//   - ImagingOptions.StorageRoot writable
+// Tag-filtered endpoints keep the live probe cheap.
+// ---------------------------------------------------------------------------
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy("process running"), tags: new[] { "live" })
+    .AddCheck<PostgresHealthCheck<IdentityDbContext>>("postgres-platform-identity", tags: new[] { "ready" })
+    .AddCheck<PostgresHealthCheck<NickERP.Platform.Audit.Database.AuditDbContext>>("postgres-platform-audit", tags: new[] { "ready" })
+    .AddCheck<PostgresHealthCheck<InspectionDbContext>>("postgres-inspection", tags: new[] { "ready" })
+    .AddCheck<PluginRegistryHealthCheck>("plugin-registry", tags: new[] { "ready" })
+    .AddCheck<ImagingStorageHealthCheck>("imaging-storage", tags: new[] { "ready" });
+
+// The DbContext-typed checks are resolved through DI — register them as
+// scoped so each probe gets a fresh DbContext (Postgres connection
+// pooling means this is cheap; matches how Razor pages consume it).
+builder.Services.AddScoped(sp => new PostgresHealthCheck<IdentityDbContext>(
+    sp.GetRequiredService<IdentityDbContext>(), "Postgres (identity)"));
+builder.Services.AddScoped(sp => new PostgresHealthCheck<NickERP.Platform.Audit.Database.AuditDbContext>(
+    sp.GetRequiredService<NickERP.Platform.Audit.Database.AuditDbContext>(), "Postgres (audit)"));
+builder.Services.AddScoped(sp => new PostgresHealthCheck<InspectionDbContext>(
+    sp.GetRequiredService<InspectionDbContext>(), "Postgres (inspection)"));
+
 var app = builder.Build();
+
+// ---------------------------------------------------------------------------
+// Phase F5 — migrations at startup. Default ON in dev, OFF elsewhere; flag
+// is RunMigrationsOnStartup so ops can override per environment without
+// rebuilding. The migration applier runs synchronously inside the host's
+// startup so a bad migration fails the boot rather than hiding behind a
+// silent first-request error.
+// ---------------------------------------------------------------------------
+{
+    var runMigrations = app.Configuration.GetValue<bool?>("RunMigrationsOnStartup")
+        ?? app.Environment.IsDevelopment();
+    if (runMigrations)
+    {
+        using var migrationScope = app.Services.CreateScope();
+        var sp = migrationScope.ServiceProvider;
+        var migrateLogger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("Startup.Migrations");
+        try
+        {
+            sp.GetRequiredService<IdentityDbContext>().Database.Migrate();
+            sp.GetRequiredService<NickERP.Platform.Audit.Database.AuditDbContext>().Database.Migrate();
+            sp.GetRequiredService<InspectionDbContext>().Database.Migrate();
+            migrateLogger.LogInformation("Migrations applied for Identity, Audit, Inspection.");
+        }
+        catch (Exception ex)
+        {
+            migrateLogger.LogCritical(ex, "Migration at startup failed; aborting host bootstrap.");
+            throw;
+        }
+    }
+    else
+    {
+        var noMigrateLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup.Migrations");
+        noMigrateLogger.LogInformation("RunMigrationsOnStartup=false; skipping Database.Migrate().");
+    }
+}
 
 if (!app.Environment.IsDevelopment())
 {
@@ -141,5 +205,37 @@ app.MapGet("/api/images/{scanArtifactId:guid}/{kind}", async (
     return Results.Stream(stream, contentType: row.MimeType, enableRangeProcessing: false);
 })
 .RequireAuthorization();
+
+// ---------------------------------------------------------------------------
+// Phase F5 — health endpoints. Both are anonymous so kubelets / load
+// balancers don't have to carry credentials. /healthz/live is the cheap
+// liveness probe (process is up); /healthz/ready runs every "ready" check
+// and returns 503 with a JSON body listing the failing component(s).
+// ---------------------------------------------------------------------------
+app.MapHealthChecks("/healthz/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("live")
+}).AllowAnonymous();
+
+app.MapHealthChecks("/healthz/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("ready"),
+    ResponseWriter = async (ctx, report) =>
+    {
+        ctx.Response.ContentType = "application/json";
+        var payload = new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                description = e.Value.Description,
+                error = e.Value.Exception?.Message
+            })
+        };
+        await System.Text.Json.JsonSerializer.SerializeAsync(ctx.Response.Body, payload);
+    }
+}).AllowAnonymous();
 
 app.Run();

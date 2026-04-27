@@ -24,6 +24,10 @@ public static class ImagingServiceCollectionExtensions
         services.AddSingleton<IImageRenderer, ImageSharpImageRenderer>();
         services.AddSingleton<IImageStore, DiskImageStore>();
         services.AddHostedService<PreRenderWorker>();
+        // Phase F5 — periodic eviction of source blobs once the
+        // referencing case is closed/cancelled and older than
+        // ImagingOptions.SourceRetentionDays.
+        services.AddHostedService<SourceJanitorWorker>();
 
         return services;
     }
