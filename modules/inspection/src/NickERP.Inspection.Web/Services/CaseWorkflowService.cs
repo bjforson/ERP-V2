@@ -167,14 +167,14 @@ public sealed class CaseWorkflowService
     // in SimulateScanAsync. Same Scan/ScanArtifact rows, same
     // SaveSourceAsync call (same content hash + extension), same
     // DomainEvent. Caller now picks the Mode string (operator path stays
-    // "synthetic"); D2's worker will pass "ingested" so the audit log can
+    // "synthetic"); D2's worker passes "ingested" so the audit log can
     // distinguish auto-ingest from a button click.
     //
-    // TODO(D2): switch Scan.IdempotencyKey from random-Guid to a
-    // content-addressed sha256-prefix key (e.g. $"scan/{device.Id}/{contentHash[..16]}")
-    // so re-ingesting the same triplet on worker restart is a silent no-op.
-    // The change ships with D2's dedup-on-unique-index migration; staying
-    // with the random key here keeps D1 a behaviour-preserving refactor.
+    // D2: Scan.IdempotencyKey is content-addressed — sha-256 prefix of the
+    // parsed source bytes — so re-ingesting the same triplet (e.g. after
+    // a worker restart that revisits an already-emitted file) collides on
+    // the existing (TenantId, IdempotencyKey) unique index and is treated
+    // as a silent no-op rather than producing a duplicate scan row.
     // ---------------------------------------------------------------------
     private async Task<Scan> IngestArtifactAsync(
         Guid caseId,
@@ -189,6 +189,26 @@ public sealed class CaseWorkflowService
         var now = DateTimeOffset.UtcNow;
         var parsed = await adapter.ParseAsync(raw, ct);
 
+        // Hash the parsed bytes first — the same hash is used for the
+        // content-addressed Scan.IdempotencyKey, the on-disk storage
+        // filename via SaveSourceAsync, and the ScanArtifact.ContentHash.
+        var contentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(parsed.Bytes));
+
+        // D2 — re-ingest of the same triplet (within a tenant) collapses
+        // to a single Scan row. The unique index `ux_scans_tenant_idempotency`
+        // on (TenantId, IdempotencyKey) catches duplicates at SaveChanges;
+        // we look up the existing row and return it instead of throwing.
+        var idempotencyKey = $"scan/{device.Id}/{contentHash[..16]}";
+        var existingScan = await _db.Scans
+            .FirstOrDefaultAsync(s => s.IdempotencyKey == idempotencyKey, ct);
+        if (existingScan is not null)
+        {
+            _logger.LogDebug(
+                "Scan with IdempotencyKey {Key} already exists (Scan {Id}); skipping re-ingest.",
+                idempotencyKey, existingScan.Id);
+            return existingScan;
+        }
+
         var scan = new Scan
         {
             CaseId = caseId,
@@ -196,7 +216,7 @@ public sealed class CaseWorkflowService
             Mode = mode,
             CapturedAt = now,
             OperatorUserId = operatorUserId,
-            IdempotencyKey = $"scan/{device.Id}/{Guid.NewGuid():N}",
+            IdempotencyKey = idempotencyKey,
             CorrelationId = System.Diagnostics.Activity.Current?.RootId,
             TenantId = tenantId
         };
@@ -206,7 +226,6 @@ public sealed class CaseWorkflowService
         // store so the pre-render worker (and re-render after configuration
         // change later) can reach back for them. StorageUri points to the
         // disk location instead of the adapter's transient SourcePath.
-        var contentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(parsed.Bytes));
         var ext = MimeToExtension(parsed.MimeType);
         var storageUri = await _imageStore.SaveSourceAsync(contentHash, ext, parsed.Bytes, ct);
 
@@ -225,12 +244,124 @@ public sealed class CaseWorkflowService
             TenantId = tenantId
         };
         _db.ScanArtifacts.Add(artifact);
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsScanIdempotencyKeyViolation(ex))
+        {
+            // A concurrent worker beat us to it. Re-read the existing row
+            // and return that — same content => same scan, no duplicate.
+            _logger.LogDebug(ex,
+                "Lost benign race inserting Scan with IdempotencyKey {Key}; returning existing row.",
+                idempotencyKey);
+            _db.Entry(scan).State = EntityState.Detached;
+            _db.Entry(artifact).State = EntityState.Detached;
+            var winner = await _db.Scans.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.IdempotencyKey == idempotencyKey, ct)
+                ?? throw new InvalidOperationException(
+                    "Idempotency-key collision reported but no existing scan row found.");
+            return winner;
+        }
 
         await EmitAsync(tenantId, operatorUserId, scan.CorrelationId, "nickerp.inspection.scan_recorded", "Scan",
             scan.Id.ToString(), new { scan.Id, scan.CaseId, scan.ScannerDeviceInstanceId }, ct);
 
         return scan;
+    }
+
+    private static bool IsScanIdempotencyKeyViolation(DbUpdateException ex)
+        => ex.InnerException?.GetType().Name.Contains("PostgresException", StringComparison.Ordinal) == true
+           && ex.InnerException.Message.Contains("ux_scans_tenant_idempotency", StringComparison.Ordinal);
+
+    // ---------------------------------------------------------------------
+    // D2 — Top-level entry for hosted-service-driven ingestion. Looks up
+    // or creates the case keyed by (LocationId, SubjectIdentifier=stem)
+    // within a 24h reuse window, then runs the shared private
+    // IngestArtifactAsync helper.
+    //
+    // The worker is process-wide with no HTTP request context, so
+    // _tenant.IsResolved may be false; we must SetTenant explicitly from
+    // the device instance's TenantId before any DB write or the F1
+    // throw-on-unresolved interceptor will reject the insert.
+    // ---------------------------------------------------------------------
+    public async Task<Scan> IngestRawArtifactAsync(
+        ScannerDeviceInstance instance,
+        IScannerAdapter adapter,
+        RawScanArtifact raw,
+        CancellationToken ct = default)
+    {
+        if (instance is null) throw new ArgumentNullException(nameof(instance));
+        if (adapter is null) throw new ArgumentNullException(nameof(adapter));
+        if (raw is null) throw new ArgumentNullException(nameof(raw));
+
+        // The worker scope already calls _tenant.SetTenant(instance.TenantId),
+        // but be defensive — IngestRawArtifactAsync should be safe to call
+        // from any non-HTTP context (tests, future schedulers) without the
+        // caller having to know the tenancy contract.
+        if (!_tenant.IsResolved || _tenant.TenantId != instance.TenantId)
+            _tenant.SetTenant(instance.TenantId);
+
+        var tenantId = EnsureTenant(instance.TenantId);
+        var stem = ExtractSubjectIdentifier(raw.SourcePath);
+
+        // Reuse an open case with the same (LocationId, SubjectIdentifier)
+        // opened in the last 24h. Anything older — or already terminal —
+        // gets a fresh case so we don't accidentally fold a re-scan of a
+        // long-since-closed container into the previous workflow run.
+        var since = DateTimeOffset.UtcNow.AddHours(-24);
+        var existing = await _db.Cases
+            .Where(c => c.LocationId == instance.LocationId
+                        && c.SubjectIdentifier == stem
+                        && c.OpenedAt > since
+                        && c.State != InspectionWorkflowState.Closed
+                        && c.State != InspectionWorkflowState.Cancelled)
+            .OrderByDescending(c => c.OpenedAt)
+            .FirstOrDefaultAsync(ct);
+
+        InspectionCase @case;
+        if (existing is not null)
+        {
+            @case = existing;
+        }
+        else
+        {
+            // OpenCaseAsync calls CurrentActorAsync which would normally
+            // pull the user id from the auth claims. In the worker path
+            // there's no authenticated principal, so the case lands with
+            // OpenedByUserId=null. The tenant context is already set
+            // above, so the F1 throw-on-unresolved guard is satisfied.
+            @case = await OpenCaseAsync(
+                instance.LocationId,
+                CaseSubjectType.Container, // TODO: per-instance subject-type config; default Container.
+                stem,
+                instance.StationId,
+                ct);
+        }
+
+        return await IngestArtifactAsync(
+            @case.Id,
+            instance,
+            adapter,
+            raw,
+            tenantId,
+            operatorUserId: null,
+            mode: "ingested",
+            ct);
+    }
+
+    /// <summary>
+    /// Derive a stable subject identifier from a <see cref="RawScanArtifact.SourcePath"/>.
+    /// For FS6000 the SourcePath is the file stem (no high.img/low.img/material.img
+    /// suffix); falling back to a hash of the path keeps non-empty rows even
+    /// for adapters that emit something unexpected.
+    /// </summary>
+    private static string ExtractSubjectIdentifier(string sourcePath)
+    {
+        var name = Path.GetFileName(sourcePath);
+        return string.IsNullOrEmpty(name)
+            ? sourcePath.GetHashCode().ToString("X")
+            : name;
     }
 
     // ---------------------------------------------------------------------
