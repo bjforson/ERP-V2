@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Authorities.Abstractions;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.ExternalSystems.Abstractions;
@@ -217,6 +218,164 @@ public sealed class CaseWorkflowService
     }
 
     // ---------------------------------------------------------------------
+    // Evaluate authority rules — Validate + Infer over every registered
+    // IAuthorityRulesProvider plugin. Read-only; surfaces violations and
+    // suggested mutations to the UI but does not mutate the case.
+    //
+    // Multiple providers may be registered (one per authority — Ghana
+    // Customs, Nigeria Customs, etc.). For now we run all of them; future
+    // versions could scope by case Location → authority mapping.
+    // ---------------------------------------------------------------------
+    public async Task<RulesEvaluationResult> EvaluateAuthorityRulesAsync(
+        Guid caseId,
+        CancellationToken ct = default)
+    {
+        var (actor, tenant) = await CurrentActorAsync();
+        var tenantId = EnsureTenant(tenant);
+
+        var c = await _db.Cases.AsNoTracking().FirstOrDefaultAsync(x => x.Id == caseId, ct)
+            ?? throw new InvalidOperationException($"Case {caseId} not found.");
+
+        var docs = await _db.AuthorityDocuments.AsNoTracking()
+            .Where(d => d.CaseId == caseId)
+            .OrderBy(d => d.ReceivedAt)
+            .ToListAsync(ct);
+
+        var scans = await _db.Scans.AsNoTracking()
+            .Where(s => s.CaseId == caseId)
+            .OrderBy(s => s.CapturedAt)
+            .ToListAsync(ct);
+
+        // Build the LocationCode lookup for the case's location — rules
+        // need it (port-match in particular) and the entity carries Code
+        // as its stable identifier.
+        var location = await _db.Locations.AsNoTracking()
+            .FirstOrDefaultAsync(l => l.Id == c.LocationId, ct);
+        var locationCode = location?.Code ?? string.Empty;
+
+        // Load scanner instance metadata so we can populate ScanSnapshot —
+        // each Scan carries a ScannerDeviceInstanceId; the type code lives
+        // on the instance row.
+        var deviceIds = scans.Select(s => s.ScannerDeviceInstanceId).Distinct().ToList();
+        var devicesById = await _db.ScannerDeviceInstances.AsNoTracking()
+            .Where(d => deviceIds.Contains(d.Id))
+            .ToDictionaryAsync(d => d.Id, ct);
+
+        // Aggregate scan-level metadata from the artifacts. The FS6000
+        // adapter (and future adapters) puts useful keys on each artifact's
+        // MetadataJson — flatten them into the snapshot so rules can read
+        // e.g. "scanner.fyco_present" without a second query.
+        var scanIds = scans.Select(s => s.Id).ToList();
+        var artifacts = await _db.ScanArtifacts.AsNoTracking()
+            .Where(a => scanIds.Contains(a.ScanId))
+            .ToListAsync(ct);
+        var artifactsByScan = artifacts
+            .GroupBy(a => a.ScanId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var scanSnapshots = scans.Select(s =>
+        {
+            devicesById.TryGetValue(s.ScannerDeviceInstanceId, out var dev);
+            var typeCode = dev?.TypeCode ?? string.Empty;
+            var meta = MergeArtifactMetadata(artifactsByScan.GetValueOrDefault(s.Id));
+            return new ScanSnapshot(
+                ScannerTypeCode: typeCode,
+                LocationCode: locationCode,
+                Mode: s.Mode,
+                CapturedAt: s.CapturedAt,
+                Metadata: meta);
+        }).ToList();
+
+        var docSnapshots = docs.Select(d => new AuthorityDocumentSnapshot(
+            DocumentType: d.DocumentType,
+            ReferenceNumber: d.ReferenceNumber,
+            PayloadJson: d.PayloadJson)).ToList();
+
+        var caseData = new InspectionCaseData(
+            CaseId: c.Id,
+            TenantId: c.TenantId,
+            SubjectType: c.SubjectType.ToString(),
+            SubjectIdentifier: c.SubjectIdentifier,
+            Documents: docSnapshots,
+            Scans: scanSnapshots);
+
+        // Run every registered IAuthorityRulesProvider. If a provider
+        // throws we collect its error rather than failing the whole pass —
+        // a misbehaving rule pack shouldn't block the analyst's ability
+        // to see the others.
+        var allViolations = new List<EvaluatedViolation>();
+        var allMutations = new List<EvaluatedMutation>();
+        var providerErrors = new List<string>();
+        var registered = _plugins.ForContract(typeof(IAuthorityRulesProvider));
+        foreach (var p in registered)
+        {
+            IAuthorityRulesProvider provider;
+            try
+            {
+                provider = _plugins.Resolve<IAuthorityRulesProvider>(p.TypeCode, _services);
+            }
+            catch (Exception ex)
+            {
+                providerErrors.Add($"{p.TypeCode}: resolve failed — {ex.Message}");
+                continue;
+            }
+
+            try
+            {
+                var validation = await provider.ValidateAsync(caseData, ct);
+                foreach (var v in validation.Violations)
+                    allViolations.Add(new EvaluatedViolation(provider.AuthorityCode, v));
+
+                var inference = await provider.InferAsync(caseData, ct);
+                foreach (var m in inference.Mutations)
+                    allMutations.Add(new EvaluatedMutation(provider.AuthorityCode, m));
+            }
+            catch (Exception ex)
+            {
+                providerErrors.Add($"{p.TypeCode}: {ex.Message}");
+                _logger.LogWarning(ex, "Rules provider {TypeCode} threw during case {CaseId} evaluation",
+                    p.TypeCode, caseId);
+            }
+        }
+
+        await EmitAsync(tenantId, actor, c.CorrelationId,
+            "nickerp.inspection.rules_evaluated", "InspectionCase", c.Id.ToString(),
+            new
+            {
+                c.Id,
+                providersRun = registered.Count,
+                violationCount = allViolations.Count,
+                mutationCount = allMutations.Count,
+                errorCount = providerErrors.Count
+            }, ct);
+
+        return new RulesEvaluationResult(allViolations, allMutations, providerErrors);
+    }
+
+    /// <summary>
+    /// Flatten every artifact's <c>MetadataJson</c> into a single dictionary.
+    /// Later artifacts win on key conflict — most-recent wins, which matches
+    /// how the rules consume scan facts (latest scan is the most relevant).
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> MergeArtifactMetadata(IReadOnlyList<ScanArtifact>? artifacts)
+    {
+        var merged = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (artifacts is null || artifacts.Count == 0) return merged;
+        foreach (var a in artifacts)
+        {
+            if (string.IsNullOrEmpty(a.MetadataJson)) continue;
+            try
+            {
+                var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(a.MetadataJson);
+                if (dict is null) continue;
+                foreach (var kv in dict) merged[kv.Key] = kv.Value;
+            }
+            catch (JsonException) { /* skip malformed metadata */ }
+        }
+        return merged;
+    }
+
+    // ---------------------------------------------------------------------
     // Assign current user to a case + start a review session
     // ---------------------------------------------------------------------
     public async Task<ReviewSession> AssignSelfAndStartReviewAsync(Guid caseId, CancellationToken ct = default)
@@ -415,3 +574,15 @@ public sealed class CaseWorkflowService
         }
     }
 }
+
+/// <summary>Combined output of every IAuthorityRulesProvider run against a case.</summary>
+public sealed record RulesEvaluationResult(
+    IReadOnlyList<EvaluatedViolation> Violations,
+    IReadOnlyList<EvaluatedMutation> Mutations,
+    IReadOnlyList<string> ProviderErrors);
+
+/// <summary>One rule violation, tagged with the authority that produced it.</summary>
+public sealed record EvaluatedViolation(string AuthorityCode, RuleViolation Violation);
+
+/// <summary>One inferred mutation, tagged with the authority that produced it.</summary>
+public sealed record EvaluatedMutation(string AuthorityCode, InferredMutation Mutation);

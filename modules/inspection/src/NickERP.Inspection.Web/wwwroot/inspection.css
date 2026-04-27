@@ -70,6 +70,10 @@ a { color: var(--nickerp-color-primary); }
 .inspection-pill-state.is-submitted  { background: rgba(22, 163, 74, 0.12);  color: var(--nickerp-color-success); }
 .inspection-pill-state.is-closed     { background: rgba(15, 23, 42, 0.10);   color: var(--nickerp-color-text-muted); }
 .inspection-pill-state.is-cancelled  { background: rgba(220, 38, 38, 0.12);  color: var(--nickerp-color-danger); }
+/* Severity variants used by the authority-rules result table. */
+.inspection-pill-state.is-info       { background: rgba(2, 132, 199, 0.12);  color: var(--nickerp-color-info); }
+.inspection-pill-state.is-warning    { background: rgba(202, 138, 4, 0.12);  color: var(--nickerp-color-warning); }
+.inspection-pill-state.is-error      { background: rgba(220, 38, 38, 0.12);  color: var(--nickerp-color-danger); }
 
 .inspection-detail-grid {
     display: grid;

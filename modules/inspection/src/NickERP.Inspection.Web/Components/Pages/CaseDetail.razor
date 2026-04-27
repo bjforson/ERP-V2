@@ -52,6 +52,8 @@ else
                 <button class="inspection-button" @onclick="FetchDocuments" disabled="@(_selectedExternalId == Guid.Empty)">Fetch documents</button>
 
                 <button class="inspection-button" @onclick="AssignSelf" disabled="@(_case.State == InspectionWorkflowState.Submitted || _case.State == InspectionWorkflowState.Closed)">Assign me + start review</button>
+
+                <button class="inspection-button" @onclick="EvaluateRules" disabled="@(_documents.Count == 0)">Run authority checks</button>
             </div>
 
             <div class="inspection-form-row" style="margin-top: var(--nickerp-space-3);">
@@ -135,6 +137,60 @@ else
                 }
             </section>
 
+            @if (_rulesResult is not null)
+            {
+                <section class="inspection-section">
+                    <h2>Authority checks</h2>
+                    <div class="inspection-card">
+                        @if (_rulesResult.Violations.Count == 0 && _rulesResult.Mutations.Count == 0 && _rulesResult.ProviderErrors.Count == 0)
+                        {
+                            <p class="inspection-empty">No violations. No suggested mutations. Case is clean.</p>
+                        }
+                        else
+                        {
+                            @if (_rulesResult.Violations.Count > 0)
+                            {
+                                <h3>Violations (@_rulesResult.Violations.Count)</h3>
+                                <table class="inspection-table">
+                                    <thead><tr><th>Authority</th><th>Rule</th><th>Severity</th><th>Message</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var ev in _rulesResult.Violations)
+                                        {
+                                            <tr>
+                                                <td><code>@ev.AuthorityCode</code></td>
+                                                <td><code>@ev.Violation.RuleCode</code></td>
+                                                <td><span class="inspection-pill-state is-@ev.Violation.Severity.ToLowerInvariant()">@ev.Violation.Severity</span></td>
+                                                <td>@ev.Violation.Message</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                            @if (_rulesResult.Mutations.Count > 0)
+                            {
+                                <h3 style="margin-top: var(--nickerp-space-3);">Suggested mutations (@_rulesResult.Mutations.Count)</h3>
+                                <ul>
+                                    @foreach (var em in _rulesResult.Mutations)
+                                    {
+                                        <li><code>@em.AuthorityCode</code> · <code>@em.Mutation.MutationKind</code> — @em.Mutation.Reason</li>
+                                    }
+                                </ul>
+                            }
+                            @if (_rulesResult.ProviderErrors.Count > 0)
+                            {
+                                <h3 style="margin-top: var(--nickerp-space-3);">Provider errors (@_rulesResult.ProviderErrors.Count)</h3>
+                                <ul>
+                                    @foreach (var err in _rulesResult.ProviderErrors)
+                                    {
+                                        <li><code>@err</code></li>
+                                    }
+                                </ul>
+                            }
+                        }
+                    </div>
+                </section>
+            }
+
             <section class="inspection-section">
                 <h2>Submissions (@_submissions.Count)</h2>
                 @if (_submissions.Count == 0) { <p class="inspection-empty">No verdict submissions yet.</p> }
@@ -193,6 +249,7 @@ else
     private double _confidence = 0.85;
     private string _basis = string.Empty;
     private string _message = string.Empty;
+    private RulesEvaluationResult? _rulesResult;
 
     private string ShortId => _case is null ? "" : _case.Id.ToString()[..8];
 
@@ -253,6 +310,18 @@ else
     private async Task Close()
     {
         try { await Workflow.CloseCaseAsync(CaseId); _message = "Case closed."; await Reload(); }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+
+    private async Task EvaluateRules()
+    {
+        try
+        {
+            _rulesResult = await Workflow.EvaluateAuthorityRulesAsync(CaseId);
+            var v = _rulesResult.Violations.Count;
+            var m = _rulesResult.Mutations.Count;
+            _message = $"Evaluated. {v} violation(s), {m} suggested mutation(s).";
+        }
         catch (Exception ex) { _message = ex.Message; }
     }
 }
