@@ -192,8 +192,15 @@ public sealed class CaseWorkflowService
 
     // ---------------------------------------------------------------------
     // Fetch authority documents via an IExternalSystemAdapter plugin
+    //
+    // D3 — after persisting the new documents and emitting the
+    // case_validated event, automatically run the authority rules pack
+    // so the analyst doesn't need a second click. Rule evaluation is
+    // best-effort: a throwing provider is logged and the rules result
+    // comes back as null, but the document fetch itself still succeeds
+    // (the analyst can re-run via the "Run authority checks" button).
     // ---------------------------------------------------------------------
-    public async Task<IReadOnlyList<NickERP.Inspection.Core.Entities.AuthorityDocument>> FetchDocumentsAsync(Guid caseId, Guid externalSystemInstanceId, CancellationToken ct = default)
+    public async Task<FetchDocumentsResult> FetchDocumentsAsync(Guid caseId, Guid externalSystemInstanceId, CancellationToken ct = default)
     {
         var (actor, tenant) = await CurrentActorAsync();
         var tenantId = EnsureTenant(tenant);
@@ -245,7 +252,24 @@ public sealed class CaseWorkflowService
             await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.case_validated", "InspectionCase",
                 c.Id.ToString(), new { c.Id, c.State }, ct);
         }
-        return emitted;
+
+        // D3 auto-fire: run the authority-rules pack so the analyst sees
+        // violations / suggested mutations as soon as the documents land.
+        // Wrapped so a throwing provider doesn't undo the fetch — the
+        // documents are already saved and the case is already Validated.
+        RulesEvaluationResult? rules = null;
+        try
+        {
+            rules = await EvaluateAuthorityRulesAsync(caseId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Auto-evaluating authority rules failed after document fetch for case {CaseId}; analyst can re-run manually.",
+                caseId);
+        }
+
+        return new FetchDocumentsResult(emitted, rules);
     }
 
     // ---------------------------------------------------------------------
@@ -626,6 +650,18 @@ public sealed record RulesEvaluationResult(
     IReadOnlyList<EvaluatedViolation> Violations,
     IReadOnlyList<EvaluatedMutation> Mutations,
     IReadOnlyList<string> ProviderErrors);
+
+/// <summary>
+/// What <see cref="CaseWorkflowService.FetchDocumentsAsync"/> hands back:
+/// the persisted documents plus the optional auto-fired rules pack output.
+/// <see cref="Rules"/> is <c>null</c> when the auto-evaluation threw — the
+/// fetch itself still succeeded; the analyst can re-run via the "Run
+/// authority checks" button. The non-null shape exists so callers can
+/// surface the rules pane on first render without a second round-trip.
+/// </summary>
+public sealed record FetchDocumentsResult(
+    IReadOnlyList<NickERP.Inspection.Core.Entities.AuthorityDocument> Documents,
+    RulesEvaluationResult? Rules);
 
 /// <summary>One rule violation, tagged with the authority that produced it.</summary>
 public sealed record EvaluatedViolation(string AuthorityCode, RuleViolation Violation);
