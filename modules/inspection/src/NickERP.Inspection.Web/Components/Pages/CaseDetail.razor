@@ -306,7 +306,25 @@ else
 
     private async Task FetchDocuments()
     {
-        try { var docs = await Workflow.FetchDocumentsAsync(CaseId, _selectedExternalId); _message = $"Fetched {docs.Count} document(s)."; await Reload(); }
+        try
+        {
+            // D3: FetchDocumentsAsync now also auto-fires the authority-rules
+            // pack server-side and hands the result back in the same call.
+            // Surface it directly so the rules pane shows up without a second
+            // click; if Rules is null the auto-eval threw (already logged) and
+            // the analyst can fall back to the "Run authority checks" button.
+            var result = await Workflow.FetchDocumentsAsync(CaseId, _selectedExternalId);
+            _rulesResult = result.Rules;
+            if (result.Rules is { } r)
+            {
+                _message = $"Fetched {result.Documents.Count} document(s). {r.Violations.Count} violation(s), {r.Mutations.Count} suggested mutation(s).";
+            }
+            else
+            {
+                _message = $"Fetched {result.Documents.Count} document(s). Auto rule check failed — use 'Run authority checks' to retry.";
+            }
+            await Reload();
+        }
         catch (Exception ex) { _message = ex.Message; }
     }
 
