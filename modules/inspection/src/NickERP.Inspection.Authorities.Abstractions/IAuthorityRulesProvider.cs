@@ -31,19 +31,37 @@ public interface IAuthorityRulesProvider
 /// <summary>
 /// Wire shape of the case passed to the rules provider. Vendor-neutral;
 /// concrete adapter packages can map their domain types to/from this.
+///
+/// <see cref="Scans"/> is included alongside <see cref="Documents"/> so
+/// authority rules can validate consistency between the physical scan
+/// (where it happened, what the scanner said) and the upstream paperwork
+/// (BOE / CMR / IM declared port, clearance type, etc.).
 /// </summary>
 public sealed record InspectionCaseData(
     Guid CaseId,
     long TenantId,
     string SubjectType,
     string SubjectIdentifier,
-    IReadOnlyList<AuthorityDocumentSnapshot> Documents);
+    IReadOnlyList<AuthorityDocumentSnapshot> Documents,
+    IReadOnlyList<ScanSnapshot> Scans);
 
 /// <summary>Snapshot of one authority document attached to the case.</summary>
 public sealed record AuthorityDocumentSnapshot(
     string DocumentType,
     string ReferenceNumber,
     string PayloadJson);
+
+/// <summary>
+/// Snapshot of one scan attached to the case. Adapter-emitted metadata
+/// (e.g. <c>scanner.fyco_present</c>) flows through verbatim — concrete
+/// rule packs read what they need by key.
+/// </summary>
+public sealed record ScanSnapshot(
+    string ScannerTypeCode,
+    string LocationCode,
+    string Mode,
+    DateTimeOffset CapturedAt,
+    IReadOnlyDictionary<string, string> Metadata);
 
 /// <summary>Validation outcome. Empty <see cref="Violations"/> = pass.</summary>
 public sealed record ValidationResult(IReadOnlyList<RuleViolation> Violations)

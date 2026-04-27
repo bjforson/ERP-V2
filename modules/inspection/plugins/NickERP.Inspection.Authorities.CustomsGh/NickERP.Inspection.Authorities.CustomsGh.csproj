@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Authorities.CustomsGh</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Authorities.CustomsGh</AssemblyName>
+    <Description>NickERP Inspection v2 — Ghana Customs IAuthorityRulesProvider. Port of v1's ContainerValidationService rules: port-match (BOE DeliveryPlace vs scan location), Fyco import/export (FS6000 FycoPresent vs BOE ClearanceType), regime sanity (recognized Ghana customs regime codes), plus CMR→IM upgrade inference when a transit message receives an import declaration.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Authorities.Abstractions\NickERP.Inspection.Authorities.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

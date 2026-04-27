@@ -1,0 +1,19 @@
+{
+  "typeCode": "gh-customs",
+  "displayName": "Ghana Customs (rules)",
+  "version": "0.1.0",
+  "description": "Ghana Customs authority rule pack. Validates inspection cases against Ghana customs regulations: port-match (BOE DeliveryPlace must agree with scan location), Fyco import/export consistency, regime code sanity. Also provides CMR→IM upgrade inference. Ported point-in-time from v1 NSCIM's ContainerValidationService.",
+  "contracts": [
+    "NickERP.Inspection.Authorities.Abstractions.IAuthorityRulesProvider"
+  ],
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "EnablePortMatch": { "type": "boolean", "default": true },
+      "EnableFycoCheck": { "type": "boolean", "default": true },
+      "EnableRegimeCheck": { "type": "boolean", "default": true },
+      "EnableCmrUpgradeInference": { "type": "boolean", "default": true }
+    }
+  }
+}
