@@ -67,3 +67,6 @@ secrets.json
 
 # Inspection v2 host plugins folder — populated from build output by deploy/CI scripts, not source-tracked.
 modules/inspection/src/NickERP.Inspection.Web/plugins/
+
+# Local-machine test fixtures (synthetic ICUMS batches, FS6000 scan sets, etc.)
+.test/

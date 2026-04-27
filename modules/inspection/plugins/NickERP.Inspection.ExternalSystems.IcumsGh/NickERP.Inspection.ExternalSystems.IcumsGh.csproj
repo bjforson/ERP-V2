@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.ExternalSystems.IcumsGh</RootNamespace>
+    <AssemblyName>NickERP.Inspection.ExternalSystems.IcumsGh</AssemblyName>
+    <Description>NickERP Inspection v2 — Ghana ICUMS IExternalSystemAdapter. File-drop + outbox topology matching v1 NSCIM's actual deployment: scans a configured directory for ICUMS batch JSON files (BOEScanDocument format), serves per-container lookups from an mtime-cached index, and submits verdicts as deterministic-name JSON files into an outbox folder for downstream pickup.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.ExternalSystems.Abstractions\NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

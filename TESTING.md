@@ -74,6 +74,7 @@ cd "/c/Shared/ERP V2"
 dotnet build modules/inspection/plugins/NickERP.Inspection.Scanners.Mock
 dotnet build modules/inspection/plugins/NickERP.Inspection.ExternalSystems.Mock
 dotnet build modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000
+dotnet build modules/inspection/plugins/NickERP.Inspection.ExternalSystems.IcumsGh
 
 DEST="modules/inspection/src/NickERP.Inspection.Web/plugins"
 mkdir -p "$DEST"
@@ -84,6 +85,8 @@ cp modules/inspection/plugins/NickERP.Inspection.ExternalSystems.Mock/bin/Debug/
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/bin/Debug/net10.0/NickERP.Inspection.Scanners.FS6000.dll "$DEST/"
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/bin/Debug/net10.0/plugin.json "$DEST/NickERP.Inspection.Scanners.FS6000.plugin.json"
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/bin/Debug/net10.0/SixLabors.ImageSharp.dll "$DEST/"
+cp modules/inspection/plugins/NickERP.Inspection.ExternalSystems.IcumsGh/bin/Debug/net10.0/NickERP.Inspection.ExternalSystems.IcumsGh.dll "$DEST/"
+cp modules/inspection/plugins/NickERP.Inspection.ExternalSystems.IcumsGh/bin/Debug/net10.0/plugin.json "$DEST/NickERP.Inspection.ExternalSystems.IcumsGh.plugin.json"
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.Mock/bin/Debug/net10.0/NickERP.Inspection.Scanners.Abstractions.dll "$DEST/"
 cp modules/inspection/plugins/NickERP.Inspection.ExternalSystems.Mock/bin/Debug/net10.0/NickERP.Inspection.ExternalSystems.Abstractions.dll "$DEST/"
 cp modules/inspection/plugins/NickERP.Inspection.Scanners.Mock/bin/Debug/net10.0/NickERP.Platform.Plugins.dll "$DEST/"
@@ -108,12 +111,12 @@ dotnet run
 
 ### Inspection v2 admin (http://localhost:5410)
 
-1. **/** (overview) — five stat tiles. Plugins should already show **3 loaded** (mock-scanner + mock-external + fs6000).
-2. **/plugins** — confirms all three are registered with their contracts (`IScannerAdapter`, `IExternalSystemAdapter`) detected via reflection. The `fs6000` plugin is the real adapter ported from v1's `FS6000FormatDecoder` (header parse + 16-bit big-endian byte-swap + vertical flip).
+1. **/** (overview) — five stat tiles. Plugins should already show **4 loaded** (mock-scanner + mock-external + fs6000 + icums-gh).
+2. **/plugins** — confirms all four are registered with their contracts (`IScannerAdapter`, `IExternalSystemAdapter`) detected via reflection. `fs6000` is the real scanner adapter ported from v1's `FS6000FormatDecoder`; `icums-gh` is the real Ghana ICUMS adapter (file-drop intake + file-based outbox).
 3. **/locations** — add `tema` / `Tema Port` / `Greater Accra` / `Africa/Accra`. Row appears.
 4. **/stations** — add `lane-1` / `Lane 1` against the Tema location. Row appears.
 5. **/scanners** — pick the `fs6000` plugin from the dropdown, point it at Tema, name it `Test FS6000`. Set `WatchPath` in the config JSON to a directory you have read access to (e.g. `C:\\fs6000\\incoming`). Row appears. (`mock-scanner` is also still available if you want to test the synthetic-stream path.)
-6. **/external-systems** — pick `mock-external`, name it `Test ICUMS`, scope = `Per-location`. Row appears.
+6. **/external-systems** — pick `icums-gh`, name it `Test ICUMS`, scope = `Per-location`. Set `BatchDropPath` and `OutboxPath` in the config JSON (e.g. `C:\\icums\\drop` / `C:\\icums\\outbox`). Row appears. (`mock-external` is also still available.)
 
 After clicking through both apps, **open Seq at http://localhost:5341** and filter by `ServiceName = 'NickERP.Portal'` then `ServiceName = 'NickERP.Inspection.Web'` — you should see structured log entries for every page load + DB write, plus OpenTelemetry traces correlating the request → DB span.
 
@@ -170,7 +173,8 @@ C:\Shared\ERP V2\                                     ← github.com/bjforson/ER
         └── plugins/
             ├── NickERP.Inspection.Scanners.Mock/     ← mock-scanner reference impl
             ├── NickERP.Inspection.Scanners.FS6000/   ← real FS6000 adapter (decoder ported from v1)
-            └── NickERP.Inspection.ExternalSystems.Mock/ ← mock-external reference impl
+            ├── NickERP.Inspection.ExternalSystems.Mock/ ← mock-external reference impl
+            └── NickERP.Inspection.ExternalSystems.IcumsGh/ ← real ICUMS Ghana adapter (file-drop + outbox)
 ```
 
 ---

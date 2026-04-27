@@ -1,0 +1,30 @@
+{
+  "typeCode": "icums-gh",
+  "displayName": "ICUMS (Ghana Customs)",
+  "version": "0.1.0",
+  "description": "Ghana ICUMS adapter. File-drop intake (operator drops batch JSON files into BatchDropPath; adapter indexes them by container number) + file-based outbox for verdicts. Mirrors the v1 NSCIM deployment topology — no direct HTTP to ICUMS in this first cut. JSON shape matches v1's BOEScanDocument contract (ManifestDetails / BoeHeader / ContainerDetails / ManifestItems).",
+  "contracts": [
+    "NickERP.Inspection.ExternalSystems.Abstractions.IExternalSystemAdapter"
+  ],
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["BatchDropPath", "OutboxPath"],
+    "properties": {
+      "BatchDropPath": {
+        "type": "string",
+        "description": "Directory the adapter scans for ICUMS batch JSON files. Each file is expected to follow the BOEScanDocument schema (root .BOEScanDocument array). Files are re-read when their mtime changes."
+      },
+      "OutboxPath": {
+        "type": "string",
+        "description": "Directory where verdict envelopes are written. One file per submission, named {idempotencyKey}.json — re-submitting with the same key overwrites the file, providing at-most-once semantics."
+      },
+      "CacheTtlSeconds": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 60,
+        "description": "How often the BatchDropPath is re-scanned for new/changed files."
+      }
+    }
+  }
+}
