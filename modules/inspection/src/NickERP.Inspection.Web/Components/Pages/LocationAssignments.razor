@@ -100,7 +100,15 @@
         var state = await AuthState.GetAuthenticationStateAsync();
         Guid.TryParse(state.User?.FindFirst("nickerp:id")?.Value, out _currentUserId);
 
-        _users = await Identity.Users.AsNoTracking().OrderBy(u => u.Email).ToListAsync();
+        // Phase F1 — explicit tenant filter on the cross-DB Identity.Users
+        // query. Postgres RLS now enforces this on the Identity DB connection
+        // too, but the .Where keeps the SQL explicit (and protects single-DB
+        // hosts where RLS migrations may have been skipped).
+        var tenantId = Tenant.IsResolved ? Tenant.TenantId : 0L;
+        _users = await Identity.Users.AsNoTracking()
+            .Where(u => u.TenantId == tenantId)
+            .OrderBy(u => u.Email)
+            .ToListAsync();
         _usersById = _users.ToDictionary(u => u.Id);
         _locations = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
         _locationsById = _locations.ToDictionary(l => l.Id);
@@ -118,7 +126,13 @@
         {
             _message = "User and location are required."; return;
         }
-        if (!Tenant.IsResolved) Tenant.SetTenant(1);
+        // Phase F1 — fail loud instead of silently coercing to tenant 1. The
+        // page is [Authorize]'d so the tenancy middleware should have run.
+        if (!Tenant.IsResolved)
+        {
+            _message = "Tenant context is not resolved. Sign out and back in.";
+            return;
+        }
 
         var existing = await Db.LocationAssignments
             .FirstOrDefaultAsync(a => a.IdentityUserId == _form.UserId && a.LocationId == _form.LocationId);

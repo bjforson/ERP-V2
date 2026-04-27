@@ -101,7 +101,12 @@
         {
             _message = "Plugin, location, and display name are required."; return;
         }
-        if (!Tenant.IsResolved) Tenant.SetTenant(1);
+        // Phase F1 — fail loud instead of silently coercing to tenant 1.
+        if (!Tenant.IsResolved)
+        {
+            _message = "Tenant context is not resolved. Sign out and back in.";
+            return;
+        }
 
         Db.ScannerDeviceInstances.Add(new ScannerDeviceInstance
         {

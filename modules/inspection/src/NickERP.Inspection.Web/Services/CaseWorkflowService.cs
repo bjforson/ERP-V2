@@ -58,11 +58,30 @@ public sealed class CaseWorkflowService
         var state = await _auth.GetAuthenticationStateAsync();
         var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
         Guid? id = Guid.TryParse(idClaim, out var g) ? g : null;
-        if (!_tenant.IsResolved) _tenant.SetTenant(1);
+        // Phase F1 — fail loud instead of silently coercing to tenant 1. If
+        // we get here without a resolved tenant, the request bypassed the
+        // UseNickErpTenancy() middleware (e.g. an endpoint forgot to require
+        // auth) and any write would land cross-tenant. RLS would also reject
+        // the SELECT/INSERT now that policies are in place.
+        if (!_tenant.IsResolved)
+        {
+            throw new InvalidOperationException(
+                "Tenant context is not resolved. Verify NickErpTenancy middleware ran for this request "
+                + "(it must follow UseAuthentication/UseAuthorization in Program.cs) and that the "
+                + "principal carries a valid 'nickerp:tenant_id' claim.");
+        }
         return (id, _tenant.TenantId);
     }
 
-    private static long EnsureTenant(long t) => t > 0 ? t : 1;
+    // Phase F1 — EnsureTenant previously coerced 0 → 1 as a fallback. With
+    // CurrentActorAsync now throwing on unresolved tenants, every caller
+    // already has a positive TenantId; the helper is kept as an identity-pass
+    // so call sites stay readable but no longer hides tenancy bugs.
+    private static long EnsureTenant(long t) =>
+        t > 0
+            ? t
+            : throw new InvalidOperationException(
+                $"EnsureTenant received a non-positive tenant id ({t}). This indicates a bug in tenant resolution.");
 
     // ---------------------------------------------------------------------
     // Open a new case

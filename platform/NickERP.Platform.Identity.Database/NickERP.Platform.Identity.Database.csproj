@@ -28,6 +28,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+    <!-- Phase F1 — AddDbContext wires TenantConnectionInterceptor + TenantOwnedEntityInterceptor. -->
+    <ProjectReference Include="..\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
   </ItemGroup>
 
 </Project>

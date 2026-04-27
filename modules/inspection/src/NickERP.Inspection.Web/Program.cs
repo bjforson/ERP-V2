@@ -32,12 +32,16 @@ builder.Services.AddNickErpIdentityCore(platformConn);
 builder.Services.AddNickErpTenancy();
 builder.Services.AddNickErpAuditCore(platformConn);
 
-// Inspection's own DbContext.
-builder.Services.AddDbContext<InspectionDbContext>(opts =>
+// Inspection's own DbContext. Phase F1 — wires the tenancy interceptors
+// (push app.tenant_id to Postgres for RLS + stamp TenantId on inserts).
+builder.Services.AddDbContext<InspectionDbContext>((sp, opts) =>
 {
     opts.UseNpgsql(inspectionConn ?? throw new InvalidOperationException(
         "ConnectionStrings:Inspection is required (the nickerp_inspection Postgres DB)."),
         npgsql => npgsql.MigrationsAssembly(typeof(InspectionDbContext).Assembly.GetName().Name));
+    opts.AddInterceptors(
+        sp.GetRequiredService<TenantConnectionInterceptor>(),
+        sp.GetRequiredService<TenantOwnedEntityInterceptor>());
 });
 
 // ---------------------------------------------------------------------------
