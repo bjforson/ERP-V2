@@ -522,11 +522,16 @@ Update this table as items move. Source of truth for "where are we?"
 | F3 | **done** | merged + cleaned | `f941f71` |
 | F4 | **done** | merged + cleaned | `aa9abb9` |
 | F5 (slices 1+2) | **done** | merged + cleaned | `91cb390` |
-| F5 (slice 3) | **deferred** — needs identity-tenancy interlock first | `plan/f5-prod-minimum` (commit `8b29407` kept on origin) | — |
-| D1 | pending | `plan/d1-ingest-helper` | — |
-| D2 | pending | `plan/d2-scanner-ingestion-worker` | — |
+| F5 (slice 3) | **deferred** — needs F6 first | `plan/f5-prod-minimum` (commit `8b29407` kept on origin) | — |
+| D1 | **done** | merged + cleaned | `6b16c23` |
+| D2 | **done** | merged + cleaned | `749f273` |
 | D3 | **done** | merged + cleaned | `3dee869` |
-| D4 | pending | `plan/d4-e2e-smoke` | — |
+| D4 | **done** | merged + cleaned | `b101c7b` |
+
+**Sprint Foundation+Demo: 9 of 9 scoped items shipped.** Two follow-ups discovered during execution and parked:
+
+- **F6** — Identity-Tenancy Interlock (must land before F5 slice 3 can merge).
+- **F7** — Background-worker tenant resolution (PreRenderWorker + SourceJanitorWorker silently fail on the live host because they don't `SetTenant(...)` per cycle. D4's e2e test masks the bug via a single-tenant stub `ITenantContext` in the WebApplicationFactory; the live host has the bug). **High priority** — blocks the actual demo working on :5410 even though F1..F5 + D1..D4 say "done."
 
 ### F5 slice 3 deferral note (added 2026-04-27)
 
@@ -549,9 +554,39 @@ F5 slice 3 (commit `8b29407` on `plan/f5-prod-minimum`) creates a non-superuser 
 
 **Acceptance.** Switch the dev host's connection string to `nscim_app`; `/cases` still renders 200; `/healthz/ready` still returns 200; `psql -U nscim_app -d nickerp_inspection -c "SELECT count(*) FROM inspection.cases;"` (no `app.tenant_id`) still returns 0.
 
+### F7 — Background-Worker Tenant Resolution (NEW, high priority)
+
+| | |
+|---|---|
+| **Status** | pending (live-system bug) |
+| **Predecessors** | F1 (interceptor wiring — done), D2 (worker reference pattern — done) |
+| **Effort** | ~0.5 day |
+| **Branch** | `plan/f7-worker-tenant-resolution` |
+
+**Why this matters.** Surfaced by D4's e2e test. F1's `TenantOwnedEntityInterceptor` throws on `SaveChanges` when `_tenant.IsResolved == false`. `D2.ScannerIngestionWorker` calls `tenant.SetTenant(instance.TenantId)` per cycle and works correctly. **`PreRenderWorker` (F5 slice 2) and `SourceJanitorWorker` (F5 slice 2) do not** — both quietly throw and log a warning, then move on, on every cycle. Symptom on the live host: scans ingest, source bytes write to disk, but `scan_render_artifacts` rows never land — analyst sees no thumbnail. The `/healthz/ready` endpoint still returns 200 because the workers are *running*, not *succeeding*.
+
+**Deliverable.** Fix both workers to set tenant context per artifact (or per row) before any `SaveChanges`. The artifact already carries `TenantId`; mirror `ScannerIngestionWorker`'s approach:
+1. Inside the per-cycle scope, after loading the artifact (or row of work), call `_tenant.SetTenant(artifact.TenantId)`.
+2. Then proceed with the read/write that triggers `SaveChanges`.
+
+For `PreRenderWorker.DrainOnceAsync`: each `ScanArtifact` row in the batch carries `TenantId`. Set per-row tenant before the render+persist step. Worker is single-threaded per cycle; loop variable is fine.
+
+For `SourceJanitorWorker`: same pattern — for each candidate row, set tenant before the eviction-eligibility query and the optional cleanup write.
+
+D4's `E2EWebApplicationFactory` stub `ITenantContext` should be removed once this lands; the e2e test then exercises the real wiring.
+
+**Acceptance.**
+- `PreRenderWorker` produces `scan_render_artifacts` rows under the live host (no stub) within 30s of a scan ingest.
+- `SourceJanitorWorker` runs without exceptions in the log.
+- D4's e2e test passes without the `ITenantContext` stub override.
+- `dotnet build` 0 errors; existing tests still pass.
+
+**Out of scope.** Multi-host worker leases. Don't refactor the discovery-loop topology.
+
 ---
 
 *Last updated: 2026-04-27. When this plan changes substantively, bump the date and note the rationale at the top.*
 
 ### Change log
 - 2026-04-27: Initial sprint draft. Wave 1 (F1+F2+F3) dispatched, merged at `2dde6db`. Wave 2 (F4+F5+D3) dispatched, merged at `3dee869`. F5 slice 3 deferred pending F6 (identity-tenancy interlock); branch + commit preserved on origin.
+- 2026-04-27: Wave 3 — D1 dispatched + merged at `6b16c23`; D2 dispatched + merged at `749f273`; D4 dispatched + merged at `b101c7b`. **Sprint Foundation+Demo: 9 of 9 scoped items shipped.** D4's e2e test surfaced F7 (background-worker tenant resolution) — high-priority follow-up because the live host silently fails to render thumbnails. F7 added above; queued for the next dispatch.
