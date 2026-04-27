@@ -105,11 +105,24 @@ else
                 else
                 {
                     <table class="inspection-table">
-                        <thead><tr><th>Captured</th><th>Mode</th><th>Artifacts</th></tr></thead>
+                        <thead><tr><th></th><th>Captured</th><th>Mode</th><th>Artifacts</th></tr></thead>
                         <tbody>
                             @foreach (var s in _scans)
                             {
                                 <tr>
+                                    <td>
+                                        @if (_primaryArtifactByScan.TryGetValue(s.Id, out var artId))
+                                        {
+                                            <img class="inspection-thumb"
+                                                 src="/api/images/@artId/thumbnail"
+                                                 alt="Scan thumbnail"
+                                                 loading="lazy" />
+                                        }
+                                        else
+                                        {
+                                            <div class="inspection-thumb is-empty" aria-hidden="true"></div>
+                                        }
+                                    </td>
                                     <td>@s.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
                                     <td>@s.Mode</td>
                                     <td>@_artifactsPerScan.GetValueOrDefault(s.Id, 0)</td>
@@ -238,6 +251,8 @@ else
     private List<AuthorityDocument> _documents = new();
     private List<OutboundSubmission> _submissions = new();
     private Dictionary<Guid, int> _artifactsPerScan = new();
+    /// <summary>ScanId → first Primary ScanArtifact.Id, used for per-scan thumbnails.</summary>
+    private Dictionary<Guid, Guid> _primaryArtifactByScan = new();
     private List<ScannerDeviceInstance> _scanners = new();
     private List<ExternalSystemInstance> _externals = new();
     private Dictionary<Guid, Location> _locationsById = new();
@@ -262,11 +277,17 @@ else
         _scans = await Db.Scans.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.CapturedAt).ToListAsync();
         _documents = await Db.AuthorityDocuments.AsNoTracking().Where(d => d.CaseId == CaseId).OrderByDescending(d => d.ReceivedAt).ToListAsync();
         _submissions = await Db.OutboundSubmissions.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.SubmittedAt).ToListAsync();
+        var scanIds = _scans.Select(s => s.Id).ToList();
         _artifactsPerScan = await Db.ScanArtifacts.AsNoTracking()
-            .Where(a => _scans.Select(s => s.Id).Contains(a.ScanId))
+            .Where(a => scanIds.Contains(a.ScanId))
             .GroupBy(a => a.ScanId)
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count);
+        _primaryArtifactByScan = await Db.ScanArtifacts.AsNoTracking()
+            .Where(a => scanIds.Contains(a.ScanId) && a.ArtifactKind == "Primary")
+            .GroupBy(a => a.ScanId)
+            .Select(g => new { ScanId = g.Key, ArtifactId = g.First().Id })
+            .ToDictionaryAsync(x => x.ScanId, x => x.ArtifactId);
 
         _scanners = await Db.ScannerDeviceInstances.AsNoTracking()
             .Where(s => s.LocationId == _case.LocationId && s.IsActive)

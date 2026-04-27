@@ -49,6 +49,7 @@
         <table class="inspection-table">
             <thead>
                 <tr>
+                    <th></th>
                     <th>Subject</th>
                     <th>Location</th>
                     <th>State</th>
@@ -61,6 +62,21 @@
                 @foreach (var c in _rows)
                 {
                     <tr>
+                        <td>
+                            @if (_thumbArtifactByCase.TryGetValue(c.Id, out var artifactId))
+                            {
+                                @* Thumbnail comes from the pre-render service (ROADMAP §4.3.a). *@
+                                @* No base64 anywhere — the browser fetches via cached URL. *@
+                                <img class="inspection-thumb"
+                                     src="/api/images/@artifactId/thumbnail"
+                                     alt="Latest scan of @c.SubjectIdentifier"
+                                     loading="lazy" />
+                            }
+                            else
+                            {
+                                <div class="inspection-thumb is-empty" aria-hidden="true"></div>
+                            }
+                        </td>
                         <td>@c.SubjectType <code>@c.SubjectIdentifier</code></td>
                         <td>@(_locationsById.GetValueOrDefault(c.LocationId)?.Code ?? "?")</td>
                         <td><span class="inspection-pill-state is-@c.State.ToString().ToLowerInvariant()">@c.State</span></td>
@@ -83,6 +99,8 @@
     private Guid _userId;
     private int _assignmentsCount;
     private bool _isAdmin;
+    /// <summary>CaseId → ScanArtifact.Id of the latest Primary artifact, used for the list-row thumbnail.</summary>
+    private Dictionary<Guid, Guid> _thumbArtifactByCase = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -121,6 +139,7 @@
         if (!_isAdmin && _accessibleLocations.Count == 0)
         {
             _rows = new();
+            _thumbArtifactByCase = new();
             return;
         }
         var allowedIds = _accessibleLocations.Select(l => l.Id).ToList();
@@ -128,5 +147,48 @@
         if (Guid.TryParse(_locationFilter, out var locId)) q = q.Where(c => c.LocationId == locId);
         if (Enum.TryParse<InspectionWorkflowState>(_stateFilter, out var st)) q = q.Where(c => c.State == st);
         _rows = await q.OrderByDescending(c => c.OpenedAt).Take(100).ToListAsync();
+
+        await LoadThumbnailsAsync();
+    }
+
+    /// <summary>
+    /// Resolve the latest Primary <see cref="ScanArtifact"/> per case so the
+    /// list row can render a thumbnail through the pre-render endpoint.
+    /// Two round-trips by design — keep the EF translations simple and let
+    /// the indexes do the work.
+    /// </summary>
+    private async Task LoadThumbnailsAsync()
+    {
+        _thumbArtifactByCase = new();
+        if (_rows is null || _rows.Count == 0) return;
+
+        var caseIds = _rows.Select(c => c.Id).ToList();
+
+        // Latest scan per case.
+        var latestScanByCase = await Db.Scans.AsNoTracking()
+            .Where(s => caseIds.Contains(s.CaseId))
+            .GroupBy(s => s.CaseId)
+            .Select(g => new
+            {
+                CaseId = g.Key,
+                ScanId = g.OrderByDescending(s => s.CapturedAt).First().Id
+            })
+            .ToListAsync();
+
+        if (latestScanByCase.Count == 0) return;
+
+        // Primary artifact for each of those scans.
+        var scanIds = latestScanByCase.Select(x => x.ScanId).ToList();
+        var primaryByScan = await Db.ScanArtifacts.AsNoTracking()
+            .Where(a => scanIds.Contains(a.ScanId) && a.ArtifactKind == "Primary")
+            .GroupBy(a => a.ScanId)
+            .Select(g => new { ScanId = g.Key, ArtifactId = g.First().Id })
+            .ToDictionaryAsync(x => x.ScanId, x => x.ArtifactId);
+
+        foreach (var entry in latestScanByCase)
+        {
+            if (primaryByScan.TryGetValue(entry.ScanId, out var artifactId))
+                _thumbArtifactByCase[entry.CaseId] = artifactId;
+        }
     }
 }
