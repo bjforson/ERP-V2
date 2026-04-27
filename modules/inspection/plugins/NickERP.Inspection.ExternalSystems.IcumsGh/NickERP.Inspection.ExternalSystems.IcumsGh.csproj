@@ -24,4 +24,14 @@
     <ProjectReference Include="..\..\src\NickERP.Inspection.ExternalSystems.Abstractions\NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      F2 test foundation: the schema-drift snapshot test exercises
+      IcumBatchIndex (internal) directly so we can assert on the
+      per-document tuple without spinning the whole adapter. No
+      other consumers — production code is unaffected.
+    -->
+    <InternalsVisibleTo Include="NickERP.Inspection.ExternalSystems.IcumsGh.Tests" />
+  </ItemGroup>
+
 </Project>

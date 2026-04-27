@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Authorities.CustomsGh\NickERP.Inspection.Authorities.CustomsGh.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Authorities.Abstractions\NickERP.Inspection.Authorities.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Razor SSR regression test renders NickERP.Inspection.Web's pages
+      via bunit's TestContext. The project pulls the Web app as a
+      ProjectReference so all component types are reachable. Docker is
+      unavailable in this environment so we use the EF in-memory
+      provider in lieu of a Postgres-backed WebApplicationFactory; the
+      regression we guard (SupplyParameterFromForm NRE) fires during
+      component initialization, well before any DB call.
+    -->
+    <UseRazorBuildServer>false</UseRazorBuildServer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="bunit" Version="1.36.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Web\NickERP.Inspection.Web.csproj" />
+  </ItemGroup>
+
+</Project>
