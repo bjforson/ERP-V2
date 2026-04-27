@@ -127,7 +127,6 @@ public sealed class CaseWorkflowService
     {
         var (actor, tenant) = await CurrentActorAsync();
         var tenantId = EnsureTenant(tenant);
-        var now = DateTimeOffset.UtcNow;
 
         var device = await _db.ScannerDeviceInstances.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == scannerDeviceInstanceId, ct)
@@ -144,15 +143,59 @@ public sealed class CaseWorkflowService
             break;
         }
         if (raw is null) throw new InvalidOperationException("Adapter produced no artifact.");
+
+        return await IngestArtifactAsync(
+            caseId,
+            device,
+            adapter,
+            raw,
+            tenantId,
+            operatorUserId: actor,
+            mode: "synthetic",
+            ct);
+    }
+
+    // ---------------------------------------------------------------------
+    // Shared ingest helper — parse the adapter output, stash bytes in the
+    // content-addressed image store, insert Scan + ScanArtifact, and emit
+    // nickerp.inspection.scan_recorded. Both the operator-driven
+    // SimulateScanAsync button path and the (D2) ScannerIngestionWorker
+    // call this; keeping the side-effects in one place ensures the audit
+    // trail and DB writes are identical regardless of trigger.
+    //
+    // D1 invariant: this is a pure refactor of the previous in-line block
+    // in SimulateScanAsync. Same Scan/ScanArtifact rows, same
+    // SaveSourceAsync call (same content hash + extension), same
+    // DomainEvent. Caller now picks the Mode string (operator path stays
+    // "synthetic"); D2's worker will pass "ingested" so the audit log can
+    // distinguish auto-ingest from a button click.
+    //
+    // TODO(D2): switch Scan.IdempotencyKey from random-Guid to a
+    // content-addressed sha256-prefix key (e.g. $"scan/{device.Id}/{contentHash[..16]}")
+    // so re-ingesting the same triplet on worker restart is a silent no-op.
+    // The change ships with D2's dedup-on-unique-index migration; staying
+    // with the random key here keeps D1 a behaviour-preserving refactor.
+    // ---------------------------------------------------------------------
+    private async Task<Scan> IngestArtifactAsync(
+        Guid caseId,
+        ScannerDeviceInstance device,
+        IScannerAdapter adapter,
+        RawScanArtifact raw,
+        long tenantId,
+        Guid? operatorUserId,
+        string mode,
+        CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
         var parsed = await adapter.ParseAsync(raw, ct);
 
         var scan = new Scan
         {
             CaseId = caseId,
             ScannerDeviceInstanceId = device.Id,
-            Mode = "synthetic",
+            Mode = mode,
             CapturedAt = now,
-            OperatorUserId = actor,
+            OperatorUserId = operatorUserId,
             IdempotencyKey = $"scan/{device.Id}/{Guid.NewGuid():N}",
             CorrelationId = System.Diagnostics.Activity.Current?.RootId,
             TenantId = tenantId
@@ -184,7 +227,7 @@ public sealed class CaseWorkflowService
         _db.ScanArtifacts.Add(artifact);
         await _db.SaveChangesAsync(ct);
 
-        await EmitAsync(tenantId, actor, scan.CorrelationId, "nickerp.inspection.scan_recorded", "Scan",
+        await EmitAsync(tenantId, operatorUserId, scan.CorrelationId, "nickerp.inspection.scan_recorded", "Scan",
             scan.Id.ToString(), new { scan.Id, scan.CaseId, scan.ScannerDeviceInstanceId }, ct);
 
         return scan;
