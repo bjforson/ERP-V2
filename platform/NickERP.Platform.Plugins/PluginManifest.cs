@@ -22,6 +22,17 @@ public sealed record PluginManifest(
     IReadOnlyList<string> Contracts,
     JsonElement? ConfigSchema)
 {
+    /// <summary>
+    /// Minimum host Abstractions assembly contract version required by this
+    /// plugin. Format: <c>"major.minor"</c> (e.g. <c>"1.0"</c>). Required for
+    /// any plugin that depends on a non-1.0 contract; left null (or omitted)
+    /// for plugins that are fine with any host version. The loader rejects
+    /// the plugin at startup when the host's <see cref="ContractVersionAttribute"/>
+    /// is older than this value.
+    /// </summary>
+    [JsonPropertyName("minHostContractVersion")]
+    public string? MinHostContractVersion { get; init; }
+
     /// <summary>The well-known sidecar filename next to each plugin DLL.</summary>
     public const string FileName = "plugin.json";
 

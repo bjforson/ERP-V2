@@ -13,4 +13,21 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+  </ItemGroup>
+
+  <!--
+    Stamp this Abstractions assembly with a [ContractVersion]. The plugin
+    loader compares each plugin's declared minHostContractVersion against
+    this value and rejects plugins compiled against an older contract.
+    Bump major on breaking changes (record arity, removed/renamed members);
+    bump minor on additive changes (new optional members).
+  -->
+  <ItemGroup>
+    <AssemblyAttribute Include="NickERP.Platform.Plugins.ContractVersionAttribute">
+      <_Parameter1>1.0</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>
