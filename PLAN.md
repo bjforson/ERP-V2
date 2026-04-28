@@ -1,8 +1,10 @@
 # PLAN.md — NickERP v2 execution plan
 
-> **Purpose.** Operational source of truth for the next sprint (Foundation + Demo). Each work item is self-contained: an agent reading just its card has everything needed to execute. **`ROADMAP.md` says *what* and *why*; this document says *how*, *who*, and *in what order*.**
+> **Purpose.** Operational source of truth across sprints. Each work item is self-contained: an agent reading just its card has everything needed to execute. **`ROADMAP.md` says *what* and *why*; this document says *how*, *who*, and *in what order*.**
 >
-> **Updated:** 2026-04-27 (waves 1+2 shipped — main `3dee869`). Refresh the **Status** column on each work item as work lands.
+> **Active sprint.** Sprint 2 — Production Hardening + Analyst Polish (§14). Sprint 1 (Foundation + Demo, §5–§13) shipped 9 of 9 scoped items at main `b101c7b`; preserved here as historical record.
+>
+> **Last updated:** 2026-04-28 (Sprint 2 drafted).
 
 ---
 
@@ -590,3 +592,366 @@ D4's `E2EWebApplicationFactory` stub `ITenantContext` should be removed once thi
 ### Change log
 - 2026-04-27: Initial sprint draft. Wave 1 (F1+F2+F3) dispatched, merged at `2dde6db`. Wave 2 (F4+F5+D3) dispatched, merged at `3dee869`. F5 slice 3 deferred pending F6 (identity-tenancy interlock); branch + commit preserved on origin.
 - 2026-04-27: Wave 3 — D1 dispatched + merged at `6b16c23`; D2 dispatched + merged at `749f273`; D4 dispatched + merged at `b101c7b`. **Sprint Foundation+Demo: 9 of 9 scoped items shipped.** D4's e2e test surfaced F7 (background-worker tenant resolution) — high-priority follow-up because the live host silently fails to render thumbnails. F7 added above; queued for the next dispatch.
+- 2026-04-28: Sprint 2 drafted (§14). Bundles F6 + F7 + F5 slice 3 + V1 + V2 + V3. V4 (analyst viewer) explicitly out of scope — owns its own sprint.
+
+---
+
+## 14. Sprint 2 — Production Hardening + Analyst Polish
+
+### 14.0 Goal
+
+Close the gap between merged code and observable production behaviour. After Sprint 2, the live host on `:5410` actually delivers what `ARCHITECTURE.md` promised: RLS enforces under a non-superuser role, every background worker handles tenant context the same way, analysts see persistent rule history with measurable acceptance bars, and a multi-location federation demo proves the "federation by location" + "multi-tenant from day 1" claims hold end-to-end.
+
+### 14.1 Why this sprint
+
+Sprint 1 closed all 9 scoped items but left three known gaps and surfaced a fourth bug:
+
+1. **F5 slice 3 (`nscim_app` non-superuser role)** — coded on `plan/f5-prod-minimum`, intentionally not merged because it would break auth.
+2. **F6 (identity-tenancy interlock)** — designed but unbuilt; F5 slice 3 depends on it.
+3. **F7 (worker tenant resolution)** — discovered by D4's e2e test. `PreRenderWorker` + `SourceJanitorWorker` silently fail on the live host because they don't `SetTenant(...)` per cycle. **The live demo's thumbnails don't render today** even though every Sprint 1 item is technically "done."
+4. **V-track items** — `ROADMAP.md` lists them post-demo. Three are now ready: V1 (instrument what we built), V3 (persist what we evaluate), V2 (prove federation).
+
+The deeper lesson from Sprint 1: F1's "RLS forced everywhere" pattern means *every* DB-touching code path now has to remember to set tenant context. `ScannerIngestionWorker` got it right; `PreRenderWorker` didn't. Sprint 2 establishes the canonical pattern so future workers/controllers/hosted-services have a single example to copy.
+
+### 14.2 Phases
+
+```
+        ┌── H1 (F7) ──┐
+        │             │
+        ├── H2 (F6) ──┼── all parallel-safe (Wave 1)
+WAVE 1  │             │
+        ├── A1 (V3) ──┤
+        │             │
+        └── A2 (V1) ──┘
+                            │
+                            ▼
+WAVE 2              H3 (F5 slice 3 — verify nscim_app boots; merge parked branch)
+                            │
+                            ▼
+WAVE 3              E1 (V2 multi-location proof — integration gate)
+```
+
+**Wall clock:** ~2 days (waves 1+3) + 0.25 day for H3. Total work ~4.75 days across 6 items.
+
+### 14.3 Out of scope (explicit, with rationale)
+
+- **V4 — Analyst viewer.** 3-5 day item; deserves its own sprint with focus. Cramming it into Sprint 2 would re-create the feature-factory dynamic that the new plan is structured to prevent.
+- **G1, G2 — NickFinance prep.** Wait until V4 ships. Finance stresses the platform differently from Inspection; stressing a half-finished platform wastes both efforts.
+- **P1 — Operations runbooks (standalone).** Folded into V2's integration gate — the multi-location proof IS the deploy runbook in concrete form. Standalone runbooks return in Sprint 4 (or whenever production deploy is imminent).
+
+### 14.4 Conventions
+
+Inherits from §4. Specifically:
+
+- Branch: `plan/<phase><id>-<kebab-name>` (e.g., `plan/h1-worker-tenant-resolution`, `plan/a2-acceptance-bars`).
+- Standing rules unchanged (v1 read-only, no skipping hooks, no security weakening, build-must-be-green, stay in scope, don't update Status table).
+- Worktrees off latest main; agents commit + push their branch; merging is the human's job.
+
+### 14.5 Work items
+
+#### H1 — Background-Worker Tenant Resolution (was F7)
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | none (F1's interceptor wiring already in main) |
+| **Parallel-safe with** | H2, A1, A2 |
+| **Effort** | ~0.5 day |
+| **Branch** | `plan/h1-worker-tenant-resolution` |
+
+**Why this matters.** The live host's `PreRenderWorker` (and `SourceJanitorWorker`) fail silently on every cycle because F1's `TenantOwnedEntityInterceptor` throws `InvalidOperationException` when `_tenant.IsResolved == false`. Thumbnails write to disk; rows never land. `D2.ScannerIngestionWorker` already shows the correct pattern: iterate `tenancy.tenants` (the only RLS-exempt table — root context establisher), call `_tenant.SetTenant(tenant.Id)` per iteration, then run the workload.
+
+**Deliverable.**
+
+1. `PreRenderWorker.DrainOnceAsync` discovery: change from "select all unrendered ScanArtifacts" to "for each active tenant, set context, query that tenant's unrendered rows, render them." Mirror `ScannerIngestionWorker`'s tenant loop. The artifact's `TenantId` is what `SetTenant(...)` receives.
+2. `SourceJanitorWorker.RunOnceAsync` (or whatever the cycle method is named): same pattern.
+3. After the fix, **D4's e2e test must pass without the `ITenantContext` stub** in `E2EWebApplicationFactory`. Remove the stub (or leave a one-line note explaining why it's no longer needed).
+4. Add a small unit-style test (in `tests/NickERP.Inspection.Web.Tests/`) that asserts `PreRenderWorker.DrainOnceAsync` succeeds in a multi-tenant scenario and produces `scan_render_artifacts` rows under both tenants without a stub.
+
+**Files in scope.**
+- `modules/inspection/src/NickERP.Inspection.Imaging/PreRenderWorker.cs`
+- `modules/inspection/src/NickERP.Inspection.Imaging/SourceJanitorWorker.cs`
+- `tests/NickERP.Inspection.E2E.Tests/E2EWebApplicationFactory.cs` (remove the stub)
+- `tests/NickERP.Inspection.Web.Tests/` (new multi-tenant prerender test)
+
+**Acceptance criteria.**
+- `dotnet build` 0 errors, 0 new warnings.
+- `dotnet test` (all categories) all tests pass; the e2e test passes **without the ITenantContext stub**.
+- Live host on `:5410` (after merge + restart): drop a synthetic FS6000 triplet → within 30s a `scan_render_artifacts` row appears for `kind=thumbnail`. Verify via `psql`. (No need for the full FS6000 byte format here; reuse the byte-synth helper from F2's tests if needed.)
+- Worker logs no `InvalidOperationException` from `TenantOwnedEntityInterceptor` over a 5-minute idle window.
+
+**Out of scope.** Multi-host worker leases. Sub-minute discovery cadence (the 60-second cycle is fine).
+
+---
+
+#### H2 — Identity-Tenancy Interlock (was F6)
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | F1 (in main) |
+| **Parallel-safe with** | H1, A1, A2 |
+| **Effort** | ~1 day |
+| **Branch** | `plan/h2-identity-tenancy-interlock` |
+
+**Why this matters.** `DbIdentityResolver.FindUserByEmailAsync` is the chicken-and-egg of the auth flow: it must read `identity.users` to determine the principal's tenant, but the tenancy middleware sets `app.tenant_id` AFTER auth resolves. Today the host runs as `postgres` (BYPASSRLS) so the read works; flipping to `nscim_app` (NOBYPASSRLS, the production posture) makes the read return zero rows → 401 → demo dies.
+
+**The chosen design (cleanest of four options surveyed):** `identity.users` is the table that *establishes* tenant context, so it sits at the root of the dependency graph. RLS on this table is fundamentally circular. Carve it out from `FORCE ROW LEVEL SECURITY` while leaving every other tenant-owned table (locations, cases, scans, assignments, etc.) protected. The `users` table still has a `TenantId` column; consumers that join through `users` to other tables hit RLS on those tables. Defense-in-depth holds for the data; the user-discovery hop is the single intentional carve-out.
+
+**Deliverable.**
+
+1. New migration on `nickerp_platform.identity` that runs:
+   ```sql
+   ALTER TABLE identity.users NO FORCE ROW LEVEL SECURITY;
+   DROP POLICY tenant_isolation_users ON identity.users;
+   ```
+   Document the carve-out in the migration's XML doc-comment with the rationale above.
+2. Add a regression assertion in `DbIdentityResolver` (or its tests): if the table ever has RLS re-enabled in a future migration, an integration-style check should fail loudly. Practical implementation: a startup check that runs `SELECT relforcerowsecurity FROM pg_class WHERE relname = 'users' AND relnamespace = 'identity'::regnamespace` and logs `IDENTITY-USERS-RLS-RE-ENABLED` if it returns true. Throwing is too aggressive (blocks startup in dev); a structured warning is enough.
+3. Update `docs/ARCHITECTURE.md` §7.1 (Tenant + Location isolation) with a paragraph documenting the carve-out, the rationale, and what protects against the leak it would otherwise create (every other table joins back through `users` and hits its own RLS).
+
+**Files in scope.**
+- New migration: `platform/NickERP.Platform.Identity.Database/Migrations/<timestamp>_RemoveRlsFromIdentityUsers.cs`
+- `platform/NickERP.Platform.Identity.Database/Services/DbIdentityResolver.cs` (startup check)
+- `docs/ARCHITECTURE.md` §7.1
+
+**Acceptance criteria.**
+- Migration applied; `pg_class.relforcerowsecurity` returns `false` for `identity.users`, still `true` for every other identity.* table.
+- After H2 merges, swap dev appsettings to `Username=nscim_app` (just locally, don't commit) → host boots clean → `/cases` renders 200 → swap back. (H3 will handle the merged appsettings change.)
+- `dotnet build` 0 errors. Existing tests pass.
+- Architecture doc updated with the carve-out paragraph.
+
+**Out of scope.** Renaming `users` to `identity_users` (the actual table name uses `users` — verify before writing migration; if it's `identity_users`, adjust). Multi-tenant SECURITY DEFINER complexity. Strong-naming.
+
+---
+
+#### H3 — F5 Slice 3 Cutover (`nscim_app` Production Posture)
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | H2 (must merge first) |
+| **Parallel-safe with** | (waits for H2) |
+| **Effort** | ~0.25 day |
+| **Branch** | `plan/f5-prod-minimum` (already exists, commit `8b29407`) |
+
+**Why this matters.** Slice 3's role + grants migrations are correct (verified manually in Sprint 1). The blocker was H2. After H2 merges, slice 3 becomes a verify-and-merge.
+
+**Deliverable.**
+
+1. Rebase `plan/f5-prod-minimum` onto post-H2 main.
+2. Apply slice 3's role + grants migrations to dev (already partially applied during Sprint 1 verification — re-run idempotently).
+3. Verify under the new appsettings (`Username=nscim_app`):
+   - Host boots clean on `:5410`.
+   - `/healthz/ready` returns 200.
+   - `/cases`, `/locations`, `/scanners` etc. render 200.
+   - `psql -U nscim_app -d nickerp_inspection -c "SELECT count(*) FROM inspection.cases;"` (no `app.tenant_id` set) returns **0** — the RLS enforcement that's been a code-side claim since F1 is now also DB-side enforced under the production role.
+4. Merge `plan/f5-prod-minimum` to main. Delete the branch local + remote.
+5. Update `TESTING.md` env-var template to use `Username=nscim_app`.
+
+**Acceptance criteria.**
+- Host runs as `nscim_app` end-to-end.
+- `psql -U nscim_app` without `app.tenant_id` returns 0 rows from any tenanted table.
+- D4's e2e test still passes (it uses its own DB role; verify nothing assumes `postgres`).
+- `TESTING.md` updated.
+
+**Out of scope.** New work. This is purely the merge + verification.
+
+---
+
+#### A1 — RuleEvaluation Persistence (was V3)
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | none (D3 already wired the auto-fire path in main) |
+| **Parallel-safe with** | H1, H2, A2 |
+| **Effort** | ~1 day |
+| **Branch** | `plan/a1-rule-evaluation-persistence` |
+
+**Why this matters.** Today, `EvaluateAuthorityRulesAsync` returns a `RulesEvaluationResult` that lives only in the calling page's component state. Reload a case, rules result vanishes; analyst has to click "Run authority checks" again. The auto-fire from D3 (which lands the result into the page after `FetchDocumentsAsync`) gets blown away on every navigation. That's the analyst's most annoying paper-cut today.
+
+**Deliverable.**
+
+1. New entity `RuleEvaluation` in `NickERP.Inspection.Core.Entities`:
+   ```
+   Id, CaseId, EvaluatedAt, AuthorityCode,
+   ViolationsJson (jsonb), MutationsJson (jsonb),
+   ProviderErrorsJson (jsonb), TenantId
+   ```
+   One row per evaluation run. Most-recent-per-case is the analyst's view; full history is queryable from `/audit`.
+
+2. Migration on `nickerp_inspection`:
+   - `inspection.rule_evaluations` table with the columns above.
+   - RLS + `FORCE ROW LEVEL SECURITY` + `tenant_isolation_rule_evaluations` policy (mirror F1's pattern).
+   - Index `(TenantId, CaseId, EvaluatedAt DESC)` for the latest-per-case query.
+
+3. `CaseWorkflowService.EvaluateAuthorityRulesAsync` persists the result before returning:
+   - For each `EvaluatedViolation` per `AuthorityCode`, group + serialize.
+   - Insert one `RuleEvaluation` row per AuthorityCode (one per provider). Keeps queries simple — "latest evaluation per (case, authority)" is the natural index.
+   - Existing `nickerp.inspection.rules_evaluated` event keeps firing.
+
+4. `CaseDetail.razor`'s `Reload()` reads the latest `RuleEvaluation` row(s) for the case and hydrates `_rulesResult`. The page works correctly on cold load (no fetch click required) when prior evaluations exist.
+
+5. The "Run authority checks" button still re-runs and re-persists.
+
+**Files in scope.**
+- New: `modules/inspection/src/NickERP.Inspection.Core/Entities/RuleEvaluation.cs`
+- `modules/inspection/src/NickERP.Inspection.Database/InspectionDbContext.cs` (DbSet + entity config + RLS policy in migration)
+- New migration on `nickerp_inspection`
+- `modules/inspection/src/NickERP.Inspection.Web/Services/CaseWorkflowService.cs` (persist in `EvaluateAuthorityRulesAsync`)
+- `modules/inspection/src/NickERP.Inspection.Web/Components/Pages/CaseDetail.razor` (hydrate on `Reload`)
+
+**Acceptance criteria.**
+- Migration applied; `inspection.rule_evaluations` exists with the policy + index.
+- Test (in `tests/NickERP.Inspection.Web.Tests/`): evaluate rules → reload page → assert prior result is visible without a re-fetch click.
+- `dotnet build` 0 errors; existing tests pass.
+- Auditable: an evaluation produces both a row in `rule_evaluations` AND the existing `nickerp.inspection.rules_evaluated` event in `audit.events`.
+
+**Out of scope.** A separate `RuleViolation` table (we keep `ViolationsJson` for now; queryable via Postgres jsonb operators if needed). UI for browsing historical evaluations beyond the most-recent-render. Performance optimization.
+
+---
+
+#### A2 — Acceptance-Bar Instrumentation (was V1)
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | none |
+| **Parallel-safe with** | H1, H2, A1 |
+| **Effort** | ~1 day |
+| **Branch** | `plan/a2-acceptance-bars` |
+
+**Why this matters.** `ARCHITECTURE.md` §7.7 specifies acceptance bars for the image pipeline (thumbs ≤ 50ms p95, previews ≤ 80ms p95, cache hit rate ≥ 85%, ingestion throughput ±5%). Sprint 1's audit found that none of these are measurable today. We literally don't know if the pipeline meets the spec. After A2 lands, we will.
+
+**Deliverable.**
+
+Four OTel meters/histograms, each as `System.Diagnostics.Metrics.Histogram<double>` or `Counter<long>` on `NickErpActivity.Meter`:
+
+1. `nickerp.inspection.image.serve_ms` — image endpoint response time. Tags: `kind` (`thumbnail`/`preview`), `status` (200/304/404). Wrap the lambda in `modules/inspection/src/NickERP.Inspection.Web/Program.cs`.
+2. `nickerp.inspection.prerender.render_ms` — renderer duration. Tags: `kind`, `mime`. Wrap `PreRenderWorker.TryRenderAndPersistAsync`.
+3. `nickerp.inspection.scan.ingest_ms` — scan ingestion duration. Tags: `scanner_type_code`. Wrap `CaseWorkflowService.IngestArtifactAsync`.
+4. `nickerp.inspection.case.state_transitions_total` — counter. Tags: `from`, `to`. Increment alongside each `EmitAsync(... case_*)` call in `CaseWorkflowService`.
+
+Plus a small admin page `/perf` that exposes a snapshot of the meters' current rolling histograms. Implementation can be simple — read from `System.Diagnostics.Metrics.MeterListener` registered at startup, render p50/p95/p99 + bucket counts in a small Razor table. Refreshes every 5 seconds. Internal-only (`[Authorize]` already gates it).
+
+**Files in scope.**
+- `platform/NickERP.Platform.Telemetry/NickErpActivity.cs` (if histograms aren't already centrally defined; otherwise add inline)
+- `modules/inspection/src/NickERP.Inspection.Web/Program.cs` (image endpoint timing + meter setup)
+- `modules/inspection/src/NickERP.Inspection.Imaging/PreRenderWorker.cs`
+- `modules/inspection/src/NickERP.Inspection.Web/Services/CaseWorkflowService.cs`
+- New: `modules/inspection/src/NickERP.Inspection.Web/Components/Pages/Perf.razor`
+- New: `modules/inspection/src/NickERP.Inspection.Web/Services/MeterSnapshotService.cs` (singleton MeterListener; surfaces snapshots to the page)
+
+**Acceptance criteria.**
+- After running the e2e test: `/perf` shows non-zero counts for at least 3 of the 4 meters (case-state-transitions, scan ingest, prerender render — image serve only fires when an image is actually fetched, so requires a separate browser hit).
+- Histograms have p50/p95/p99 displayed.
+- `dotnet build` 0 errors. Existing tests pass.
+- The image endpoint's response time stays under the spec bars on a 100-request burst (smoke check; not a formal AC since Sprint 2's role is to *measure*, not *meet* — meeting comes later if we're off).
+
+**Out of scope.** Prometheus scraping integration, alerting, dashboards beyond `/perf`. Production observability story.
+
+---
+
+#### E1 — Multi-Location Federation Proof (was V2 — integration gate)
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | H1, H2, H3 (all merged) |
+| **Parallel-safe with** | none (this is the gate) |
+| **Effort** | ~1 day |
+| **Branch** | `plan/e1-multi-location-proof` |
+
+**Why this matters.** "Federation by location" (vision §1.1) and "multi-tenant from day 1" (vision §1.6) are the two anchor claims. Sprint 1 made them code-true. Sprint 2's gate makes them *observably* true via a scripted scenario.
+
+**Deliverable.**
+
+A new e2e test in `tests/NickERP.Inspection.E2E.Tests/MultiLocationFederationTests.cs` that:
+
+1. Spins up a fresh DB pair (reuse `PostgresFixture` from D4). Apply migrations under `nscim_app` (proving H3's role works for migrations + interceptors). Then connect the test as `nscim_app` for the assertions.
+
+2. Seeds:
+   - **Tenant 1** (`nick-tc-scan`) with locations `tema` + `kotoka`. Scanner instances: `tema-fs6000` (FS6000 watching `<temp>/tema-incoming/`), `kotoka-fs6000` (FS6000 watching `<temp>/kotoka-incoming/`). Users: `analyst-tema@t1` assigned to `tema` only; `analyst-kotoka@t1` assigned to `kotoka` only.
+   - **Tenant 2** (`other-customer`) with location `tema` (different physical tenant, same vocabulary). Scanner instance: `tema-fs6000` watching `<temp>/t2-tema-incoming/`. User: `analyst-tema@t2` assigned to its `tema`.
+
+3. Drops scans into all three watch folders simultaneously. Waits up to 60s for cases to appear.
+
+4. Assertions:
+   - **App-layer federation:** `analyst-tema@t1` requests `/cases` → sees only Tenant 1 / Tema cases. `analyst-kotoka@t1` → only Tenant 1 / Kotoka cases. `analyst-tema@t2` → only Tenant 2 / Tema cases.
+   - **DB-layer RLS:** `psql -U nscim_app` without `app.tenant_id` set → `SELECT count(*) FROM inspection.cases` returns **0**. With `SET app.tenant_id = '1'` → returns Tenant 1's cases only.
+   - **Cross-tenant URL guess:** `analyst-tema@t1` GETs `/cases/{tenant-2-case-id}` directly → returns 404 (route fails to resolve under tenant 1's RLS), not 200 with the foreign data.
+   - **Audit:** events for all three tenants land in `audit.events`, each tagged with the correct `TenantId`. Cross-tenant queries on `audit.events` fail without the right context.
+
+5. Markdown runbook at `docs/runbooks/federation-walkthrough.md` — same as D4's demo runbook but with the multi-tenant + multi-location seeding steps explicit. This becomes the deploy-day walkthrough for adding a second location.
+
+**Files in scope.**
+- New: `tests/NickERP.Inspection.E2E.Tests/MultiLocationFederationTests.cs`
+- Helper: extend `tests/NickERP.Inspection.E2E.Tests/E2EFixtures.cs` for multi-tenant seeding
+- New: `docs/runbooks/federation-walkthrough.md`
+
+**Acceptance criteria.**
+- The new e2e test passes under `dotnet test --filter Category=Integration` in <90s.
+- All four assertions above hold.
+- The runbook is internally consistent (every step has a file path / button name / psql command).
+- Existing tests still pass.
+
+**Out of scope.** Cross-tenant audit aggregation (the system tenant context, G1). Performance under multi-location load. Edge node sync.
+
+---
+
+### 14.6 Status snapshot
+
+| ID | Phase | Status | Branch |
+|---|---|---|---|
+| H1 | Hardening | pending | `plan/h1-worker-tenant-resolution` |
+| H2 | Hardening | pending | `plan/h2-identity-tenancy-interlock` |
+| H3 | Hardening | pending (waits for H2) | `plan/f5-prod-minimum` (existing) |
+| A1 | Analyst | pending | `plan/a1-rule-evaluation-persistence` |
+| A2 | Analyst | pending | `plan/a2-acceptance-bars` |
+| E1 | Expansion | pending (waits for H1+H2+H3) | `plan/e1-multi-location-proof` |
+
+### 14.7 Dispatch plan
+
+**Wave 1** (4 parallel agents, all independent):
+```bash
+cd "C:\Shared\ERP V2"
+git worktree add ../erp-v2-h1 -b plan/h1-worker-tenant-resolution main
+git worktree add ../erp-v2-h2 -b plan/h2-identity-tenancy-interlock main
+git worktree add ../erp-v2-a1 -b plan/a1-rule-evaluation-persistence main
+git worktree add ../erp-v2-a2 -b plan/a2-acceptance-bars main
+```
+
+After wave 1 merges (in order: H1 → H2 → A2 → A1 to minimize CaseWorkflowService.cs conflict surface):
+
+**Wave 2** (single agent, verify + merge an existing branch):
+```bash
+# H3 reuses the parked plan/f5-prod-minimum worktree
+cd "C:\Shared\erp-v2-f5"   # already exists from Sprint 1
+git pull origin main --rebase   # or rebase onto post-H2 main
+```
+
+After wave 2 merges:
+
+**Wave 3** (single agent — integration gate):
+```bash
+git worktree add ../erp-v2-e1 -b plan/e1-multi-location-proof main
+```
+
+### 14.8 End-of-sprint smoke verification
+
+After E1 lands:
+
+1. Live host on `:5410` runs as `nscim_app` (under H3's appsettings).
+2. `/healthz/ready` → 200.
+3. Drop an FS6000 triplet → case appears within 30s with thumbnail rendered (proves H1).
+4. `/cases/{id}` renders correctly under any analyst — including auth flow under `nscim_app` (proves H2).
+5. Click "Fetch documents" → rules pane populates → reload page → rules pane *still* populated (proves A1).
+6. `/perf` shows non-zero rolling histograms across all four meters (proves A2).
+7. The federation test passes (proves E1).
+
+### 14.9 Out of sprint (Sprint 3 candidates)
+
+- **V4** — Analyst viewer Razor (W/L sliders, ROI inspector, pixel probe, 16-bit decode). The big UX piece.
+- **G1** — Platform tightening before NickFinance.
+- **G2** — NickFinance Petty Cash pathfinder.
+- **P1** — Standalone operations runbooks (deploy, secret rotation, etc.).
