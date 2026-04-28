@@ -11,13 +11,13 @@
         "id": "V4",
         "title": "Analyst viewer Razor component",
         "phase": "Viewer",
-        "status": "pending",
+        "status": "in-progress",
         "branch": "plan/v4-analyst-viewer",
         "commit": null,
-        "agentId": null,
-        "dispatchedAt": null,
+        "agentId": "dispatched 2026-04-28",
+        "dispatchedAt": "2026-04-28",
         "completedAt": null,
-        "notes": "3-5 day item. Likely splits into V4.a raw 16-bit endpoint, V4.b client-side decoder/W-L math, V4.c Razor page with controls."
+        "notes": "v1-parity scope: 8-bit preview + W/L sliders + pixel probe + ROI stats. 16-bit raw-channel viewer is a separate IMAGE-ANALYSIS-MODERNIZATION track item (not V4)."
       }
     ]
   },
