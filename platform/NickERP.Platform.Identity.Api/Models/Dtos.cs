@@ -77,8 +77,14 @@ public sealed record AppScopeDto(
 /// <summary>Request body for <c>POST /api/identity/scopes</c>.</summary>
 public sealed class CreateAppScopeRequest
 {
-    [Required, RegularExpression(@"^[A-Za-z][\w]*(\.[A-Za-z][\w]*)+$",
-        ErrorMessage = "Code must be dot-separated PascalCase, e.g. 'Finance.PettyCash.Approver'.")]
+    // G1 #6 — scope codes must be strictly dot-separated PascalCase
+    // segments, each starting with an uppercase letter and using letters
+    // only. Underspecified scopes like "admin" or "admin.foo" are
+    // rejected at the API boundary; the per-app prefix (Finance / Identity
+    // / Inspection) is enforced by convention rather than by code, but
+    // the structural rule guarantees a multi-segment, capitalised name.
+    [Required, RegularExpression(@"^[A-Z][A-Za-z]+(\.[A-Z][A-Za-z]+)+$",
+        ErrorMessage = "Code must be dot-separated PascalCase with at least two segments, each starting with an uppercase letter and containing only letters (e.g. 'Finance.PettyCash.Approver').")]
     [StringLength(128)]
     public string Code { get; set; } = string.Empty;
 

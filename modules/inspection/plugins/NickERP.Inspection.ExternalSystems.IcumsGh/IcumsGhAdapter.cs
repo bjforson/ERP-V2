@@ -35,7 +35,7 @@ namespace NickERP.Inspection.ExternalSystems.IcumsGh;
 /// process; tenant churn does not evict (known follow-up).
 /// </para>
 /// </summary>
-[Plugin("icums-gh")]
+[Plugin("icums-gh", Module = "inspection")]
 public sealed class IcumsGhAdapter : IExternalSystemAdapter
 {
     public string TypeCode => "icums-gh";

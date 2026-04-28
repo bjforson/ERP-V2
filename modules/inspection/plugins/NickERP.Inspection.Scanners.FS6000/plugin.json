@@ -1,4 +1,5 @@
 {
+  "module": "inspection",
   "typeCode": "fs6000",
   "displayName": "FS6000 (vendor)",
   "version": "0.1.0",

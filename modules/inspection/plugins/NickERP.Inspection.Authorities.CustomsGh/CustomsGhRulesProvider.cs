@@ -39,7 +39,7 @@ namespace NickERP.Inspection.Authorities.CustomsGh;
 /// Rules are independently togglable via the plugin instance config so a
 /// deployment can disable any of them without redeploying.
 /// </summary>
-[Plugin("gh-customs")]
+[Plugin("gh-customs", Module = "inspection")]
 public sealed class CustomsGhRulesProvider : IAuthorityRulesProvider
 {
     public string AuthorityCode => "GH-CUSTOMS";

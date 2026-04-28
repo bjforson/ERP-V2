@@ -41,7 +41,10 @@ public sealed class AuditDbContext : DbContext
             e.ToTable("events");
             e.HasKey(x => x.EventId);
             e.Property(x => x.EventId).HasDefaultValueSql("gen_random_uuid()");
-            e.Property(x => x.TenantId).IsRequired();
+            // G1 #4 — TenantId is nullable. Most events carry a concrete
+            // tenant; suite-wide system events (FX rates, global config)
+            // are NULL-tenant.
+            e.Property(x => x.TenantId);
             e.Property(x => x.ActorUserId);
             e.Property(x => x.CorrelationId).HasMaxLength(64);
             e.Property(x => x.EventType).IsRequired().HasMaxLength(200);
@@ -73,6 +76,14 @@ public sealed class AuditDbContext : DbContext
             // Cross-service correlation: pin one trace, see all events.
             e.HasIndex(x => x.CorrelationId)
                 .HasDatabaseName("ix_audit_events_correlation");
+
+            // G1 #4 — partial index for the system-event case
+            // (TenantId IS NULL). Suite-wide events (FX rates, global
+            // chart-of-accounts) want fast time-ordered enumeration
+            // without scanning the per-tenant rows.
+            e.HasIndex(x => new { x.EventType, x.OccurredAt })
+                .HasDatabaseName("ix_audit_events_system_type_time")
+                .HasFilter("\"TenantId\" IS NULL");
         });
     }
 }

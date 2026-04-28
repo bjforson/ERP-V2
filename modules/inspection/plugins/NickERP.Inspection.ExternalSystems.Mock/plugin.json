@@ -1,4 +1,5 @@
 {
+  "module": "inspection",
   "typeCode": "mock-external",
   "displayName": "Mock External System (synthetic)",
   "version": "0.1.0",

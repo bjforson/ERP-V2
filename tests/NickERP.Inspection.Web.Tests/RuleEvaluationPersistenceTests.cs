@@ -330,6 +330,7 @@ public sealed class RuleEvaluationPersistenceTests : IDisposable
     private sealed class GhCustomsStubRegistry : IPluginRegistry
     {
         private static readonly RegisteredPlugin StubPlugin = new(
+            Module: "inspection",
             TypeCode: "gh-customs-stub",
             ConcreteType: typeof(GhCustomsStubRulesProvider),
             ContractTypes: new[] { typeof(IAuthorityRulesProvider) },
@@ -339,20 +340,22 @@ public sealed class RuleEvaluationPersistenceTests : IDisposable
                 Version: "1.0",
                 Description: null,
                 Contracts: new[] { typeof(IAuthorityRulesProvider).FullName! },
-                ConfigSchema: null));
+                ConfigSchema: null) { Module = "inspection" });
 
         public IReadOnlyList<RegisteredPlugin> All { get; } = new[] { StubPlugin };
 
         public IReadOnlyList<RegisteredPlugin> ForContract(Type contractType) =>
             All.Where(p => p.ContractTypes.Contains(contractType)).ToList();
 
-        public RegisteredPlugin? FindByTypeCode(string typeCode) =>
-            All.FirstOrDefault(p => string.Equals(p.TypeCode, typeCode, StringComparison.OrdinalIgnoreCase));
+        public RegisteredPlugin? FindByTypeCode(string module, string typeCode) =>
+            All.FirstOrDefault(p =>
+                string.Equals(p.Module, module, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(p.TypeCode, typeCode, StringComparison.OrdinalIgnoreCase));
 
-        public T Resolve<T>(string typeCode, IServiceProvider services) where T : class
+        public T Resolve<T>(string module, string typeCode, IServiceProvider services) where T : class
         {
-            var plugin = FindByTypeCode(typeCode)
-                ?? throw new KeyNotFoundException($"No plugin registered with TypeCode '{typeCode}'.");
+            var plugin = FindByTypeCode(module, typeCode)
+                ?? throw new KeyNotFoundException($"No plugin registered with (Module='{module}', TypeCode='{typeCode}').");
             return (T)services.GetRequiredService(plugin.ConcreteType);
         }
     }

@@ -10,7 +10,7 @@ namespace NickERP.Inspection.ExternalSystems.Mock;
 /// submission with a stable response. Used to exercise the case
 /// pull/submit lifecycle without a real ICUMS endpoint.
 /// </summary>
-[Plugin("mock-external")]
+[Plugin("mock-external", Module = "inspection")]
 public sealed class MockExternalSystemAdapter : IExternalSystemAdapter
 {
     public string TypeCode => "mock-external";

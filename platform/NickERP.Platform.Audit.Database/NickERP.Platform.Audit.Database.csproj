@@ -28,4 +28,9 @@
     <ProjectReference Include="..\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- G1 #2 — let the platform tests reach DbEventPublisher.ChannelFor for routing tests. -->
+    <InternalsVisibleTo Include="NickERP.Platform.Tests" />
+  </ItemGroup>
+
 </Project>

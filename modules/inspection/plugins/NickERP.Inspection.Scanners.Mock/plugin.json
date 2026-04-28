@@ -1,4 +1,5 @@
 {
+  "module": "inspection",
   "typeCode": "mock-scanner",
   "displayName": "Mock Scanner (synthetic)",
   "version": "0.1.0",

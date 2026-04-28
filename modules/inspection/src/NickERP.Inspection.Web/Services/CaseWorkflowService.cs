@@ -158,7 +158,7 @@ public sealed class CaseWorkflowService
             ?? throw new InvalidOperationException($"Scanner device {scannerDeviceInstanceId} not found.");
 
         // Resolve the adapter plugin and stream one synthetic artifact.
-        var adapter = _plugins.Resolve<IScannerAdapter>(device.TypeCode, _services);
+        var adapter = _plugins.Resolve<IScannerAdapter>("inspection", device.TypeCode, _services);
         var config = new ScannerDeviceConfig(device.Id, device.LocationId, device.StationId, tenantId, device.ConfigJson);
 
         RawScanArtifact? raw = null;
@@ -428,7 +428,7 @@ public sealed class CaseWorkflowService
         var instance = await _db.ExternalSystemInstances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == externalSystemInstanceId, ct)
             ?? throw new InvalidOperationException($"ExternalSystemInstance {externalSystemInstanceId} not found.");
 
-        var adapter = _plugins.Resolve<IExternalSystemAdapter>(instance.TypeCode, _services);
+        var adapter = _plugins.Resolve<IExternalSystemAdapter>("inspection", instance.TypeCode, _services);
         var docs = await adapter.FetchDocumentsAsync(
             new ExternalSystemConfig(instance.Id, tenantId, instance.ConfigJson),
             new CaseLookupCriteria(c.SubjectIdentifier, null, null),
@@ -597,7 +597,7 @@ public sealed class CaseWorkflowService
             IAuthorityRulesProvider provider;
             try
             {
-                provider = _plugins.Resolve<IAuthorityRulesProvider>(p.TypeCode, _services);
+                provider = _plugins.Resolve<IAuthorityRulesProvider>("inspection", p.TypeCode, _services);
             }
             catch (Exception ex)
             {
@@ -682,7 +682,7 @@ public sealed class CaseWorkflowService
         {
             try
             {
-                var resolved = _plugins.Resolve<IAuthorityRulesProvider>(p.TypeCode, _services);
+                var resolved = _plugins.Resolve<IAuthorityRulesProvider>("inspection", p.TypeCode, _services);
                 typeCodeToAuthority[p.TypeCode] = resolved.AuthorityCode;
             }
             catch
@@ -958,7 +958,7 @@ public sealed class CaseWorkflowService
         bool transitioned = false;
         try
         {
-            var adapter = _plugins.Resolve<IExternalSystemAdapter>(instance.TypeCode, _services);
+            var adapter = _plugins.Resolve<IExternalSystemAdapter>("inspection", instance.TypeCode, _services);
             var result = await adapter.SubmitAsync(
                 new ExternalSystemConfig(instance.Id, tenantId, instance.ConfigJson),
                 new OutboundSubmissionRequest(idempotencyKey, c.SubjectIdentifier, payload),

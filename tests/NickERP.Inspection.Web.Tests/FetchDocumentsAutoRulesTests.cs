@@ -214,6 +214,7 @@ public sealed class FetchDocumentsAutoRulesTests : IDisposable
     private sealed class ThrowingRulesRegistry : IPluginRegistry
     {
         private static readonly RegisteredPlugin StubExternalPlugin = new(
+            Module: "inspection",
             TypeCode: "stub-external",
             ConcreteType: typeof(StubExternalSystemAdapter),
             ContractTypes: new[] { typeof(IExternalSystemAdapter) },
@@ -223,7 +224,7 @@ public sealed class FetchDocumentsAutoRulesTests : IDisposable
                 Version: "1.0",
                 Description: null,
                 Contracts: new[] { typeof(IExternalSystemAdapter).FullName! },
-                ConfigSchema: null));
+                ConfigSchema: null) { Module = "inspection" });
 
         public IReadOnlyList<RegisteredPlugin> All { get; } = new[] { StubExternalPlugin };
 
@@ -237,13 +238,15 @@ public sealed class FetchDocumentsAutoRulesTests : IDisposable
             return All.Where(p => p.ContractTypes.Contains(contractType)).ToList();
         }
 
-        public RegisteredPlugin? FindByTypeCode(string typeCode) =>
-            All.FirstOrDefault(p => string.Equals(p.TypeCode, typeCode, StringComparison.OrdinalIgnoreCase));
+        public RegisteredPlugin? FindByTypeCode(string module, string typeCode) =>
+            All.FirstOrDefault(p =>
+                string.Equals(p.Module, module, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(p.TypeCode, typeCode, StringComparison.OrdinalIgnoreCase));
 
-        public T Resolve<T>(string typeCode, IServiceProvider services) where T : class
+        public T Resolve<T>(string module, string typeCode, IServiceProvider services) where T : class
         {
-            var plugin = FindByTypeCode(typeCode)
-                ?? throw new KeyNotFoundException($"No plugin registered with TypeCode '{typeCode}'.");
+            var plugin = FindByTypeCode(module, typeCode)
+                ?? throw new KeyNotFoundException($"No plugin registered with (Module='{module}', TypeCode='{typeCode}').");
             return (T)services.GetRequiredService(plugin.ConcreteType);
         }
     }

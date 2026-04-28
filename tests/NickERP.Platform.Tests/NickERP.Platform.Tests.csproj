@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Identity.Api\NickERP.Platform.Identity.Api.csproj" />
+  </ItemGroup>
+
+</Project>

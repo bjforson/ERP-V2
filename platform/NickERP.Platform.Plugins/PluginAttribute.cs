@@ -15,15 +15,33 @@ namespace NickERP.Platform.Plugins;
 /// migration sweep across every module that stored it.
 /// </para>
 /// <para>
-/// The attribute carries no metadata beyond the type code. Display name,
-/// version, supported formats, JSON-Schema config, etc. live in the
-/// sibling <c>plugin.json</c> manifest file (see <see cref="PluginManifest"/>).
+/// <see cref="Module"/> namespaces the type-code so two modules can ship
+/// plugins with the same code without colliding (e.g. NickFinance's
+/// <c>momo</c> wallet adapter and a hypothetical NickInspection
+/// <c>momo</c> camera adapter coexist as <c>(finance, momo)</c> and
+/// <c>(inspection, momo)</c>). Required by G1; existing plugins all set
+/// it to <c>"inspection"</c>.
+/// </para>
+/// <para>
+/// The attribute carries no metadata beyond the type code + module.
+/// Display name, version, supported formats, JSON-Schema config, etc.
+/// live in the sibling <c>plugin.json</c> manifest file (see
+/// <see cref="PluginManifest"/>); the manifest's <c>module</c> field
+/// must match the attribute.
 /// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class PluginAttribute : Attribute
 {
     public string TypeCode { get; }
+
+    /// <summary>
+    /// Owning module — namespaces the <see cref="TypeCode"/> so two
+    /// modules can ship plugins with the same code without colliding.
+    /// Set as a named argument (e.g. <c>[Plugin("momo", Module = "finance")]</c>).
+    /// Required; non-empty.
+    /// </summary>
+    public string Module { get; init; } = string.Empty;
 
     public PluginAttribute(string typeCode)
     {
