@@ -108,7 +108,7 @@ else
                 else
                 {
                     <table class="inspection-table">
-                        <thead><tr><th></th><th>Captured</th><th>Mode</th><th>Artifacts</th></tr></thead>
+                        <thead><tr><th></th><th>Captured</th><th>Mode</th><th>Artifacts</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var s in _scans)
                             {
@@ -129,6 +129,12 @@ else
                                     <td>@s.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
                                     <td>@s.Mode</td>
                                     <td>@_artifactsPerScan.GetValueOrDefault(s.Id, 0)</td>
+                                    <td>
+                                        @* V4 — analyst W/L viewer link. Stays inert when there's no
+                                           primary artifact yet; the viewer page itself shows the
+                                           "no preview" fallback if the user navigates anyway. *@
+                                        <a href="/cases/@CaseId/scans/@s.Id" class="inspection-button">Open viewer</a>
+                                    </td>
                                 </tr>
                             }
                         </tbody>
