@@ -1,27 +1,18 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": {
-    "id": "Sprint 3",
-    "name": "Analyst Viewer",
-    "goal": "Land V4 — the W/L sliders / 16-bit decode / ROI inspector / pixel-probe viewer. The 80% of the analyst's day finally has a home.",
-    "startedAt": "2026-04-28",
-    "items": [
-      {
-        "id": "V4",
-        "title": "Analyst viewer Razor component",
-        "phase": "Viewer",
-        "status": "in-progress",
-        "branch": "plan/v4-analyst-viewer",
-        "commit": null,
-        "agentId": "dispatched 2026-04-28",
-        "dispatchedAt": "2026-04-28",
-        "completedAt": null,
-        "notes": "v1-parity scope: 8-bit preview + W/L sliders + pixel probe + ROI stats. 16-bit raw-channel viewer is a separate IMAGE-ANALYSIS-MODERNIZATION track item (not V4)."
-      }
-    ]
-  },
+  "currentSprint": null,
   "history": [
+    {
+      "id": "Sprint 3",
+      "name": "Analyst Viewer",
+      "shippedAt": "2026-04-28",
+      "mainCommit": "31ba561",
+      "itemCount": 1,
+      "items": [
+        { "id": "V4", "title": "Analyst viewer Razor + W/L + pixel probe + ROI", "commit": "143308e" }
+      ]
+    },
     {
       "id": "Sprint 1",
       "name": "Foundation + Demo",
