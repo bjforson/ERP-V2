@@ -1,38 +1,7 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": {
-    "id": "Sprint 4",
-    "name": "Platform Tightening + Audit Grants Fix",
-    "goal": "Close FU-1 (audit history-table grants gap) + G1 (six platform tightening fixes blocking NickFinance). After this sprint, the platform is ready to host a non-Inspection consumer.",
-    "startedAt": "2026-04-28",
-    "items": [
-      {
-        "id": "FU-1",
-        "title": "Audit __EFMigrationsHistory grants for fresh-install Migrate()",
-        "phase": "Followup",
-        "status": "done",
-        "branch": "plan/fu1-audit-history-grants",
-        "commit": "5854c81",
-        "agentId": "master-coordinator-sprint4",
-        "dispatchedAt": "2026-04-26",
-        "completedAt": "2026-04-26",
-        "notes": "Shipped. Fix migration 20260428140000 grants nscim_app UPDATE+DELETE on audit.__EFMigrationsHistory only; audit.events append-only invariant intact (verified). dotnet build 0 errors; dotnet test 22/22 pass."
-      },
-      {
-        "id": "G1",
-        "title": "Platform tightening before NickFinance",
-        "phase": "Generalization",
-        "status": "done",
-        "branch": "plan/g1-platform-tightening",
-        "commit": "545a0f9",
-        "agentId": "master-coordinator-sprint4",
-        "dispatchedAt": "2026-04-26",
-        "completedAt": "2026-04-26",
-        "notes": "Items #1, #2, #4, #5, #6 shipped. #3 (ITenantContext.SetSystemContext) escalated to user — see docs/master-decisions-needed.md for the four options + recommendation. Added 26 platform unit tests (DomainEvent decimal round-trip, audit channel routing, plugin module namespacing, scope regex). dotnet build 0 errors; dotnet test 48/48 pass (was 22)."
-      }
-    ]
-  },
+  "currentSprint": null,
   "decisionsNeeded": [
     {
       "id": "G1-3",
@@ -42,6 +11,17 @@
     }
   ],
   "history": [
+    {
+      "id": "Sprint 4",
+      "name": "Platform Tightening + Audit Grants Fix",
+      "shippedAt": "2026-04-26",
+      "mainCommit": "b8730ba",
+      "itemCount": 2,
+      "items": [
+        { "id": "FU-1", "title": "Audit history-table grants for fresh-install Migrate()", "commit": "5854c81" },
+        { "id": "G1", "title": "Platform tightening (#1, #2, #4, #5, #6); #3 escalated", "commit": "545a0f9" }
+      ]
+    },
     {
       "id": "Sprint 3",
       "name": "Analyst Viewer",
@@ -87,14 +67,12 @@
     }
   ],
   "backlog": [
-    { "id": "G1", "title": "Platform tightening before NickFinance", "phase": "Generalization", "estimateDays": "2" },
-    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7" },
+    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "blockedBy": "G1-3 decision (see decisionsNeeded)" },
     { "id": "P1", "title": "Standalone operations runbooks", "phase": "Production prep", "estimateDays": "1" },
     { "id": "P2", "title": "Edge node — SQLite buffer + replay", "phase": "Production prep", "estimateDays": "5-7" },
     { "id": "P3", "title": "Audit projection + notifications", "phase": "Production prep", "estimateDays": "2-3" }
   ],
   "followups": [
-    { "id": "FU-1", "title": "Audit history-table grants for fresh-install Migrate() under nscim_app", "from": "E1", "severity": "high (production-blocking on fresh deploys)" },
     { "id": "FU-2", "title": "Cross-tenant /cases/{guid} should 404 instead of 200-with-empty-state", "from": "E1", "severity": "low (UX polish)" },
     { "id": "FU-3", "title": "Source-blob cross-tenant SHA-256 collision (theoretical)", "from": "H1", "severity": "low (astronomical)" },
     { "id": "FU-4", "title": "Stale __EFMigrationsHistory row 20260427164643_Add_ScanRenderArtifact", "from": "H3", "severity": "low (benign, one-line DELETE)" },

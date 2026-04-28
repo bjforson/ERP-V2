@@ -1087,10 +1087,15 @@ The `audit.events` table itself stays SELECT+INSERT only (append-only invariant 
 
 ### 15.3 Status snapshot
 
-| ID | Phase | Status | Branch |
-|---|---|---|---|
-| FU-1 | Followup | pending | `plan/fu1-audit-history-grants` |
-| G1 | Generalization | pending | `plan/g1-platform-tightening` |
+| ID | Phase | Status | Branch | Merge commit |
+|---|---|---|---|---|
+| FU-1 | Followup | shipped 2026-04-26 | `plan/fu1-audit-history-grants` (deleted) | `5854c81` |
+| G1 | Generalization | shipped 2026-04-26 (items #1, #2, #4, #5, #6) | `plan/g1-platform-tightening` (deleted) | `545a0f9` |
+
+G1 sub-item #3 (`ITenantContext.SetSystemContext`) was held — see
+`docs/master-decisions-needed.md`. The four options + master
+recommendation are written up there; G2 (NickFinance) cannot start
+until the user picks a mechanism.
 
 ### 15.4 End-of-sprint smoke verification
 
