@@ -31,7 +31,12 @@ public static class AuditDatabaseServiceCollectionExtensions
         services.AddDbContext<AuditDbContext>((sp, opts) =>
         {
             opts.UseNpgsql(resolved, npgsql =>
-                npgsql.MigrationsAssembly(typeof(AuditDbContext).Assembly.GetName().Name));
+            {
+                npgsql.MigrationsAssembly(typeof(AuditDbContext).Assembly.GetName().Name);
+                // H3 — keep EF Core's history table inside the audit
+                // schema so nscim_app never needs CREATE on `public`.
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "audit");
+            });
             // Phase F1 — push app.tenant_id to Postgres on connection open
             // (RLS) and stamp TenantId on inserts (defense-in-depth).
             opts.AddInterceptors(

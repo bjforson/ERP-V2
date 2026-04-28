@@ -34,7 +34,12 @@ public static class TenancyDatabaseServiceCollectionExtensions
         services.AddDbContext<TenancyDbContext>((sp, opts) =>
         {
             opts.UseNpgsql(resolved, npgsql =>
-                npgsql.MigrationsAssembly(typeof(TenancyDbContext).Assembly.GetName().Name));
+            {
+                npgsql.MigrationsAssembly(typeof(TenancyDbContext).Assembly.GetName().Name);
+                // H3 — keep EF Core's history table inside the tenancy
+                // schema so nscim_app never needs CREATE on `public`.
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "tenancy");
+            });
             // Phase F1 — push app.tenant_id to Postgres on connection open
             // (RLS) and stamp TenantId on inserts. Note: tenancy.tenants is
             // intentionally NOT under RLS (root of the tenant graph), but

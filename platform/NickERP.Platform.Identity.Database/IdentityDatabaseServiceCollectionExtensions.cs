@@ -35,7 +35,12 @@ public static class IdentityDatabaseServiceCollectionExtensions
         services.AddDbContext<IdentityDbContext>((sp, opts) =>
         {
             opts.UseNpgsql(resolved, npgsql =>
-                npgsql.MigrationsAssembly(typeof(IdentityDbContext).Assembly.GetName().Name));
+            {
+                npgsql.MigrationsAssembly(typeof(IdentityDbContext).Assembly.GetName().Name);
+                // H3 — keep EF Core's history table inside the identity
+                // schema so nscim_app never needs CREATE on `public`.
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "identity");
+            });
             // Phase F1 — push app.tenant_id to Postgres on connection open
             // (RLS) and stamp TenantId on inserts (defense-in-depth).
             opts.AddInterceptors(

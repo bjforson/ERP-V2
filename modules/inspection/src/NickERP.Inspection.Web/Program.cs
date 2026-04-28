@@ -46,7 +46,13 @@ builder.Services.AddDbContext<InspectionDbContext>((sp, opts) =>
 {
     opts.UseNpgsql(inspectionConn ?? throw new InvalidOperationException(
         "ConnectionStrings:Inspection is required (the nickerp_inspection Postgres DB)."),
-        npgsql => npgsql.MigrationsAssembly(typeof(InspectionDbContext).Assembly.GetName().Name));
+        npgsql =>
+        {
+            npgsql.MigrationsAssembly(typeof(InspectionDbContext).Assembly.GetName().Name);
+            // H3 — keep EF Core's history table inside the inspection
+            // schema so nscim_app never needs CREATE on `public`.
+            npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "inspection");
+        });
     opts.AddInterceptors(
         sp.GetRequiredService<TenantConnectionInterceptor>(),
         sp.GetRequiredService<TenantOwnedEntityInterceptor>());
