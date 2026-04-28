@@ -2,14 +2,27 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "decisionsNeeded": [
+  "decisionsNeeded": [],
+  "resolvedDecisions": [
     {
       "id": "G1-3",
       "title": "ITenantContext.SetSystemContext mechanism",
-      "raisedAt": "2026-04-26",
-      "details": "G1 sub-item #3 held: Finance suite-wide system jobs need a sanctioned cross-tenant context. Four options laid out in docs/master-decisions-needed.md; master recommends option 2 (explicit IsSystem flag + sentinel '-1'). Couples to G1 #4 production NULL-tenant insert path. Blocks G2."
+      "raisedAt": "2026-04-28",
+      "resolvedAt": "2026-04-28",
+      "resolution": "option 2 — explicit IsSystem flag + SetSystemContext() + sentinel '-1' + per-table RLS opt-in clauses + system-context audit register",
+      "fullEntry": "docs/master-decisions-needed.md"
     }
   ],
+  "rollingMasterScope": {
+    "drainable": ["G1-3", "FU-2", "FU-3", "FU-4", "FU-5", "FU-6", "FU-7", "P1", "P3"],
+    "gated": [
+      { "id": "G2", "reason": "domain shape — Petty Cash voucher / custodian / ledger / approval / currency. User delivers ~6 product calls before it ships." },
+      { "id": "P2", "reason": "edge-node conflict-resolution semantics likely needs a design call mid-sprint; rolling master may halt on it." }
+    ],
+    "outOfScope": [
+      { "id": "image-analysis-track", "reason": "Owns its own master spawn. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source. User has parallel work in progress (Inference.Abstractions, Inference.Mock, Inference.OnnxRuntime, tools/v1-label-export/) — not touched by rolling master." }
+    ]
+  },
   "history": [
     {
       "id": "Sprint 4",

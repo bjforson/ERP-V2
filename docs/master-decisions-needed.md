@@ -100,3 +100,21 @@ commit `<TBD on push>` of branch `plan/g1-platform-tightening`. Items
 26 new platform tests pass). The branch can merge to main without
 #3; the missing system-context API is documented as a follow-up. G2
 (NickFinance) cannot start until this decision lands.
+
+**Resolved 2026-04-28** by user — picked **option 2**. Implementation
+ships through the rolling master as **Sprint 5**'s single item:
+
+- `bool IsSystem { get; }` on `ITenantContext`
+- `void SetSystemContext()` method
+- `TenantConnectionInterceptor` writes `app.tenant_id = '-1'` when `IsSystem`
+- RLS policy clauses on the specific tables that need cross-tenant
+  system access — start with `audit.events` (the G1 #4 NULL-tenant
+  write path); add others ONE TABLE AT A TIME, never blanket
+- New doc `docs/system-context-audit-register.md` listing every
+  `SetSystemContext` caller + the policy clauses that grant them
+  visibility, refreshed at each sprint boundary
+
+**G1-3 unblocks G2's system-context dependency** but does NOT unblock
+G2's domain-shape gating. G2 stays held until the user delivers the
+~6 product calls (money type, voucher lifecycle, custodian/approver
+model, ledger event shape, period locks, currency conversion).
