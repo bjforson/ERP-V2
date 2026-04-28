@@ -34,6 +34,8 @@
     -->
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy.Database\NickERP.Platform.Tenancy.Database.csproj" />
+    <!-- A2 — NickErpActivity.PreRenderRenderMs histogram lives on the platform meter. -->
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
   </ItemGroup>
 
 </Project>

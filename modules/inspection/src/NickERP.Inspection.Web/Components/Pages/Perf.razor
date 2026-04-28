@@ -1,0 +1,191 @@
+@page "/perf"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using NickERP.Inspection.Web.Services
+@inject MeterSnapshotService Meters
+@implements IDisposable
+
+<PageTitle>Acceptance bars — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Acceptance bars</h1>
+        <p class="inspection-page-subtitle">
+            Sprint A2 — rolling histogram + counter snapshot of the four pipeline surfaces from
+            <code>NickErpActivity.Meter</code>. Window: last @MeterSnapshotService.WindowSeconds&thinsp;s.
+            Auto-refreshes every 5&thinsp;s.
+        </p>
+        <p class="inspection-page-subtitle"><small>Captured @(_snapshot?.CapturedAt.ToString("HH:mm:ss") ?? "—") UTC</small></p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <h2>nickerp.inspection.image.serve_ms</h2>
+    <p class="inspection-page-subtitle"><small>ARCHITECTURE §7.7 acceptance bars: thumbnail p95 &le; 50&thinsp;ms; preview p95 &le; 80&thinsp;ms.</small></p>
+    @{ var imageRows = HistRows("nickerp.inspection.image.serve_ms"); }
+    @if (imageRows.Count == 0)
+    {
+        <p class="inspection-empty">No data yet — hit <code>/api/images/{id}/{kind}</code> to populate.</p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead>
+                <tr>
+                    <th>Tags</th>
+                    <th>p50&thinsp;(ms)</th>
+                    <th>p95&thinsp;(ms)</th>
+                    <th>p99&thinsp;(ms)</th>
+                    <th>min</th>
+                    <th>max</th>
+                    <th>n (window)</th>
+                    <th>n (lifetime)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var h in imageRows)
+                {
+                    <tr>
+                        <td><code>@(string.IsNullOrEmpty(h.TagKey) ? "(no tags)" : h.TagKey)</code></td>
+                        <td>@Fmt(h.P50)</td>
+                        <td>@Fmt(h.P95)</td>
+                        <td>@Fmt(h.P99)</td>
+                        <td>@Fmt(h.Min)</td>
+                        <td>@Fmt(h.Max)</td>
+                        <td>@h.Count</td>
+                        <td>@h.LifetimeCount</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+<section class="inspection-section">
+    <h2>nickerp.inspection.prerender.render_ms</h2>
+    @{ var prerenderRows = HistRows("nickerp.inspection.prerender.render_ms"); }
+    @if (prerenderRows.Count == 0)
+    {
+        <p class="inspection-empty">No data yet — pre-render worker has not produced a derivative since startup.</p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>Tags</th><th>p50</th><th>p95</th><th>p99</th><th>min</th><th>max</th><th>n (window)</th><th>n (lifetime)</th></tr></thead>
+            <tbody>
+                @foreach (var h in prerenderRows)
+                {
+                    <tr>
+                        <td><code>@(string.IsNullOrEmpty(h.TagKey) ? "(no tags)" : h.TagKey)</code></td>
+                        <td>@Fmt(h.P50)</td>
+                        <td>@Fmt(h.P95)</td>
+                        <td>@Fmt(h.P99)</td>
+                        <td>@Fmt(h.Min)</td>
+                        <td>@Fmt(h.Max)</td>
+                        <td>@h.Count</td>
+                        <td>@h.LifetimeCount</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+<section class="inspection-section">
+    <h2>nickerp.inspection.scan.ingest_ms</h2>
+    @{ var ingestRows = HistRows("nickerp.inspection.scan.ingest_ms"); }
+    @if (ingestRows.Count == 0)
+    {
+        <p class="inspection-empty">No data yet — no scan ingestion has happened since startup.</p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>Tags</th><th>p50</th><th>p95</th><th>p99</th><th>min</th><th>max</th><th>n (window)</th><th>n (lifetime)</th></tr></thead>
+            <tbody>
+                @foreach (var h in ingestRows)
+                {
+                    <tr>
+                        <td><code>@(string.IsNullOrEmpty(h.TagKey) ? "(no tags)" : h.TagKey)</code></td>
+                        <td>@Fmt(h.P50)</td>
+                        <td>@Fmt(h.P95)</td>
+                        <td>@Fmt(h.P99)</td>
+                        <td>@Fmt(h.Min)</td>
+                        <td>@Fmt(h.Max)</td>
+                        <td>@h.Count</td>
+                        <td>@h.LifetimeCount</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+<section class="inspection-section">
+    <h2>nickerp.inspection.case.state_transitions_total</h2>
+    @{ var stateRows = CounterRows("nickerp.inspection.case.state_transitions_total"); }
+    @if (stateRows.Count == 0)
+    {
+        <p class="inspection-empty">No data yet — no case-state transitions have happened since startup.</p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead><tr><th>From</th><th>To</th><th>Total</th></tr></thead>
+            <tbody>
+                @foreach (var c in stateRows)
+                {
+                    <tr>
+                        <td><code>@c.Tags.GetValueOrDefault("from", "—")</code></td>
+                        <td><code>@c.Tags.GetValueOrDefault("to", "—")</code></td>
+                        <td>@c.Total</td>
+                    </tr>
+                }
+                <tr>
+                    <td colspan="2"><strong>Total transitions</strong></td>
+                    <td><strong>@stateRows.Sum(r => r.Total)</strong></td>
+                </tr>
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private PerfSnapshot? _snapshot;
+    private System.Timers.Timer? _timer;
+
+    protected override void OnInitialized()
+    {
+        _snapshot = Meters.Snapshot();
+        _timer = new System.Timers.Timer(5000) { AutoReset = true, Enabled = true };
+        _timer.Elapsed += async (_, _) =>
+        {
+            try
+            {
+                _snapshot = Meters.Snapshot();
+                await InvokeAsync(StateHasChanged);
+            }
+            catch
+            {
+                // Render-time refresh is best-effort; a circuit teardown
+                // shouldn't cascade through the timer callback.
+            }
+        };
+    }
+
+    private List<HistogramView> HistRows(string name) =>
+        _snapshot?.Histograms.Where(h => h.Name == name).OrderBy(h => h.TagKey, StringComparer.Ordinal).ToList()
+            ?? new List<HistogramView>();
+
+    private List<CounterView> CounterRows(string name) =>
+        _snapshot?.Counters.Where(c => c.Name == name).OrderBy(c => c.TagKey, StringComparer.Ordinal).ToList()
+            ?? new List<CounterView>();
+
+    private static string Fmt(double v) => v == 0 ? "—" : v.ToString("F1");
+
+    public void Dispose()
+    {
+        _timer?.Stop();
+        _timer?.Dispose();
+    }
+}
