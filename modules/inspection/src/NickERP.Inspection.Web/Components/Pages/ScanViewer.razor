@@ -1,0 +1,319 @@
+@page "/cases/{CaseId:guid}/scans/{ScanId:guid}"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@inject InspectionDbContext Db
+@inject IJSRuntime JS
+@inject ILogger<ScanViewer> Logger
+@implements IAsyncDisposable
+
+@*
+    Sprint V4 — analyst W/L viewer.
+
+    Loads the scan's primary ScanArtifact, hands the pre-rendered preview
+    PNG endpoint URL to the JS interop module (wwwroot/js/scan-viewer.js),
+    and surfaces window/level sliders, a pixel probe, and an ROI inspector
+    against the original 8-bit ImageData.
+
+    Out of scope: 16-bit raw channel viewer (separate work item in the
+    IMAGE-ANALYSIS-MODERNIZATION track). This page consumes only what
+    the pre-render service already produces.
+*@
+
+<PageTitle>Scan viewer — Inspection v2</PageTitle>
+
+@if (_case is null || _scan is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <header class="inspection-page-header">
+        <div>
+            <h1>Scan <code>@_scan.Id.ToString()[..8]</code> &nbsp;
+                <span class="inspection-pill-state is-@_case.State.ToString().ToLowerInvariant()">@_case.State</span>
+            </h1>
+            <p class="inspection-page-subtitle">
+                <a href="/cases/@CaseId">← back to case @_case.SubjectIdentifier</a> &nbsp;•&nbsp;
+                @_case.SubjectType <code>@_case.SubjectIdentifier</code> &nbsp;•&nbsp;
+                captured @_scan.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss") &nbsp;•&nbsp;
+                @(_scannerName ?? "?") &nbsp;•&nbsp;
+                @(_locationCode ?? "?")
+            </p>
+        </div>
+    </header>
+
+    <section class="inspection-section">
+        @if (_artifact is null)
+        {
+            <div class="inspection-card">
+                <p class="inspection-empty">
+                    No primary artifact attached to this scan yet — the ingestion pipeline may
+                    still be writing. Try again in a few seconds.
+                </p>
+            </div>
+        }
+        else
+        {
+            <div class="viewer-shell">
+                <div class="viewer-canvas-wrap">
+                    @* Mouse handlers stay raw DOM events — bunit can render the markup
+                       without an IJSRuntime fully in place; the interop calls run only
+                       in OnAfterRenderAsync(firstRender). *@
+                    <canvas @ref="_canvasRef"
+                            class="viewer-canvas"
+                            @onmousemove="OnMouseMove"
+                            @onmousedown="OnMouseDown"
+                            @onmouseup="OnMouseUp"
+                            @onmouseleave="OnMouseLeave"></canvas>
+                    @if (_loadFailed)
+                    {
+                        <p class="inspection-empty">
+                            No preview yet — the pre-render worker hasn't reached this artifact.
+                            Try again in a few seconds.
+                        </p>
+                    }
+                </div>
+
+                <aside class="viewer-controls">
+                    <div class="inspection-card">
+                        <h2 class="inspection-card-title">Window / Level</h2>
+                        <label class="viewer-stat">
+                            <span class="label">Level (midpoint, 0–255)</span>
+                            <input type="range" min="0" max="255" step="1"
+                                   @bind="_level" @bind:event="oninput" @bind:after="ReapplyAsync" />
+                            <span class="value"><code>@_level</code></span>
+                        </label>
+                        <label class="viewer-stat">
+                            <span class="label">Window (range, 1–255)</span>
+                            <input type="range" min="1" max="255" step="1"
+                                   @bind="_window" @bind:event="oninput" @bind:after="ReapplyAsync" />
+                            <span class="value"><code>@_window</code></span>
+                        </label>
+                        <button class="inspection-button" @onclick="ResetAsync">Reset</button>
+                    </div>
+
+                    <div class="inspection-card">
+                        <h2 class="inspection-card-title">Pixel probe</h2>
+                        @if (_probe is null)
+                        {
+                            <p class="inspection-empty">Hover the image to read pixel values.</p>
+                        }
+                        else
+                        {
+                            <p class="viewer-stat">
+                                <span class="label">@(_probe.X), @(_probe.Y)</span>
+                                <span class="value"><code>@_probe.Value</code></span>
+                            </p>
+                        }
+                    </div>
+
+                    <div class="inspection-card">
+                        <h2 class="inspection-card-title">Region of interest</h2>
+                        @if (_roi is null)
+                        {
+                            <p class="inspection-empty">
+                                Drag a rectangle on the image to compute ROI stats. Click without
+                                dragging to clear.
+                            </p>
+                        }
+                        else
+                        {
+                            <p class="viewer-stat">
+                                <span class="label">size</span>
+                                <span class="value"><code>@(_roi.W)×@(_roi.H) px</code> (n=@_roi.N)</span>
+                            </p>
+                            <p class="viewer-stat">
+                                <span class="label">mean</span>
+                                <span class="value"><code>@(_roi.Mean.ToString("0.0"))</code></span>
+                            </p>
+                            <p class="viewer-stat">
+                                <span class="label">min · max</span>
+                                <span class="value"><code>@_roi.Min</code> · <code>@_roi.Max</code></span>
+                            </p>
+                            <p class="viewer-stat">
+                                <span class="label">stddev</span>
+                                <span class="value"><code>@(_roi.Stddev.ToString("0.0"))</code></span>
+                            </p>
+                        }
+                    </div>
+
+                    <div class="inspection-card">
+                        <h2 class="inspection-card-title">Source</h2>
+                        <p class="viewer-stat">
+                            <span class="label">artifact</span>
+                            <span class="value"><code>@_artifact.Id.ToString()[..8]</code></span>
+                        </p>
+                        <p class="viewer-stat">
+                            <span class="label">dimensions</span>
+                            <span class="value"><code>@_artifact.WidthPx × @_artifact.HeightPx</code></span>
+                        </p>
+                        <p class="viewer-stat">
+                            <span class="label">preview URL</span>
+                            <span class="value"><code>@PreviewUrl</code></span>
+                        </p>
+                    </div>
+                </aside>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid CaseId { get; set; }
+    [Parameter] public Guid ScanId { get; set; }
+
+    private InspectionCase? _case;
+    private Scan? _scan;
+    private ScanArtifact? _artifact;
+    private string? _scannerName;
+    private string? _locationCode;
+
+    private ElementReference _canvasRef;
+    private IJSObjectReference? _module;
+    private bool _loadFailed;
+
+    private int _level = 128;
+    private int _window = 200;
+
+    private ProbeResult? _probe;
+    private RoiResult? _roi;
+
+    // Drag state — track in viewport coords; the JS module translates to
+    // image pixel space when computing ROI stats.
+    private bool _dragging;
+    private double _dragStartX;
+    private double _dragStartY;
+
+    private string PreviewUrl => _artifact is null ? "" : $"/api/images/{_artifact.Id}/preview";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _case = await Db.Cases.AsNoTracking().FirstOrDefaultAsync(c => c.Id == CaseId);
+        if (_case is null) return;
+
+        _scan = await Db.Scans.AsNoTracking().FirstOrDefaultAsync(s => s.Id == ScanId && s.CaseId == CaseId);
+        if (_scan is null) return;
+
+        _artifact = await Db.ScanArtifacts.AsNoTracking()
+            .Where(a => a.ScanId == ScanId && a.ArtifactKind == "Primary")
+            .OrderBy(a => a.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        // Best-effort sidecar context — these are pure display strings, so a
+        // missing scanner / location row falls back to "?" rather than aborting.
+        var scanner = await Db.ScannerDeviceInstances.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == _scan.ScannerDeviceInstanceId);
+        _scannerName = scanner?.DisplayName;
+
+        var location = await Db.Locations.AsNoTracking()
+            .FirstOrDefaultAsync(l => l.Id == _case.LocationId);
+        _locationCode = location?.Code;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (_artifact is null) return;
+
+        try
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/scan-viewer.js");
+            await _module.InvokeAsync<object>("init", _canvasRef, PreviewUrl);
+        }
+        catch (JSException ex)
+        {
+            // Most likely the preview endpoint returned 404 because the
+            // pre-render worker hasn't reached this artifact yet. Surface
+            // the user-friendly message; log the underlying detail for ops.
+            _loadFailed = true;
+            Logger.LogInformation(ex,
+                "ScanViewer init failed for artifact {ArtifactId} — likely preview not yet rendered.",
+                _artifact?.Id);
+            StateHasChanged();
+        }
+    }
+
+    private async Task ReapplyAsync()
+    {
+        if (_module is null) return;
+        try { await _module.InvokeVoidAsync("applyWindowLevel", _canvasRef, _window, _level); }
+        catch (JSException) { /* viewer not initialised — ignore */ }
+    }
+
+    private async Task ResetAsync()
+    {
+        _level = 128;
+        _window = 200;
+        await ReapplyAsync();
+    }
+
+    private async Task OnMouseMove(MouseEventArgs e)
+    {
+        if (_module is null) return;
+        try
+        {
+            var probe = await _module.InvokeAsync<ProbeResult?>("getPixelAt", _canvasRef, e.ClientX, e.ClientY);
+            if (probe is not null)
+            {
+                _probe = probe;
+                StateHasChanged();
+            }
+        }
+        catch (JSException) { /* ignore — module not yet ready */ }
+    }
+
+    private void OnMouseDown(MouseEventArgs e)
+    {
+        if (_module is null) return;
+        _dragging = true;
+        _dragStartX = e.ClientX;
+        _dragStartY = e.ClientY;
+    }
+
+    private async Task OnMouseUp(MouseEventArgs e)
+    {
+        if (_module is null || !_dragging) return;
+        _dragging = false;
+
+        try
+        {
+            // setRoi returns null for a sub-2px "click" — the JS side also
+            // calls clearRoi internally in that case, so we just mirror.
+            var roi = await _module.InvokeAsync<RoiResult?>(
+                "setRoi", _canvasRef, _dragStartX, _dragStartY, e.ClientX, e.ClientY);
+            _roi = roi;
+            StateHasChanged();
+        }
+        catch (JSException) { /* ignore */ }
+    }
+
+    private void OnMouseLeave(MouseEventArgs _)
+    {
+        // Drop the probe display when the cursor leaves the canvas;
+        // a stale "(x, y) = value" looks like the probe is frozen.
+        _probe = null;
+        // Don't cancel an in-flight drag — the user might still complete
+        // it on the document; mouseup will fire wherever it lands.
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is not null)
+        {
+            try
+            {
+                await _module.InvokeVoidAsync("dispose", _canvasRef);
+                await _module.DisposeAsync();
+            }
+            catch (JSException) { /* circuit already torn down */ }
+            catch (JSDisconnectedException) { /* circuit already torn down */ }
+        }
+    }
+
+    private sealed record ProbeResult(int X, int Y, int Value);
+    private sealed record RoiResult(int X, int Y, int W, int H, double Mean, int Min, int Max, double Stddev, int N);
+}
