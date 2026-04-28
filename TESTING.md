@@ -186,6 +186,13 @@ The end-to-end demo lives in two flavours:
 - **Manual.** [`docs/runbooks/demo-walkthrough.md`](docs/runbooks/demo-walkthrough.md) — a step-by-step that an analyst (or a sales engineer) can follow in under five minutes. Drops a real FS6000 triplet into a watch folder; the `ScannerIngestionWorker` picks it up, the `PreRenderWorker` thumbnails it, the analyst fetches an ICUMS BOE, the gh-customs rules fire, the analyst clears the case, the verdict lands in the ICUMS outbox as a JSON file, and ≥8 `nickerp.inspection.*` events show up on `/audit`.
 - **Automated.** `tests/NickERP.Inspection.E2E.Tests/FullCaseLifecycleTests.cs` — the same lifecycle as a single xUnit `[Fact]`. Stands up an isolated Postgres pair (per-run unique-suffixed DBs on the dev `localhost:5432`), boots the inspection host via `WebApplicationFactory<Program>`, runs the workflow, and asserts every checkpoint plus an RLS sanity probe with a non-superuser role. Marked `[Trait("Category","Integration")]` so unit-test runs skip it.
 
+## Federation walkthrough
+
+Sprint E1 — proves "federation by location" + "multi-tenant from day 1" end-to-end. Two flavours, same shape as the demo walkthrough:
+
+- **Manual.** [`docs/runbooks/federation-walkthrough.md`](docs/runbooks/federation-walkthrough.md) — adds a Tenant 2 (`other-customer`) by hand, registers a `tema` location under it (sharing the same vocabulary as Tenant 1's `tema`), assigns a Tenant 2 analyst, drops a triplet, and verifies via curl + psql that no Tenant 1 user can see the Tenant 2 case. ~10 min.
+- **Automated.** `tests/NickERP.Inspection.E2E.Tests/MultiLocationFederationTests.cs` — three concurrent FS6000 ingest pipelines spread across two tenants (Tenant 1: `tema` + `kotoka`; Tenant 2: `tema`), three analysts each scoped to one location-assignment. Asserts (1) app-layer federation via `/cases` markup per user, (2) cross-tenant URL guess returns 404 / no foreign data, (3) DB-layer RLS canary via fresh `nscim_app` connections with and without `app.tenant_id` set, (4) `audit.events` carries the right `TenantId` per event. Marked `[Trait("Category","Integration")]`. The host boots as `nscim_app` (post-H3 production posture) so RLS actually enforces — if a future regression weakens the role to `BYPASSRLS=true`, the canary fails loud.
+
 Run it:
 
 ```bash
