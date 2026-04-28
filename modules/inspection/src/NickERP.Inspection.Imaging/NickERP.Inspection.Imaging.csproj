@@ -26,6 +26,14 @@
   <ItemGroup>
     <ProjectReference Include="..\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <!--
+      H1 — PreRenderWorker / SourceJanitorWorker iterate active tenants
+      from TenancyDbContext (the only RLS-exempt table) and push the
+      tenant onto ITenantContext per cycle so F1's interceptor lets
+      SaveChanges through. Mirrors ScannerIngestionWorker's pattern.
+    -->
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy.Database\NickERP.Platform.Tenancy.Database.csproj" />
   </ItemGroup>
 
 </Project>

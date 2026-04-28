@@ -118,20 +118,14 @@ internal sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             services.AddScoped<AuthenticationStateProvider>(_ =>
                 new StubAuthStateProvider(_fakeUserId, tenantId: 1));
 
-            // Replace ITenantContext with a single-tenant stub that
-            // reports tenant=1 from any scope — including the per-cycle
-            // scopes opened by the PreRenderWorker / SourceJanitorWorker.
-            // The production tenancy middleware sets the tenant from the
-            // JWT for HTTP requests; background workers that run outside
-            // a request must call SetTenant explicitly. The
-            // ScannerIngestionWorker does that today; PreRenderWorker
-            // doesn't (followup: make the platform interceptor aware of
-            // an artifact's row-stamped TenantId so background scopes
-            // don't have to know it). For this single-tenant e2e fixture
-            // we paper over the gap by force-resolving every scope to
-            // tenant 1 — the test only seeds tenant-1 data anyway.
-            services.RemoveAll<ITenantContext>();
-            services.AddScoped<ITenantContext>(_ => SingleTenantContext.Tenant1);
+            // H1 — the ITenantContext stub used to live here as a
+            // single-tenant fixture override that papered over
+            // PreRenderWorker / SourceJanitorWorker not setting the
+            // tenant in their per-cycle scopes. After H1 both workers
+            // walk tenancy.tenants and call ITenantContext.SetTenant
+            // themselves, mirroring ScannerIngestionWorker, so the
+            // production tenancy registration is now the right thing
+            // for the e2e test to exercise. No stub needed.
         });
     }
 
@@ -148,21 +142,6 @@ internal sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
         if (!tenant.IsResolved || tenant.TenantId != tenantId)
             tenant.SetTenant(tenantId);
         return scope;
-    }
-
-    /// <summary>
-    /// <see cref="ITenantContext"/> that's pre-resolved to tenant 1 from
-    /// the moment the scope opens — so background workers that don't run
-    /// the tenancy middleware (PreRenderWorker, SourceJanitorWorker) can
-    /// still pass the <see cref="TenantOwnedEntityInterceptor"/>'s
-    /// "must be resolved" guard. Only safe for single-tenant fixtures.
-    /// </summary>
-    private sealed class SingleTenantContext : ITenantContext
-    {
-        public static readonly SingleTenantContext Tenant1 = new();
-        public long TenantId => 1L;
-        public bool IsResolved => true;
-        public void SetTenant(long tenantId) { /* no-op — fixture is single-tenant */ }
     }
 
     private sealed class StubAuthStateProvider : AuthenticationStateProvider

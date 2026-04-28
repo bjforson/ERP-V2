@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
+using NickERP.Platform.Tenancy;
+using NickERP.Platform.Tenancy.Database;
 
 namespace NickERP.Inspection.Imaging;
 
@@ -93,16 +95,77 @@ public sealed class SourceJanitorWorker : BackgroundService
     }
 
     /// <summary>
-    /// Run one eviction sweep. Returns the number of blobs deleted.
-    /// Public for unit-testing — callers should still go through the
-    /// background service in production.
+    /// Run one eviction sweep across every active tenant. Returns the
+    /// total number of blobs deleted in this cycle. Public for
+    /// unit-testing — callers should still go through the background
+    /// service in production.
+    ///
+    /// <para>
+    /// H1 — eviction is intrinsically per-tenant: tenant A's open case
+    /// must NOT pin tenant B's blob, and tenant B's closed case must
+    /// NOT cause tenant A's blob to disappear. Walk active tenants from
+    /// <see cref="TenancyDbContext"/> (the only RLS-exempt table) and
+    /// run the eviction logic with <c>app.tenant_id</c> pushed per
+    /// iteration so RLS narrows every query to that tenant's rows.
+    /// Mirrors <c>ScannerIngestionWorker.DiscoverActiveInstancesAsync</c>.
+    /// </para>
     /// </summary>
     public async Task<int> SweepOnceAsync(CancellationToken ct)
     {
         await using var scope = _services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
-        var store = scope.ServiceProvider.GetRequiredService<IImageStore>();
+        var sp = scope.ServiceProvider;
+        var db = sp.GetRequiredService<InspectionDbContext>();
+        var store = sp.GetRequiredService<IImageStore>();
+        var tenancy = sp.GetRequiredService<TenancyDbContext>();
+        var tenantContext = sp.GetRequiredService<ITenantContext>();
 
+        // tenancy.tenants is intentionally NOT under RLS — root of the
+        // tenancy graph — so this read works at app.tenant_id='0'.
+        var activeTenantIds = await tenancy.Tenants
+            .AsNoTracking()
+            .Where(t => t.IsActive)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        if (activeTenantIds.Count == 0) return 0;
+
+        int totalDeleted = 0;
+        foreach (var tenantId in activeTenantIds)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            tenantContext.SetTenant(tenantId);
+
+            // Force a fresh connection so the connection interceptor
+            // re-runs SET app.tenant_id with the new value. The pooled
+            // connection might otherwise still carry the previous tenant.
+            try
+            {
+                if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+                    await db.Database.CloseConnectionAsync();
+            }
+            catch
+            {
+                // Best-effort — the next query opens a fresh pooled
+                // connection and the interceptor will set the tenant.
+            }
+
+            totalDeleted += await SweepTenantAsync(db, store, ct);
+        }
+
+        return totalDeleted;
+    }
+
+    /// <summary>
+    /// Single-tenant sweep. Caller is responsible for setting the
+    /// tenant on <see cref="ITenantContext"/> before invoking; RLS
+    /// narrows every query to that tenant.
+    /// </summary>
+    private async Task<int> SweepTenantAsync(
+        InspectionDbContext db,
+        IImageStore store,
+        CancellationToken ct)
+    {
         var cutoff = DateTimeOffset.UtcNow.AddDays(-Math.Max(0, _opts.Value.SourceRetentionDays));
 
         // Find ScanArtifacts whose case is Closed or Cancelled (see

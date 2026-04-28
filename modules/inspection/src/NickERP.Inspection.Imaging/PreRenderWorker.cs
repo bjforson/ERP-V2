@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
+using NickERP.Platform.Tenancy;
+using NickERP.Platform.Tenancy.Database;
 
 namespace NickERP.Inspection.Imaging;
 
@@ -70,17 +72,88 @@ public sealed class PreRenderWorker : BackgroundService
 
     /// <summary>
     /// Scan for unrendered artifacts and render up to <c>WorkerBatchSize</c>
-    /// of them. Returns the number of derivative rows produced.
+    /// of them, per active tenant. Returns the number of derivative rows
+    /// produced across all tenants in this cycle.
+    ///
+    /// <para>
+    /// H1 — the worker runs outside any HTTP request, so the tenancy
+    /// middleware never sets <see cref="ITenantContext"/>. Mirroring
+    /// <c>ScannerIngestionWorker.DiscoverActiveInstancesAsync</c>: walk
+    /// every active tenant from <see cref="TenancyDbContext"/> (the only
+    /// table not under RLS), call <see cref="ITenantContext.SetTenant"/>,
+    /// and run the existing drain logic with <c>app.tenant_id</c> pushed
+    /// to Postgres on the next connection open. Without this, F1's
+    /// <c>TenantOwnedEntityInterceptor</c> throws on every
+    /// <c>SaveChanges</c> and the drain query returns zero rows under
+    /// <c>FORCE ROW LEVEL SECURITY</c>.
+    /// </para>
     /// </summary>
     private async Task<int> DrainOnceAsync(CancellationToken ct)
     {
         // New scope per cycle so the DbContext doesn't grow unbounded
-        // change-tracking state across batches.
+        // change-tracking state across batches and so the connection
+        // interceptor re-fires when we set the tenant per iteration.
         await using var scope = _services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
-        var renderer = scope.ServiceProvider.GetRequiredService<IImageRenderer>();
-        var store = scope.ServiceProvider.GetRequiredService<IImageStore>();
+        var sp = scope.ServiceProvider;
+        var db = sp.GetRequiredService<InspectionDbContext>();
+        var renderer = sp.GetRequiredService<IImageRenderer>();
+        var store = sp.GetRequiredService<IImageStore>();
+        var tenancy = sp.GetRequiredService<TenancyDbContext>();
+        var tenantContext = sp.GetRequiredService<ITenantContext>();
 
+        // tenancy.tenants is the root of the tenancy graph and intentionally
+        // NOT under RLS, so this read works even with app.tenant_id='0'.
+        var activeTenantIds = await tenancy.Tenants
+            .AsNoTracking()
+            .Where(t => t.IsActive)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        if (activeTenantIds.Count == 0) return 0;
+
+        int totalProduced = 0;
+        foreach (var tenantId in activeTenantIds)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Push the tenant down for this iteration so RLS lets us see
+            // this tenant's unrendered rows AND so the SaveChanges
+            // interceptor has a resolved tenant to stamp.
+            tenantContext.SetTenant(tenantId);
+
+            // Force a fresh connection so the connection interceptor
+            // re-runs SET app.tenant_id with the new value — the pooled
+            // connection might otherwise still carry the previous tenant.
+            try
+            {
+                if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+                    await db.Database.CloseConnectionAsync();
+            }
+            catch
+            {
+                // Best-effort — the next query opens a fresh pooled
+                // connection and the interceptor will set the tenant.
+            }
+
+            totalProduced += await DrainTenantAsync(db, renderer, store, tenantId, ct);
+        }
+
+        return totalProduced;
+    }
+
+    /// <summary>
+    /// Drain a single tenant's unrendered ScanArtifacts. Caller is
+    /// responsible for pushing the tenant onto <see cref="ITenantContext"/>
+    /// before invoking this. RLS narrows the query to this tenant; the
+    /// interceptor stamps newly-added rows.
+    /// </summary>
+    private async Task<int> DrainTenantAsync(
+        InspectionDbContext db,
+        IImageRenderer renderer,
+        IImageStore store,
+        long tenantId,
+        CancellationToken ct)
+    {
         var batchSize = Math.Max(1, _opts.Value.WorkerBatchSize);
 
         // Pull a batch of artifacts that are missing at least one derivative.
@@ -116,6 +189,16 @@ public sealed class PreRenderWorker : BackgroundService
             var artifact = entry.Artifact;
             var have = new HashSet<string>(entry.ExistingKinds, StringComparer.OrdinalIgnoreCase);
             var dead = new HashSet<string>(entry.PermanentlyFailedKinds, StringComparer.OrdinalIgnoreCase);
+
+            // Defensive — RLS already filtered the batch but log if a row
+            // ever leaks across tenants (would indicate a policy regression).
+            if (artifact.TenantId != tenantId)
+            {
+                _logger.LogError(
+                    "PreRenderWorker tenant mismatch on ScanArtifact {Id}: discovered under {Owner} but row says {Actual}; skipping.",
+                    artifact.Id, tenantId, artifact.TenantId);
+                continue;
+            }
 
             byte[] sourceBytes;
             try

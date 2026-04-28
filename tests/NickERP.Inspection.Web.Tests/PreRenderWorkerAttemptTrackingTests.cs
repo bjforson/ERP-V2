@@ -6,6 +6,9 @@ using Microsoft.Extensions.Options;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
+using NickERP.Platform.Tenancy;
+using NickERP.Platform.Tenancy.Database;
+using NickERP.Platform.Tenancy.Entities;
 
 namespace NickERP.Inspection.Web.Tests;
 
@@ -27,10 +30,18 @@ public sealed class PreRenderWorkerAttemptTrackingTests
     public async Task PoisonArtifact_StopsRetrying_AfterMaxAttempts()
     {
         var dbName = "imaging-attempts-" + Guid.NewGuid();
+        var tenancyDbName = "tenancy-" + dbName;
         var sp = new ServiceCollection()
             .AddDbContext<InspectionDbContext>(o =>
                 o.UseInMemoryDatabase(dbName)
                  .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)))
+            // H1 — PreRenderWorker now walks tenancy.tenants per cycle, so
+            // the test harness has to register TenancyDbContext + a
+            // resolved ITenantContext or the worker silently no-ops.
+            .AddDbContext<TenancyDbContext>(o =>
+                o.UseInMemoryDatabase(tenancyDbName)
+                 .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)))
+            .AddScoped<ITenantContext, TenantContext>()
             .AddSingleton<IImageRenderer, ThrowingRenderer>()
             .AddSingleton<IImageStore, ReturnGarbageImageStore>()
             .Configure<ImagingOptions>(o =>
@@ -43,9 +54,19 @@ public sealed class PreRenderWorkerAttemptTrackingTests
                 s, s.GetRequiredService<IOptions<ImagingOptions>>(), NullLogger<PreRenderWorker>.Instance))
             .BuildServiceProvider();
 
-        // Seed: one ScanArtifact whose render will always throw.
+        // Seed: one active tenant + one ScanArtifact whose render will
+        // always throw.
         using (var scope = sp.CreateScope())
         {
+            var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            tenancy.Tenants.Add(new Tenant
+            {
+                Id = 1, Code = "t1", Name = "Tenant 1", IsActive = true,
+                BillingPlan = "internal", TimeZone = "UTC", Locale = "en", Currency = "USD",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await tenancy.SaveChangesAsync();
+
             var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
             db.ScanArtifacts.Add(new ScanArtifact
             {
