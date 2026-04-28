@@ -9,6 +9,7 @@ using NickERP.Platform.Audit.Database;
 using NickERP.Platform.Identity;
 using NickERP.Platform.Identity.Auth;
 using NickERP.Platform.Identity.Database;
+using NickERP.Platform.Identity.Database.Services;
 using NickERP.Platform.Logging;
 using NickERP.Platform.Plugins;
 using NickERP.Platform.Telemetry;
@@ -160,6 +161,24 @@ var app = builder.Build();
         var noMigrateLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup.Migrations");
         noMigrateLogger.LogInformation("RunMigrationsOnStartup=false; skipping Database.Migrate().");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 2 — H2 Identity-Tenancy Interlock guard. Verifies that
+// identity.identity_users is NOT under FORCE ROW LEVEL SECURITY (the
+// carve-out installed by 20260428104421_RemoveRlsFromIdentityUsers).
+// Runs regardless of RunMigrationsOnStartup so a host booted against an
+// already-migrated DB still detects a regression. Never throws — logs a
+// structured IDENTITY-USERS-RLS-RE-ENABLED warning if RLS is re-enabled.
+// ---------------------------------------------------------------------------
+{
+    using var guardScope = app.Services.CreateScope();
+    var guardSp = guardScope.ServiceProvider;
+    var guardLogger = guardSp.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Startup.IdentityUsersRlsGuard");
+    await IdentityUsersRlsGuard.EnsureCarveOutAsync(
+        guardSp.GetRequiredService<IdentityDbContext>(),
+        guardLogger);
 }
 
 if (!app.Environment.IsDevelopment())

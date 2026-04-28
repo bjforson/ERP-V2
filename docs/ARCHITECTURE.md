@@ -248,6 +248,14 @@ CREATE POLICY location_isolation ON inspection.cases
 - A bug in app code cannot leak cross-tenant or cross-location data — RLS is the backstop.
 - Separate Postgres role for the app (`nickerp_inspection_app`) — does not own schemas, no BYPASS RLS.
 
+#### The `identity.identity_users` carve-out (Sprint H2)
+
+`identity.identity_users` is the **only** tenanted table NOT under `FORCE ROW LEVEL SECURITY`. Every other tenanted table in `nickerp_platform` (`app_scopes`, `user_scopes`, `service_token_identities`, `service_token_scopes`) and every domain table in `nickerp_inspection` keeps its `tenant_isolation_*` policy and `FORCE` flag.
+
+The reason is that `identity_users` is the table that *establishes* tenant context. The auth flow (`DbIdentityResolver.FindUserByEmailAsync`) has to read it to discover the calling principal's `TenantId` *before* the tenancy middleware can push `app.tenant_id` to Postgres. RLS on this table is fundamentally circular: under the production posture (`nscim_app`, NOBYPASSRLS), `app.tenant_id` is unset at auth-resolution time, the `COALESCE` falls through to `'0'`, and every row is filtered out — auth returns 401, the demo dies. Sprint H2's migration `20260428104421_RemoveRlsFromIdentityUsers` lifts FORCE RLS and drops the policy on this one table.
+
+What still protects tenant data: the `users` row carries a `TenantId` column, but a code path that reads it directly cannot reach tenant data through it — every join into another tenanted table hits *that* table's RLS. The user-discovery hop is the single intentional carve-out; defense-in-depth holds for the data behind it. A startup guard (`IdentityUsersRlsGuard.EnsureCarveOutAsync`) wired into the host bootstrap logs a structured `IDENTITY-USERS-RLS-RE-ENABLED` warning if a future migration silently re-enables FORCE RLS on this table.
+
 ### 7.2 Event-driven state — offline-ready from day 1
 
 Every domain state change emits a `DomainEvent`:
