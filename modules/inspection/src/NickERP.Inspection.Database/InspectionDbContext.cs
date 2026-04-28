@@ -31,6 +31,7 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<Finding> Findings => Set<Finding>();
     public DbSet<Verdict> Verdicts => Set<Verdict>();
     public DbSet<OutboundSubmission> OutboundSubmissions => Set<OutboundSubmission>();
+    public DbSet<RuleEvaluation> RuleEvaluations => Set<RuleEvaluation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -374,6 +375,37 @@ public sealed class InspectionDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.Status }).HasDatabaseName("ix_outbound_tenant_status");
 
             e.HasOne(x => x.ExternalSystemInstance).WithMany().HasForeignKey(x => x.ExternalSystemInstanceId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ----- RuleEvaluation (Sprint A1) -------------------------------------------
+        // Persisted snapshot of one authority's rules pack run against a case.
+        // One row per (CaseId, AuthorityCode) — re-evaluation overwrites the
+        // existing snapshot. The (TenantId, CaseId, EvaluatedAt DESC) index
+        // serves the analyst's "latest per case" query in CaseDetail.Reload().
+        modelBuilder.Entity<RuleEvaluation>(e =>
+        {
+            e.ToTable("rule_evaluations");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.AuthorityCode).IsRequired().HasMaxLength(64);
+            e.Property(x => x.EvaluatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.ViolationsJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
+            e.Property(x => x.MutationsJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
+            e.Property(x => x.ProviderErrorsJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Composite (TenantId, CaseId, EvaluatedAt DESC) — the canonical
+            // "latest evaluations for this case" query in the analyst UI.
+            e.HasIndex(x => new { x.TenantId, x.CaseId, x.EvaluatedAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("ix_rule_eval_tenant_case_at");
+
+            // Snapshot semantics — at most one row per (CaseId, AuthorityCode).
+            // Re-evaluation upserts on this constraint.
+            e.HasIndex(x => new { x.TenantId, x.CaseId, x.AuthorityCode })
+                .IsUnique()
+                .HasDatabaseName("ux_rule_eval_tenant_case_authority");
         });
     }
 }
