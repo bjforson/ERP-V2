@@ -963,7 +963,152 @@ After E1 lands:
 
 ### 14.9 Out of sprint (Sprint 3 candidates)
 
-- **V4** — Analyst viewer Razor (W/L sliders, ROI inspector, pixel probe, 16-bit decode). The big UX piece.
+- **V4** — Analyst viewer Razor (W/L sliders, ROI inspector, pixel probe, 16-bit decode). The big UX piece. (✅ shipped in Sprint 3 at `31ba561`.)
 - **G1** — Platform tightening before NickFinance.
 - **G2** — NickFinance Petty Cash pathfinder.
 - **P1** — Standalone operations runbooks (deploy, secret rotation, etc.).
+
+---
+
+## 15. Sprint 4 — Platform Tightening + Audit Grants Fix
+
+### 15.0 Goal
+
+Two things, bundled because they're both unblockers for what comes next:
+
+1. **FU-1** — fix the audit history-table grants gap so a fresh-install host running `Database.Migrate()` as `nscim_app` doesn't fail. Discovered by E1; documented in §14.6 followups; ~15 min of work.
+2. **G1** — platform tightening before NickFinance. Prevents foot-guns and silent-data-loss at the platform layer that NickFinance's money/decimal-shaped data would expose. ~2 days.
+
+After this sprint, the platform is ready to host a non-Inspection consumer. **G2 (NickFinance Petty Cash) is explicitly NOT in this sprint** — its domain shape (money type, voucher entity, ledger event, approval chain, currency conversion) is a product question that needs user input before any code lands.
+
+### 15.1 Phases
+
+```
+       ┌── FU-1 (audit grants fix, parallel-safe) ──┐
+       │                                             │
+       └── G1 (platform tightening, parallel-safe) ──┘──→ end-of-sprint smoke
+```
+
+Both items can dispatch in parallel — they touch entirely different files. ~2 days wall-clock with parallelism.
+
+### 15.2 Work items
+
+#### FU-1 — Audit `__EFMigrationsHistory` Grants for Fresh-Install Migrate()
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | none (post-Sprint 2 main is fine) |
+| **Parallel-safe with** | G1 |
+| **Effort** | ~0.25 day |
+| **Branch** | `plan/fu1-audit-history-grants` |
+
+**Why this matters.** E1 discovered: `audit.__EFMigrationsHistory` (introduced by H3 when EF history tables were relocated out of `public`) only has SELECT+INSERT for `nscim_app` because audit's append-only posture excludes UPDATE/DELETE on the audit schema in general. EF Core's `NpgsqlHistoryRepository.AcquireDatabaseLock` runs `LOCK TABLE … ACCESS EXCLUSIVE MODE` which Postgres requires UPDATE/DELETE/TRUNCATE/MAINTAIN to grant. The H3 one-shot relocate script adds the necessary grants for upgraded installs; a fresh install (e.g. spin up a brand-new dev cluster, run `dotnet ef database update`) would fail.
+
+**Deliverable.**
+
+A new EF migration on `AuditDbContext` that emits SQL granting `nscim_app` UPDATE+DELETE on `audit.__EFMigrationsHistory` specifically. Mirror the per-context schema convention from H3.
+
+```csharp
+// Up
+migrationBuilder.Sql(@"
+  GRANT UPDATE, DELETE ON audit.""__EFMigrationsHistory"" TO nscim_app;
+");
+
+// Down
+migrationBuilder.Sql(@"
+  REVOKE UPDATE, DELETE ON audit.""__EFMigrationsHistory"" FROM nscim_app;
+");
+```
+
+The `audit.events` table itself stays SELECT+INSERT only (append-only invariant unchanged). The grant is targeted at exactly one table — the EF bookkeeping one. Document this in the migration's class XML doc.
+
+**Acceptance criteria.**
+
+- Migration applied to dev `nickerp_platform`. `psql -U postgres -c "SELECT has_table_privilege('nscim_app', 'audit.\"__EFMigrationsHistory\"', 'UPDATE');"` returns `t`.
+- `psql -U postgres -c "SELECT has_table_privilege('nscim_app', 'audit.events', 'UPDATE');"` returns `f` (append-only invariant intact).
+- `dotnet build` 0 errors. `dotnet test` 22/22 pass.
+- A simulated fresh-install path works: as `nscim_app`, run a small migration step that `LOCK TABLE … ACCESS EXCLUSIVE` on `audit.__EFMigrationsHistory` succeeds where it would have failed pre-fix.
+
+**Out of scope.** Broader audit-schema posture redesign. The only change is one table's grants.
+
+---
+
+#### G1 — Platform Tightening Before NickFinance
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | none |
+| **Parallel-safe with** | FU-1 |
+| **Effort** | ~2 days |
+| **Branch** | `plan/g1-platform-tightening` |
+
+**Why this matters.** NickFinance lands in G2. Before that, the platform has six silent foot-guns the audit (Sprint 1) flagged as "blocks Finance" or "would be nice." Most carry a corruption-or-collision risk that's invisible until Finance actually exercises the platform with money-shaped data.
+
+**Deliverable.** Six surgical platform fixes, in order of "blocks Finance" → "nice-to-have":
+
+1. **Decimal-as-string canonical `JsonSerializerOptions` for `DomainEvent` payloads.** Today `DomainEvent.Payload` is opaque `JsonElement`. If a publisher round-trips through `System.Text.Json` defaults, `decimal` becomes `double` and you lose cents. Add a public static `JsonSerializerOptions DomainEventOptions` on the `NickERP.Platform.Audit` package that enforces `decimal`-as-string + invariant culture. Document it as the canonical payload writer.
+
+2. **Audit channel routing accepts globs / multi-segment prefixes.** `DbEventPublisher.ChannelFor` (in `NickERP.Platform.Audit.Database`) currently takes only the first dotted segment, so every event publishes to channel `"nickerp"`. Finance subscribers wanting only `nickerp.finance.*` get every Inspection event and have to filter in-process. Change to accept the second segment (`finance` / `inspection`) OR accept a glob in `Subscribe`.
+
+3. **`ITenantContext.SetSystemContext()` for cross-tenant system jobs.** Today `ITenantContext.SetTenant` rejects tenantId ≤ 0. Finance needs a system context for parent-tenant consolidated reporting + nightly FX-rate jobs. Add a sanctioned `SetSystemContext()` method that internally sets `app.tenant_id = '0'` (the same fail-closed sentinel RLS uses) AND a paired bypass policy on tables that legitimately need cross-tenant reads. Or simpler: the system context is a flag `IsSystem` on `ITenantContext`; `TenantConnectionInterceptor` writes a sentinel value when `IsSystem == true`; specific RLS policies that allow system reads use a `OR current_setting('app.tenant_id') = '-1'` clause.
+
+   **STRATEGIC NOTE FOR THE EXECUTING AGENT:** This one is a posture-shift on tenant isolation. Before implementing, write a short proposal to `docs/master-decisions-needed.md` describing the chosen mechanism + its blast radius (which RLS policies it relaxes, on which tables). Halt + ask for sign-off. Don't ship without confirmation. (This is a hard-stop class — broadens the security model.)
+
+4. **`DomainEvent.TenantId` nullable** on the entity + the `audit.events` table. Finance has events without a single owning tenant ("FX rate published for the suite", "GL chart of accounts updated globally"). Either make `TenantId` nullable (preferred — semantically right), or use the `0` sentinel with index support for `IS NULL OR = ?`. Pick nullable. Add a migration on `nickerp_platform.audit.events` to drop `NOT NULL` on `TenantId` + add a partial index for the system-event case.
+
+5. **Plugin `Module` / `Namespace` partitioning.** `IPluginRegistry` indexes by global `TypeCode`. Finance adding a `momo` plugin would silently collide with a hypothetical Inspection `momo` plugin. Add a required `Module` field to the `[Plugin]` attribute + `PluginManifest` (e.g., `[Plugin("momo", Module = "finance")]`); key the registry on `(module, typeCode)`. Bump every existing plugin's manifest to declare its module (`"inspection"` for all of today's plugins). Bump `[ContractVersion]` on the Plugins package since this is an additive contract change. The host's `IPluginRegistry.Resolve<T>(string typeCode)` should grow a `string module` parameter; existing call sites pass `"inspection"`.
+
+6. **Scope-claim regex enforcement.** `IdentityAdminEndpoints`'s `MapScopes` POST currently accepts any non-empty string as a scope code. Finance scope `Finance.PettyCash.Approver` and Inspection scope `Identity.Admin` would coexist OK, but a maliciously-named scope like `"admin"` (no namespace) would also be accepted. Add a regex check at the API boundary requiring `^[A-Z][A-Za-z]+(\.[A-Z][A-Za-z]+)+$` with a clear error message. Document the per-app prefix as a hard rule in `IDENTITY.md`.
+
+**Files in scope.** Roughly:
+
+- `platform/NickERP.Platform.Audit/` — JsonSerializerOptions, DomainEvent shape change.
+- `platform/NickERP.Platform.Audit.Database/` — DbEventPublisher.ChannelFor, migration for events.TenantId nullable.
+- `platform/NickERP.Platform.Tenancy/` — ITenantContext.SetSystemContext + TenantConnectionInterceptor change.
+- (For #3) — possibly RLS policy migrations across multiple DBs (BUT see strategic note: gate on user sign-off).
+- `platform/NickERP.Platform.Plugins/` — PluginAttribute + PluginManifest + PluginLoader + PluginRegistry — `Module` field, key change.
+- All plugin.json files in `modules/inspection/plugins/*` — declare `module: "inspection"`.
+- `platform/NickERP.Platform.Identity.Api/` — scope regex enforcement.
+- `IDENTITY.md` if it exists, otherwise add a section to `ARCHITECTURE.md` §7.x.
+
+**Acceptance criteria.**
+
+- Decimals round-trip through `DomainEvent` payloads losslessly. New unit test in `tests/NickERP.Platform.Tests/` (create the project if it doesn't exist) that publishes an event with a payload containing `decimal.MaxValue / 7m`, reads it back, asserts byte-identical.
+- Channel routing test: subscribe to `nickerp.finance.*`, publish a `nickerp.inspection.case_opened`, assert NOT received. Publish a `nickerp.finance.transaction_recorded`, assert received.
+- (#3 only after sign-off) System-context test: `ITenantContext.SetSystemContext()` followed by a query on a sanctioned cross-tenant table returns rows from multiple tenants.
+- `audit.events` accepts an INSERT with `TenantId` NULL.
+- Plugin namespace test: register two plugins with the same `TypeCode` but different `Module`; both load, `Resolve("finance", "x")` and `Resolve("inspection", "x")` return distinct instances.
+- Scope regex test: POST `/api/identity/scopes` with `"admin"` returns 400; with `"Finance.PettyCash.Approver"` returns 200.
+- `dotnet build` 0 errors. `dotnet test` all tests pass (existing 22 + the new G1 tests).
+
+**Out of scope.** NickFinance domain model. Finance-specific endpoints. Anything in `modules/finance/` (doesn't exist; G2 creates it).
+
+### 15.3 Status snapshot
+
+| ID | Phase | Status | Branch |
+|---|---|---|---|
+| FU-1 | Followup | pending | `plan/fu1-audit-history-grants` |
+| G1 | Generalization | pending | `plan/g1-platform-tightening` |
+
+### 15.4 End-of-sprint smoke verification
+
+After both merge:
+
+1. Live host on `:5410` boots clean as `nscim_app`.
+2. Decimals in `DomainEvent` payloads round-trip losslessly (by inspection of the new test).
+3. Audit channel subscribers see only their module's events.
+4. System context (post sign-off) reads across tenants where allowed.
+5. Plugins still load (5 of them); `Resolve` calls still work; new module-aware `Resolve` works.
+6. Scope-create regex rejects underspecified scopes.
+7. Fresh-install `nscim_app` `Database.Migrate()` against a wiped audit schema completes (FU-1).
+
+### 15.5 Out of sprint (Sprint 5+ candidates)
+
+- **G2** — NickFinance Petty Cash pathfinder. **Hard-stopped pending domain shape**: money type, voucher lifecycle, custodian/approver workflow, journal-event types, period-lock semantics, currency conversion contract. Master agent must surface this as a question to the user before any G2 code lands.
+- **P1** — Operations runbooks.
+- **P2** — Edge node.
+- **P3** — Audit projection + notifications.
+- **FU-2 to FU-7** — small followups from Sprint 1+2 retrospectives.
+- **IMAGE-ANALYSIS-MODERNIZATION track** — own sprint family per `docs/IMAGE-ANALYSIS-MODERNIZATION.md`.
