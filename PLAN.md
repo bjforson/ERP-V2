@@ -593,6 +593,7 @@ D4's `E2EWebApplicationFactory` stub `ITenantContext` should be removed once thi
 - 2026-04-27: Initial sprint draft. Wave 1 (F1+F2+F3) dispatched, merged at `2dde6db`. Wave 2 (F4+F5+D3) dispatched, merged at `3dee869`. F5 slice 3 deferred pending F6 (identity-tenancy interlock); branch + commit preserved on origin.
 - 2026-04-27: Wave 3 — D1 dispatched + merged at `6b16c23`; D2 dispatched + merged at `749f273`; D4 dispatched + merged at `b101c7b`. **Sprint Foundation+Demo: 9 of 9 scoped items shipped.** D4's e2e test surfaced F7 (background-worker tenant resolution) — high-priority follow-up because the live host silently fails to render thumbnails. F7 added above; queued for the next dispatch.
 - 2026-04-28: Sprint 2 drafted (§14). Bundles F6 + F7 + F5 slice 3 + V1 + V2 + V3. V4 (analyst viewer) explicitly out of scope — owns its own sprint.
+- 2026-04-28: Sprint 2 Wave 1 (H1+H2+A1+A2) dispatched, merged at `9bc66d9`. Wave 2 (H3) dispatched: first attempt rejected for `GRANT CREATE ON SCHEMA public` posture-weakening shortcut; re-dispatched with the cleaner alternative — relocate `__EFMigrationsHistory` per-context schemas — merged at `8fe01ef`. **Live host flipped to `nscim_app`; "multi-tenant from day 1" now DB-side enforced.** Wave 3 (E1) dispatched, merged at `21a548b`. **Sprint 2: 6 of 6 scoped items shipped.** E1 surfaced an in-scope production bug (`CaseWorkflowService.CurrentActorAsync` throwing from non-Razor scopes) — fixed in the same PR. Six followups logged in §14.6.
 
 ---
 
@@ -901,14 +902,25 @@ A new e2e test in `tests/NickERP.Inspection.E2E.Tests/MultiLocationFederationTes
 
 ### 14.6 Status snapshot
 
-| ID | Phase | Status | Branch |
+| ID | Phase | Status | Merge commit |
 |---|---|---|---|
-| H1 | Hardening | pending | `plan/h1-worker-tenant-resolution` |
-| H2 | Hardening | pending | `plan/h2-identity-tenancy-interlock` |
-| H3 | Hardening | pending (waits for H2) | `plan/f5-prod-minimum` (existing) |
-| A1 | Analyst | pending | `plan/a1-rule-evaluation-persistence` |
-| A2 | Analyst | pending | `plan/a2-acceptance-bars` |
-| E1 | Expansion | pending (waits for H1+H2+H3) | `plan/e1-multi-location-proof` |
+| H1 | Hardening | **done** | `0a40242` |
+| H2 | Hardening | **done** | `03330fd` |
+| H3 | Hardening | **done** (clean alternative — see followup #1) | `8fe01ef` |
+| A1 | Analyst | **done** | `7c489e1` |
+| A2 | Analyst | **done** | `9bc66d9` |
+| E1 | Expansion | **done** | `21a548b` |
+
+**Sprint 2: 6 of 6 scoped items shipped.** Main is at `21a548b`. Live host on `:5410` confirmed running as `nscim_app` with all 5 health components green; 20/20 tests passing locally.
+
+**Sprint 2 followups discovered during execution** (queued for Sprint 3 or beyond):
+
+1. **Audit history-table grant gap.** A fresh-install host running `Database.Migrate()` as `nscim_app` would fail because `audit.__EFMigrationsHistory` lacks `UPDATE/DELETE` for `nscim_app` (audit's append-only posture excludes those grants). H3's one-shot `relocate-platform.sql` adds them for upgrade installs; a future migration must do the same for fresh installs. Surfaced by E1.
+2. **Cross-tenant `/cases/{guid}` returns 200-with-empty-state instead of clean 404.** Functionally correct (RLS hides the foreign row → page renders not-found state), but UX-wise a 404 would be cleaner. Surfaced by E1's 1f assertion.
+3. **PreRender/SourceJanitor source-blob cross-tenant sharing.** Content-addressed by SHA-256 alone; theoretically two tenants emitting byte-identical scans would share a blob and `SourceJanitorWorker` could race-evict the shared one. Astronomically unlikely in production. Surfaced by H1.
+4. **Stale `__EFMigrationsHistory` row** (`20260427164643_Add_ScanRenderArtifact`) carried into per-context history table during H3's relocation. Benign (EF only fires on file-without-row). Cleanup is a one-line `DELETE`. Surfaced by H3.
+5. **`dotnet ef database update` env-var passthrough**. Fails to authenticate when called from the same shell that authenticates `psql` successfully — likely a Windows shell/dotnet child-process env quirk. Workaround in use: `dotnet ef migrations script | psql -f`. Surfaced by H3.
+6. **Drop `public.__EFMigrationsHistory`** from both DBs once production has flipped to per-context history without issue. Held for safety. Surfaced by H3.
 
 ### 14.7 Dispatch plan
 
