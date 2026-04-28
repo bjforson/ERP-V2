@@ -164,6 +164,11 @@ public sealed class PreRenderWorker : BackgroundService
         byte[] sourceBytes,
         CancellationToken ct)
     {
+        // Sprint A2 — measure success-path render+persist time. Failures
+        // are intentionally NOT recorded: a render exception or DB
+        // contention would skew the histogram with timeouts; the
+        // scan_render_attempts table already tracks those separately.
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var rendered = string.Equals(kind, RenderKinds.Thumbnail, StringComparison.OrdinalIgnoreCase)
@@ -186,6 +191,11 @@ public sealed class PreRenderWorker : BackgroundService
                 TenantId = artifact.TenantId
             });
             await db.SaveChangesAsync(ct);
+            sw.Stop();
+            NickERP.Platform.Telemetry.NickErpActivity.PreRenderRenderMs.Record(
+                sw.Elapsed.TotalMilliseconds,
+                new KeyValuePair<string, object?>("kind", kind),
+                new KeyValuePair<string, object?>("mime", rendered.MimeType ?? "unknown"));
             return true;
         }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))

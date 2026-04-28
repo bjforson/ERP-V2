@@ -77,6 +77,12 @@ builder.Services.AddCascadingAuthenticationState();
 // DbContext directly for workflow operations.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.CaseWorkflowService>();
 
+// Sprint A2 — in-process MeterListener powering the /perf admin page.
+// Singleton so the listener spans the host's lifetime; instruments are
+// auto-discovered via NickErpActivity.Meter (the OTel pipeline picks
+// them up the same way).
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.MeterSnapshotService>();
+
 // Image pre-rendering pipeline (ARCHITECTURE §7.7) — IImageRenderer +
 // IImageStore + the PreRenderWorker background service. The render
 // endpoint is mapped below after app.Build().
@@ -120,6 +126,12 @@ builder.Services.AddScoped(sp => new PostgresHealthCheck<InspectionDbContext>(
     sp.GetRequiredService<InspectionDbContext>(), "Postgres (inspection)"));
 
 var app = builder.Build();
+
+// Sprint A2 — eagerly instantiate MeterSnapshotService at startup so its
+// MeterListener is wired before any meter records. Without this, the
+// service stays uncreated until the first /perf request, missing every
+// histogram/counter sample emitted in the meantime.
+_ = app.Services.GetRequiredService<NickERP.Inspection.Web.Services.MeterSnapshotService>();
 
 // ---------------------------------------------------------------------------
 // Phase F5 — migrations at startup. Default ON in dev, OFF elsewhere; flag
@@ -198,29 +210,64 @@ app.MapGet("/api/images/{scanArtifactId:guid}/{kind}", async (
     Microsoft.Extensions.Options.IOptions<NickERP.Inspection.Imaging.ImagingOptions> opts,
     CancellationToken ct) =>
 {
-    if (!NickERP.Inspection.Imaging.RenderKinds.IsKnown(kind))
-        return Results.BadRequest($"Unknown kind '{kind}'. Expected 'thumbnail' or 'preview'.");
+    // Sprint A2 — wall-clock the whole lambda so the /perf page can show
+    // the p95 against ARCHITECTURE §7.7's bars (thumbs 50ms / preview 80ms).
+    // Every return path records to nickerp.inspection.image.serve_ms; the
+    // try/finally guarantees we never miss one.
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    string status = "200";
+    // Tag value defaults to whatever was requested so a 400 still tells
+    // us which malformed kind the client tried.
+    string kindTag = kind ?? "unknown";
+    try
+    {
+        if (!NickERP.Inspection.Imaging.RenderKinds.IsKnown(kind))
+        {
+            status = "400";
+            return Results.BadRequest($"Unknown kind '{kind}'. Expected 'thumbnail' or 'preview'.");
+        }
 
-    var row = await db.ScanRenderArtifacts.AsNoTracking()
-        .FirstOrDefaultAsync(r => r.ScanArtifactId == scanArtifactId && r.Kind == kind, ct);
-    if (row is null)
-        return Results.NotFound("Render not available yet — pre-render worker hasn't reached this artifact.");
+        var row = await db.ScanRenderArtifacts.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.ScanArtifactId == scanArtifactId && r.Kind == kind, ct);
+        if (row is null)
+        {
+            status = "404";
+            return Results.NotFound("Render not available yet — pre-render worker hasn't reached this artifact.");
+        }
 
-    // ETag handling — content-addressed, so the hash IS the version.
-    var etag = $"\"{(row.ContentHash.Length >= 16 ? row.ContentHash[..16] : row.ContentHash)}\"";
-    var ifNoneMatch = http.Request.Headers["If-None-Match"].ToString();
-    if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch.Contains(etag, StringComparison.Ordinal))
-        return Results.StatusCode(StatusCodes.Status304NotModified);
+        // ETag handling — content-addressed, so the hash IS the version.
+        var etag = $"\"{(row.ContentHash.Length >= 16 ? row.ContentHash[..16] : row.ContentHash)}\"";
+        var ifNoneMatch = http.Request.Headers["If-None-Match"].ToString();
+        if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch.Contains(etag, StringComparison.Ordinal))
+        {
+            status = "304";
+            return Results.StatusCode(StatusCodes.Status304NotModified);
+        }
 
-    var stream = store.OpenRenderRead(scanArtifactId, kind);
-    if (stream is null)
-        return Results.NotFound("Render row exists but storage blob is missing — most likely a stale row after manual cleanup.");
+        // kind is non-null here (IsKnown(null) returns false → 400 above);
+        // the try/finally restructure broke the compiler's flow analysis,
+        // hence the explicit `!`. Behaviourally identical to the pre-A2 lambda.
+        var stream = store.OpenRenderRead(scanArtifactId, kind!);
+        if (stream is null)
+        {
+            status = "404";
+            return Results.NotFound("Render row exists but storage blob is missing — most likely a stale row after manual cleanup.");
+        }
 
-    var o = opts.Value;
-    http.Response.Headers.ETag = etag;
-    http.Response.Headers.CacheControl =
-        $"public, max-age={o.HttpCacheMaxAgeSeconds}, s-maxage={o.HttpCacheSharedMaxAgeSeconds}, immutable";
-    return Results.Stream(stream, contentType: row.MimeType, enableRangeProcessing: false);
+        var o = opts.Value;
+        http.Response.Headers.ETag = etag;
+        http.Response.Headers.CacheControl =
+            $"public, max-age={o.HttpCacheMaxAgeSeconds}, s-maxage={o.HttpCacheSharedMaxAgeSeconds}, immutable";
+        return Results.Stream(stream, contentType: row.MimeType, enableRangeProcessing: false);
+    }
+    finally
+    {
+        sw.Stop();
+        NickERP.Platform.Telemetry.NickErpActivity.ImageServeMs.Record(
+            sw.Elapsed.TotalMilliseconds,
+            new KeyValuePair<string, object?>("kind", kindTag),
+            new KeyValuePair<string, object?>("status", status));
+    }
 })
 .RequireAuthorization();
 

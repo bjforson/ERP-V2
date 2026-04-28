@@ -12,6 +12,7 @@ using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Platform.Audit;
 using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Plugins;
+using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 
 namespace NickERP.Inspection.Web.Services;
@@ -116,6 +117,10 @@ public sealed class CaseWorkflowService
 
         await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.case_opened", "InspectionCase",
             c.Id.ToString(), new { c.Id, c.LocationId, c.SubjectType, c.SubjectIdentifier }, ct);
+        // Sprint A2 — opening a case is a state transition from "none" to Open.
+        NickErpActivity.CaseStateTransitions.Add(1,
+            new KeyValuePair<string, object?>("from", "none"),
+            new KeyValuePair<string, object?>("to", InspectionWorkflowState.Open.ToString()));
 
         return c;
     }
@@ -186,6 +191,16 @@ public sealed class CaseWorkflowService
         string mode,
         CancellationToken ct)
     {
+        // Sprint A2 — wall-clock the entire ingest helper so the /perf
+        // page can show ingestion-throughput p95s, scoped per scanner
+        // type. try/finally guarantees a record on every return path
+        // (idempotency short-circuit + benign-race recover paths
+        // included). Record only on success-y returns; throws bubble
+        // through unrecorded since they don't represent valid latency.
+        var ingestSw = System.Diagnostics.Stopwatch.StartNew();
+        var scannerTypeTag = string.IsNullOrEmpty(device.TypeCode) ? "unknown" : device.TypeCode;
+        try
+        {
         var now = DateTimeOffset.UtcNow;
         var parsed = await adapter.ParseAsync(raw, ct);
 
@@ -268,6 +283,14 @@ public sealed class CaseWorkflowService
             scan.Id.ToString(), new { scan.Id, scan.CaseId, scan.ScannerDeviceInstanceId }, ct);
 
         return scan;
+        }
+        finally
+        {
+            ingestSw.Stop();
+            NickErpActivity.ScanIngestMs.Record(
+                ingestSw.Elapsed.TotalMilliseconds,
+                new KeyValuePair<string, object?>("scanner_type_code", scannerTypeTag));
+        }
     }
 
     private static bool IsScanIdempotencyKeyViolation(DbUpdateException ex)
@@ -409,10 +432,17 @@ public sealed class CaseWorkflowService
         }
 
         // Move workflow forward: Open → Validated.
+        // Sprint A2 — capture the prior state BEFORE mutation so the
+        // state_transitions counter can tag the actual from→to pair
+        // (Validated emission is gated below; we only count when the
+        // emit fires).
+        var priorStateForValidated = c.State;
+        bool transitionedToValidated = false;
         if (c.State == InspectionWorkflowState.Open && emitted.Count > 0)
         {
             c.State = InspectionWorkflowState.Validated;
             c.StateEnteredAt = now;
+            transitionedToValidated = true;
         }
         await _db.SaveChangesAsync(ct);
 
@@ -425,6 +455,12 @@ public sealed class CaseWorkflowService
         {
             await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.case_validated", "InspectionCase",
                 c.Id.ToString(), new { c.Id, c.State }, ct);
+            if (transitionedToValidated)
+            {
+                NickErpActivity.CaseStateTransitions.Add(1,
+                    new KeyValuePair<string, object?>("from", priorStateForValidated.ToString()),
+                    new KeyValuePair<string, object?>("to", InspectionWorkflowState.Validated.ToString()));
+            }
         }
 
         // D3 auto-fire: run the authority-rules pack so the analyst sees
@@ -631,6 +667,8 @@ public sealed class CaseWorkflowService
 
         var c = await _db.Cases.FirstOrDefaultAsync(x => x.Id == caseId, ct)
             ?? throw new InvalidOperationException($"Case {caseId} not found.");
+        // Sprint A2 — capture pre-mutation state for the transition counter.
+        var priorState = c.State;
         c.AssignedAnalystUserId = actor;
         c.State = InspectionWorkflowState.Assigned;
         c.StateEnteredAt = now;
@@ -648,6 +686,9 @@ public sealed class CaseWorkflowService
 
         await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.case_assigned", "InspectionCase",
             c.Id.ToString(), new { c.Id, AnalystUserId = actor }, ct);
+        NickErpActivity.CaseStateTransitions.Add(1,
+            new KeyValuePair<string, object?>("from", priorState.ToString()),
+            new KeyValuePair<string, object?>("to", InspectionWorkflowState.Assigned.ToString()));
         return session;
     }
 
@@ -675,8 +716,15 @@ public sealed class CaseWorkflowService
             .FirstOrDefaultAsync(ct);
         if (session is null)
         {
+            // AssignSelfAndStartReviewAsync mutates c.State to Assigned and
+            // emits its own transition counter. Re-fetch the case so we
+            // see the post-assign state for the verdict transition tag below.
             session = await AssignSelfAndStartReviewAsync(caseId, ct);
+            c = await _db.Cases.FirstOrDefaultAsync(x => x.Id == caseId, ct)
+                ?? throw new InvalidOperationException($"Case {caseId} not found after auto-assign.");
         }
+        // Sprint A2 — capture pre-Verdict state for the transition counter.
+        var priorState = c.State;
 
         var review = new AnalystReview
         {
@@ -709,6 +757,9 @@ public sealed class CaseWorkflowService
 
         await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.verdict_set", "Verdict",
             verdict.Id.ToString(), new { verdict.Id, verdict.CaseId, verdict.Decision, verdict.Basis, review.ConfidenceScore }, ct);
+        NickErpActivity.CaseStateTransitions.Add(1,
+            new KeyValuePair<string, object?>("from", priorState.ToString()),
+            new KeyValuePair<string, object?>("to", InspectionWorkflowState.Verdict.ToString()));
         return verdict;
     }
 
@@ -744,6 +795,11 @@ public sealed class CaseWorkflowService
         _db.OutboundSubmissions.Add(sub);
         await _db.SaveChangesAsync(ct);
 
+        // Sprint A2 — capture pre-Submit state so the transition counter
+        // can tag the actual from→to (we only count when SubmitAsync
+        // actually moves the case forward — i.e. on Accepted).
+        var priorState = c.State;
+        bool transitioned = false;
         try
         {
             var adapter = _plugins.Resolve<IExternalSystemAdapter>(instance.TypeCode, _services);
@@ -761,6 +817,7 @@ public sealed class CaseWorkflowService
             {
                 c.State = InspectionWorkflowState.Submitted;
                 c.StateEnteredAt = sub.RespondedAt.Value;
+                transitioned = true;
             }
             await _db.SaveChangesAsync(ct);
         }
@@ -775,6 +832,12 @@ public sealed class CaseWorkflowService
 
         await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.submission_dispatched", "OutboundSubmission",
             sub.Id.ToString(), new { sub.Id, sub.CaseId, sub.Status }, ct);
+        if (transitioned)
+        {
+            NickErpActivity.CaseStateTransitions.Add(1,
+                new KeyValuePair<string, object?>("from", priorState.ToString()),
+                new KeyValuePair<string, object?>("to", InspectionWorkflowState.Submitted.ToString()));
+        }
         return sub;
     }
 
@@ -789,6 +852,8 @@ public sealed class CaseWorkflowService
 
         var c = await _db.Cases.FirstOrDefaultAsync(x => x.Id == caseId, ct)
             ?? throw new InvalidOperationException($"Case {caseId} not found.");
+        // Sprint A2 — capture pre-mutation state for the transition counter.
+        var priorState = c.State;
         c.State = InspectionWorkflowState.Closed;
         c.StateEnteredAt = now;
         c.ClosedAt = now;
@@ -796,6 +861,9 @@ public sealed class CaseWorkflowService
 
         await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.case_closed", "InspectionCase",
             c.Id.ToString(), new { c.Id }, ct);
+        NickErpActivity.CaseStateTransitions.Add(1,
+            new KeyValuePair<string, object?>("from", priorState.ToString()),
+            new KeyValuePair<string, object?>("to", InspectionWorkflowState.Closed.ToString()));
     }
 
     // ---------------------------------------------------------------------

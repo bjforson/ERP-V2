@@ -26,6 +26,8 @@
   <ItemGroup>
     <ProjectReference Include="..\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <!-- Sprint A2 — needed for NickErpActivity.PreRenderRenderMs. -->
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
   </ItemGroup>
 
 </Project>
