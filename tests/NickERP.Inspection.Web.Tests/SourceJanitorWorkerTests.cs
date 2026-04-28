@@ -6,6 +6,9 @@ using Microsoft.Extensions.Options;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
+using NickERP.Platform.Tenancy;
+using NickERP.Platform.Tenancy.Database;
+using NickERP.Platform.Tenancy.Entities;
 
 namespace NickERP.Inspection.Web.Tests;
 
@@ -37,6 +40,13 @@ public sealed class SourceJanitorWorkerTests : IDisposable
             .AddDbContext<InspectionDbContext>(o =>
                 o.UseInMemoryDatabase(dbName)
                  .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)))
+            // H1 — SourceJanitorWorker now walks tenancy.tenants per
+            // cycle, so the harness must register TenancyDbContext +
+            // ITenantContext.
+            .AddDbContext<TenancyDbContext>(o =>
+                o.UseInMemoryDatabase("tenancy-" + dbName)
+                 .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)))
+            .AddScoped<ITenantContext, TenantContext>()
             .AddSingleton<IImageStore, DiskImageStore>()
             .Configure<ImagingOptions>(o =>
             {
@@ -57,10 +67,20 @@ public sealed class SourceJanitorWorkerTests : IDisposable
         var blobPath = disk.GetSourcePath(hash, ".png");
         File.Exists(blobPath).Should().BeTrue("blob saved to disk by SaveSourceAsync");
 
-        // Seed: a closed case with a scan and an artifact pointing at
-        // the blob, with CreatedAt older than the retention cutoff.
+        // Seed: one active tenant + a closed case with a scan and an
+        // artifact pointing at the blob, with CreatedAt older than the
+        // retention cutoff.
         using (var scope = sp.CreateScope())
         {
+            var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            tenancy.Tenants.Add(new Tenant
+            {
+                Id = 1, Code = "t1", Name = "Tenant 1", IsActive = true,
+                BillingPlan = "internal", TimeZone = "UTC", Locale = "en", Currency = "USD",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await tenancy.SaveChangesAsync();
+
             var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
             var caseId = Guid.NewGuid();
             var locationId = Guid.NewGuid();
@@ -129,6 +149,11 @@ public sealed class SourceJanitorWorkerTests : IDisposable
             .AddDbContext<InspectionDbContext>(o =>
                 o.UseInMemoryDatabase(dbName)
                  .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)))
+            // H1 — see sibling test for rationale.
+            .AddDbContext<TenancyDbContext>(o =>
+                o.UseInMemoryDatabase("tenancy-" + dbName)
+                 .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)))
+            .AddScoped<ITenantContext, TenantContext>()
             .AddSingleton<IImageStore, DiskImageStore>()
             .Configure<ImagingOptions>(o =>
             {
@@ -148,6 +173,15 @@ public sealed class SourceJanitorWorkerTests : IDisposable
 
         using (var scope = sp.CreateScope())
         {
+            var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            tenancy.Tenants.Add(new Tenant
+            {
+                Id = 1, Code = "t1", Name = "Tenant 1", IsActive = true,
+                BillingPlan = "internal", TimeZone = "UTC", Locale = "en", Currency = "USD",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await tenancy.SaveChangesAsync();
+
             var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
             var locationId = Guid.NewGuid();
             db.Locations.Add(new Location
