@@ -567,6 +567,16 @@ public sealed class CaseWorkflowService
             }
         }
 
+        // Sprint A1 — persist a per-authority snapshot so the rules pane
+        // survives page reload. One row per (CaseId, AuthorityCode);
+        // re-evaluation overwrites the existing row (snapshot semantics).
+        // Provider errors get attached to the authority that owns them
+        // when the message is prefixed with the type code (matches the
+        // "{TypeCode}: ..." format used above); orphan errors land on a
+        // synthetic row keyed by the empty AuthorityCode so the analyst
+        // can still see them after reload.
+        await PersistRuleEvaluationsAsync(c, tenantId, allViolations, allMutations, providerErrors, registered, ct);
+
         await EmitAsync(tenantId, actor, c.CorrelationId,
             "nickerp.inspection.rules_evaluated", "InspectionCase", c.Id.ToString(),
             new
@@ -579,6 +589,132 @@ public sealed class CaseWorkflowService
             }, ct);
 
         return new RulesEvaluationResult(allViolations, allMutations, providerErrors);
+    }
+
+    // ---------------------------------------------------------------------
+    // Sprint A1 — snapshot writer.
+    //
+    // Groups violations + mutations + provider-errors by AuthorityCode, then
+    // upserts one row per (CaseId, AuthorityCode) into
+    // <c>inspection.rule_evaluations</c>. Re-running rules for the same case
+    // overwrites the previous snapshot — historical evaluations live on the
+    // audit stream via <c>nickerp.inspection.rules_evaluated</c>, not in
+    // this table.
+    //
+    // We collect the union of authority codes from (a) successfully-resolved
+    // providers, (b) violations, (c) mutations, and (d) errors so an
+    // authority that returned 0/0/0 still gets a "we ran, nothing to flag"
+    // snapshot row — that's what the page-reload hydration relies on to
+    // show "No violations" instead of an empty pane.
+    // ---------------------------------------------------------------------
+    private async Task PersistRuleEvaluationsAsync(
+        InspectionCase @case,
+        long tenantId,
+        IReadOnlyList<EvaluatedViolation> violations,
+        IReadOnlyList<EvaluatedMutation> mutations,
+        IReadOnlyList<string> providerErrors,
+        IReadOnlyList<RegisteredPlugin> registeredProviders,
+        CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        // Map TypeCode → AuthorityCode for any provider we successfully
+        // resolved during the loop above. Used to attribute "{TypeCode}:
+        // ..." prefixed error strings back to the right authority row.
+        var typeCodeToAuthority = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in registeredProviders)
+        {
+            try
+            {
+                var resolved = _plugins.Resolve<IAuthorityRulesProvider>(p.TypeCode, _services);
+                typeCodeToAuthority[p.TypeCode] = resolved.AuthorityCode;
+            }
+            catch
+            {
+                // Resolve failure already recorded as a provider error
+                // upstream; we just skip it for the type-code map.
+            }
+        }
+
+        string? AuthorityForError(string err)
+        {
+            // Provider error format: "{TypeCode}: ..." — see above.
+            var idx = err.IndexOf(':');
+            if (idx <= 0) return null;
+            var typeCode = err[..idx];
+            return typeCodeToAuthority.TryGetValue(typeCode, out var authority) ? authority : null;
+        }
+
+        // Bucket by AuthorityCode. An empty-string key holds errors we
+        // couldn't attribute (e.g. the registry itself threw before we got
+        // a TypeCode mapping). Successful providers with zero findings
+        // still get a bucket so reload renders "clean" cases correctly.
+        var buckets = new Dictionary<string, (List<EvaluatedViolation> Violations, List<EvaluatedMutation> Mutations, List<string> Errors)>(StringComparer.OrdinalIgnoreCase);
+
+        (List<EvaluatedViolation>, List<EvaluatedMutation>, List<string>) BucketFor(string authority)
+        {
+            if (!buckets.TryGetValue(authority, out var b))
+            {
+                b = (new List<EvaluatedViolation>(), new List<EvaluatedMutation>(), new List<string>());
+                buckets[authority] = b;
+            }
+            return b;
+        }
+
+        foreach (var authority in typeCodeToAuthority.Values.Distinct(StringComparer.OrdinalIgnoreCase))
+            BucketFor(authority);
+
+        foreach (var v in violations) BucketFor(v.AuthorityCode).Item1.Add(v);
+        foreach (var m in mutations) BucketFor(m.AuthorityCode).Item2.Add(m);
+        foreach (var err in providerErrors)
+        {
+            var authority = AuthorityForError(err) ?? string.Empty;
+            BucketFor(authority).Item3.Add(err);
+        }
+
+        if (buckets.Count == 0) return;
+
+        // Upsert: load existing rows for this case, update in place if
+        // matched, otherwise insert. The unique index on
+        // (TenantId, CaseId, AuthorityCode) backs the snapshot semantic.
+        var caseId = @case.Id;
+        var existing = await _db.RuleEvaluations
+            .Where(r => r.CaseId == caseId)
+            .ToListAsync(ct);
+        var existingByAuthority = existing.ToDictionary(
+            r => r.AuthorityCode,
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (authority, bucket) in buckets)
+        {
+            var violationsJson = JsonSerializer.Serialize(bucket.Violations);
+            var mutationsJson = JsonSerializer.Serialize(bucket.Mutations);
+            var errorsJson = JsonSerializer.Serialize(bucket.Errors);
+
+            if (existingByAuthority.TryGetValue(authority, out var row))
+            {
+                row.EvaluatedAt = now;
+                row.ViolationsJson = violationsJson;
+                row.MutationsJson = mutationsJson;
+                row.ProviderErrorsJson = errorsJson;
+            }
+            else
+            {
+                _db.RuleEvaluations.Add(new RuleEvaluation
+                {
+                    Id = Guid.NewGuid(),
+                    CaseId = caseId,
+                    AuthorityCode = authority,
+                    EvaluatedAt = now,
+                    ViolationsJson = violationsJson,
+                    MutationsJson = mutationsJson,
+                    ProviderErrorsJson = errorsJson,
+                    TenantId = tenantId
+                });
+            }
+        }
+
+        await _db.SaveChangesAsync(ct);
     }
 
     /// <summary>

@@ -1,6 +1,8 @@
 @page "/cases/{CaseId:guid}"
 @attribute [Authorize]
+@using System.Text.Json
 @using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Authorities.Abstractions
 @using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
 @using NickERP.Inspection.Web.Services
@@ -297,6 +299,57 @@ else
             .Where(x => x.IsActive)
             .OrderBy(x => x.DisplayName).ToListAsync();
         _locationsById = await Db.Locations.AsNoTracking().ToDictionaryAsync(l => l.Id);
+
+        // Sprint A1 — hydrate the rules pane from the persisted snapshot
+        // table so the analyst doesn't have to click "Run authority checks"
+        // again on every reload. One row per (case, AuthorityCode); we
+        // collect the latest set across all authorities into a single
+        // RulesEvaluationResult mirroring what EvaluateAuthorityRulesAsync
+        // would have returned. Fetch path / button click overwrite this
+        // with their fresh result; absent any persisted snapshot, the pane
+        // stays hidden as before.
+        _rulesResult = await HydrateRulesResultAsync();
+    }
+
+    /// <summary>
+    /// Reconstitute the latest <see cref="RulesEvaluationResult"/> for the
+    /// current case by reading the per-authority snapshots persisted by
+    /// <c>CaseWorkflowService.EvaluateAuthorityRulesAsync</c>. Returns
+    /// <c>null</c> when no rules have ever been evaluated for the case
+    /// (so the rules pane stays hidden — same as before A1 landed).
+    /// </summary>
+    private async Task<RulesEvaluationResult?> HydrateRulesResultAsync()
+    {
+        var rows = await Db.RuleEvaluations.AsNoTracking()
+            .Where(r => r.CaseId == CaseId)
+            .OrderByDescending(r => r.EvaluatedAt)
+            .ToListAsync();
+        if (rows.Count == 0) return null;
+
+        var violations = new List<EvaluatedViolation>();
+        var mutations = new List<EvaluatedMutation>();
+        var errors = new List<string>();
+        foreach (var row in rows)
+        {
+            try
+            {
+                var vs = JsonSerializer.Deserialize<List<EvaluatedViolation>>(row.ViolationsJson);
+                if (vs is not null) violations.AddRange(vs);
+                var ms = JsonSerializer.Deserialize<List<EvaluatedMutation>>(row.MutationsJson);
+                if (ms is not null) mutations.AddRange(ms);
+                var es = JsonSerializer.Deserialize<List<string>>(row.ProviderErrorsJson);
+                if (es is not null) errors.AddRange(es);
+            }
+            catch (JsonException ex)
+            {
+                // A malformed snapshot row shouldn't take the page down —
+                // log + skip; the analyst can re-run rules to repair it.
+                Logger.LogWarning(ex,
+                    "Failed to deserialize RuleEvaluation {RowId} for case {CaseId}; skipping.",
+                    row.Id, CaseId);
+            }
+        }
+        return new RulesEvaluationResult(violations, mutations, errors);
     }
 
     private async Task SimulateScan()
