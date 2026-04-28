@@ -56,9 +56,29 @@ public sealed class CaseWorkflowService
 
     private async Task<(Guid? UserId, long TenantId)> CurrentActorAsync()
     {
-        var state = await _auth.GetAuthenticationStateAsync();
-        var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
-        Guid? id = Guid.TryParse(idClaim, out var g) ? g : null;
+        // Sprint E1 — `ServerAuthenticationStateProvider.GetAuthenticationStateAsync`
+        // throws InvalidOperationException ("Do not call ... outside of the
+        // DI scope for a Razor component") when invoked from a hosted-service
+        // scope (ScannerIngestionWorker), because there's no Blazor circuit
+        // backing it. Catch + treat as anonymous; the worker's IngestRawArtifactAsync
+        // explicitly opens cases with OpenedByUserId=null anyway, and the
+        // tenant id below comes from ITenantContext (which the worker sets
+        // before calling in). HTTP-driven Razor calls keep their normal
+        // behavior — the cascading auth state still resolves the principal
+        // for them.
+        Guid? id = null;
+        try
+        {
+            var state = await _auth.GetAuthenticationStateAsync();
+            var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+            if (Guid.TryParse(idClaim, out var g)) id = g;
+        }
+        catch (InvalidOperationException)
+        {
+            // Outside a Razor scope (worker / background job). The actor
+            // is anonymous; tenant comes from ITenantContext below.
+            id = null;
+        }
         // Phase F1 — fail loud instead of silently coercing to tenant 1. If
         // we get here without a resolved tenant, the request bypassed the
         // UseNickErpTenancy() middleware (e.g. an endpoint forgot to require
