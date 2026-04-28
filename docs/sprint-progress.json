@@ -23,17 +23,24 @@
         "id": "G1",
         "title": "Platform tightening before NickFinance",
         "phase": "Generalization",
-        "status": "in-progress",
+        "status": "done",
         "branch": "plan/g1-platform-tightening",
-        "commit": null,
+        "commit": "545a0f9",
         "agentId": "master-coordinator-sprint4",
         "dispatchedAt": "2026-04-26",
-        "completedAt": null,
-        "notes": "~2d. Six surgical fixes: decimal-as-string DomainEvent JSON, audit channel globs, ITenantContext.SetSystemContext, DomainEvent.TenantId nullable, plugin Module/Namespace partitioning, scope-claim regex. Item #3 is a hard-stop class — agent must surface to docs/master-decisions-needed.md before shipping."
+        "completedAt": "2026-04-26",
+        "notes": "Items #1, #2, #4, #5, #6 shipped. #3 (ITenantContext.SetSystemContext) escalated to user — see docs/master-decisions-needed.md for the four options + recommendation. Added 26 platform unit tests (DomainEvent decimal round-trip, audit channel routing, plugin module namespacing, scope regex). dotnet build 0 errors; dotnet test 48/48 pass (was 22)."
       }
     ]
   },
-  "decisionsNeeded": [],
+  "decisionsNeeded": [
+    {
+      "id": "G1-3",
+      "title": "ITenantContext.SetSystemContext mechanism",
+      "raisedAt": "2026-04-26",
+      "details": "G1 sub-item #3 held: Finance suite-wide system jobs need a sanctioned cross-tenant context. Four options laid out in docs/master-decisions-needed.md; master recommends option 2 (explicit IsSystem flag + sentinel '-1'). Couples to G1 #4 production NULL-tenant insert path. Blocks G2."
+    }
+  ],
   "history": [
     {
       "id": "Sprint 3",
