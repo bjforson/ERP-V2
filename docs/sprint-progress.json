@@ -1,0 +1,75 @@
+{
+  "$schema-version": "1.0",
+  "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
+  "currentSprint": {
+    "id": "Sprint 3",
+    "name": "Analyst Viewer",
+    "goal": "Land V4 — the W/L sliders / 16-bit decode / ROI inspector / pixel-probe viewer. The 80% of the analyst's day finally has a home.",
+    "startedAt": "2026-04-28",
+    "items": [
+      {
+        "id": "V4",
+        "title": "Analyst viewer Razor component",
+        "phase": "Viewer",
+        "status": "pending",
+        "branch": "plan/v4-analyst-viewer",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "3-5 day item. Likely splits into V4.a raw 16-bit endpoint, V4.b client-side decoder/W-L math, V4.c Razor page with controls."
+      }
+    ]
+  },
+  "history": [
+    {
+      "id": "Sprint 1",
+      "name": "Foundation + Demo",
+      "shippedAt": "2026-04-27",
+      "mainCommit": "b101c7b",
+      "itemCount": 9,
+      "items": [
+        { "id": "F1", "title": "RLS + tenant interceptor wiring", "commit": "90f0d67" },
+        { "id": "F2", "title": "Test foundation + first wave", "commit": "2dde6db" },
+        { "id": "F3", "title": "Plugin contract version pinning", "commit": "f941f71" },
+        { "id": "F4", "title": "TenantId on plugin configs", "commit": "aa9abb9" },
+        { "id": "F5(1+2)", "title": "Health + migrations + safe errors + AttemptCount + eviction", "commit": "91cb390" },
+        { "id": "D1", "title": "IngestArtifactAsync helper", "commit": "6b16c23" },
+        { "id": "D2", "title": "ScannerIngestionWorker", "commit": "749f273" },
+        { "id": "D3", "title": "Auto-fire authority rules", "commit": "3dee869" },
+        { "id": "D4", "title": "End-to-end demo smoke test", "commit": "b101c7b" }
+      ]
+    },
+    {
+      "id": "Sprint 2",
+      "name": "Production Hardening + Analyst Polish",
+      "shippedAt": "2026-04-28",
+      "mainCommit": "984263d",
+      "itemCount": 6,
+      "items": [
+        { "id": "H1", "title": "Worker tenant resolution", "commit": "0a40242" },
+        { "id": "H2", "title": "Identity-tenancy interlock", "commit": "03330fd" },
+        { "id": "H3", "title": "nscim_app cutover + per-context history", "commit": "8fe01ef" },
+        { "id": "A1", "title": "RuleEvaluation persistence", "commit": "7c489e1" },
+        { "id": "A2", "title": "Acceptance-bar instrumentation + /perf", "commit": "9bc66d9" },
+        { "id": "E1", "title": "Multi-location federation proof", "commit": "21a548b" }
+      ]
+    }
+  ],
+  "backlog": [
+    { "id": "G1", "title": "Platform tightening before NickFinance", "phase": "Generalization", "estimateDays": "2" },
+    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7" },
+    { "id": "P1", "title": "Standalone operations runbooks", "phase": "Production prep", "estimateDays": "1" },
+    { "id": "P2", "title": "Edge node — SQLite buffer + replay", "phase": "Production prep", "estimateDays": "5-7" },
+    { "id": "P3", "title": "Audit projection + notifications", "phase": "Production prep", "estimateDays": "2-3" }
+  ],
+  "followups": [
+    { "id": "FU-1", "title": "Audit history-table grants for fresh-install Migrate() under nscim_app", "from": "E1", "severity": "high (production-blocking on fresh deploys)" },
+    { "id": "FU-2", "title": "Cross-tenant /cases/{guid} should 404 instead of 200-with-empty-state", "from": "E1", "severity": "low (UX polish)" },
+    { "id": "FU-3", "title": "Source-blob cross-tenant SHA-256 collision (theoretical)", "from": "H1", "severity": "low (astronomical)" },
+    { "id": "FU-4", "title": "Stale __EFMigrationsHistory row 20260427164643_Add_ScanRenderArtifact", "from": "H3", "severity": "low (benign, one-line DELETE)" },
+    { "id": "FU-5", "title": "dotnet ef database update env-var passthrough quirk on Windows", "from": "H3", "severity": "medium (forces script-and-pipe workaround)" },
+    { "id": "FU-6", "title": "Drop public.__EFMigrationsHistory once prod has flipped", "from": "H3", "severity": "low (held for safety)" },
+    { "id": "FU-7", "title": "AuthorityDocument type collision between Core.Entities and ExternalSystems.Abstractions", "from": "A1", "severity": "low (annoying)" }
+  ]
+}

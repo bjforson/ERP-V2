@@ -44,6 +44,10 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddHttpClient(); // for Health page service probes
 
+// Sprint tracker — reads docs/sprint-progress.json (the canonical state file)
+// for the /sprint page. No DB write, no auth secret; safe singleton.
+builder.Services.AddSingleton<NickERP.Portal.Services.SprintProgressService>();
+
 // Blazor Server (interactive server-side rendering).
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();

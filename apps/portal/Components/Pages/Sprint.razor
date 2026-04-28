@@ -1,0 +1,182 @@
+@page "/sprint"
+@attribute [Authorize]
+@using NickERP.Portal.Services
+@inject SprintProgressService Progress
+@implements IDisposable
+
+<PageTitle>Sprint — NickERP Portal</PageTitle>
+
+@if (_doc is null)
+{
+    <p>Loading sprint progress…</p>
+}
+else if (_doc.CurrentSprint is null)
+{
+    <header class="portal-page-header">
+        <div>
+            <h1>Sprint tracker</h1>
+            <p class="portal-page-subtitle">No sprint currently active. History below.</p>
+        </div>
+    </header>
+    @RenderHistory()
+    @RenderBacklog()
+    @RenderFollowups()
+}
+else
+{
+    var s = _doc.CurrentSprint;
+    var done = s.Items.Count(i => string.Equals(i.Status, "done", StringComparison.OrdinalIgnoreCase));
+    var inprog = s.Items.Count(i => string.Equals(i.Status, "in-progress", StringComparison.OrdinalIgnoreCase));
+    var review = s.Items.Count(i => string.Equals(i.Status, "review", StringComparison.OrdinalIgnoreCase));
+    var pending = s.Items.Count(i => string.Equals(i.Status, "pending", StringComparison.OrdinalIgnoreCase));
+    var deferred = s.Items.Count(i => string.Equals(i.Status, "deferred", StringComparison.OrdinalIgnoreCase));
+    var total = s.Items.Count;
+    var pct = total == 0 ? 0 : (int)(done * 100.0 / total);
+
+    <header class="portal-page-header">
+        <div>
+            <h1>@s.Id — @s.Name</h1>
+            <p class="portal-page-subtitle">@s.Goal</p>
+            <p class="portal-page-subtitle"><small>Started @s.StartedAt · auto-refreshes every 15s</small></p>
+        </div>
+    </header>
+
+    <section class="portal-section">
+        <div class="sprint-progress">
+            <div class="sprint-progress-bar"><div class="sprint-progress-fill" style="width: @(pct)%"></div></div>
+            <div class="sprint-progress-summary">
+                <strong>@done / @total done</strong> · @inprog in progress · @review in review · @pending pending @(deferred > 0 ? $"· {deferred} deferred" : "")
+            </div>
+        </div>
+
+        <div class="sprint-board">
+            @RenderColumn("Pending", s.Items.Where(i => string.Equals(i.Status, "pending", StringComparison.OrdinalIgnoreCase)).ToList())
+            @RenderColumn("In progress", s.Items.Where(i => string.Equals(i.Status, "in-progress", StringComparison.OrdinalIgnoreCase)).ToList())
+            @RenderColumn("In review", s.Items.Where(i => string.Equals(i.Status, "review", StringComparison.OrdinalIgnoreCase)).ToList())
+            @RenderColumn("Done", s.Items.Where(i => string.Equals(i.Status, "done", StringComparison.OrdinalIgnoreCase)).ToList())
+        </div>
+    </section>
+
+    @RenderHistory()
+    @RenderBacklog()
+    @RenderFollowups()
+}
+
+@code {
+    private SprintProgressDocument? _doc;
+    private System.Threading.Timer? _timer;
+    private const int RefreshSeconds = 15;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Reload();
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await Reload();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(RefreshSeconds), TimeSpan.FromSeconds(RefreshSeconds));
+    }
+
+    private async Task Reload() => _doc = await Progress.LoadAsync();
+
+    public void Dispose() => _timer?.Dispose();
+
+    private RenderFragment RenderColumn(string title, List<WorkItem> items) =>
+        @<div class="sprint-column">
+            <h3 class="sprint-column-title">@title <span class="sprint-column-count">@items.Count</span></h3>
+            @if (items.Count == 0)
+            {
+                <p class="sprint-empty">—</p>
+            }
+            else
+            {
+                @foreach (var i in items)
+                {
+                    <div class="sprint-card">
+                        <div class="sprint-card-header">
+                            <code class="sprint-card-id">@i.Id</code>
+                            <span class="sprint-card-phase">@i.Phase</span>
+                        </div>
+                        <div class="sprint-card-title">@i.Title</div>
+                        @if (!string.IsNullOrEmpty(i.Branch))
+                        {
+                            <div class="sprint-card-meta">
+                                <code>@i.Branch</code>
+                                @if (!string.IsNullOrEmpty(i.Commit))
+                                {
+                                    <span> · </span><a href="https://github.com/bjforson/ERP-V2/commit/@i.Commit" target="_blank" rel="noopener"><code>@(i.Commit!.Length >= 7 ? i.Commit[..7] : i.Commit)</code></a>
+                                }
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(i.Notes))
+                        {
+                            <div class="sprint-card-notes">@i.Notes</div>
+                        }
+                    </div>
+                }
+            }
+        </div>;
+
+    private RenderFragment RenderHistory() =>
+        @<section class="portal-section">
+            <h2>History</h2>
+            @if (_doc!.History.Count == 0)
+            {
+                <p class="portal-empty">No prior sprints.</p>
+            }
+            else
+            {
+                <table class="portal-table">
+                    <thead><tr><th>Sprint</th><th>Name</th><th>Items</th><th>Shipped</th><th>Main commit</th></tr></thead>
+                    <tbody>
+                        @foreach (var h in _doc.History)
+                        {
+                            <tr>
+                                <td><strong>@h.Id</strong></td>
+                                <td>@h.Name</td>
+                                <td>@h.ItemCount</td>
+                                <td>@h.ShippedAt</td>
+                                <td><a href="https://github.com/bjforson/ERP-V2/commit/@h.MainCommit" target="_blank" rel="noopener"><code>@h.MainCommit</code></a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>;
+
+    private RenderFragment RenderBacklog() =>
+        @<section class="portal-section">
+            <h2>Backlog (future sprints)</h2>
+            @if (_doc!.Backlog.Count == 0) { <p class="portal-empty">Empty.</p> }
+            else
+            {
+                <table class="portal-table">
+                    <thead><tr><th>ID</th><th>Title</th><th>Phase</th><th>Estimate (days)</th></tr></thead>
+                    <tbody>
+                        @foreach (var b in _doc.Backlog)
+                        {
+                            <tr><td><code>@b.Id</code></td><td>@b.Title</td><td>@b.Phase</td><td>@b.EstimateDays</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>;
+
+    private RenderFragment RenderFollowups() =>
+        @<section class="portal-section">
+            <h2>Followups discovered during prior sprints</h2>
+            @if (_doc!.Followups.Count == 0) { <p class="portal-empty">None logged.</p> }
+            else
+            {
+                <table class="portal-table">
+                    <thead><tr><th>ID</th><th>Title</th><th>From</th><th>Severity</th></tr></thead>
+                    <tbody>
+                        @foreach (var f in _doc.Followups)
+                        {
+                            <tr><td><code>@f.Id</code></td><td>@f.Title</td><td><code>@f.From</code></td><td>@f.Severity</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>;
+}
