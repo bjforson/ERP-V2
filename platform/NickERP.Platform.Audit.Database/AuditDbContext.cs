@@ -86,7 +86,13 @@ public sealed class AuditDbContextFactory : Microsoft.EntityFrameworkCore.Design
             ?? "Host=localhost;Port=5432;Database=nickerp_platform;Username=postgres;Password=designtime";
 
         var options = new DbContextOptionsBuilder<AuditDbContext>()
-            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AuditDbContext).Assembly.GetName().Name))
+            .UseNpgsql(connectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly(typeof(AuditDbContext).Assembly.GetName().Name);
+                // H3 — keep EF Core's history table inside the audit
+                // schema so nscim_app never needs CREATE on `public`.
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "audit");
+            })
             .Options;
 
         return new AuditDbContext(options);

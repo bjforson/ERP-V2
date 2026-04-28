@@ -31,36 +31,47 @@ internal static class TestSchemaApplier
         CancellationToken ct = default)
     {
         // Identity, Audit, Tenancy share the platform DB.
+        // H3 — each context's __EFMigrationsHistory lives in its own
+        // schema (see DbContext config); pass the same schema here so the
+        // standalone migrate sees the relocated history tables.
         await ApplyAsync<IdentityDbContext>(
             platformConnectionString,
             opts => new IdentityDbContext(opts),
+            historySchema: "identity",
             ct);
 
         await ApplyAsync<AuditDbContext>(
             platformConnectionString,
             opts => new AuditDbContext(opts),
+            historySchema: "audit",
             ct);
 
         await ApplyAsync<TenancyDbContext>(
             platformConnectionString,
             opts => new TenancyDbContext(opts),
+            historySchema: "tenancy",
             ct);
 
         await ApplyAsync<InspectionDbContext>(
             inspectionConnectionString,
             opts => new InspectionDbContext(opts),
+            historySchema: "inspection",
             ct);
     }
 
     private static async Task ApplyAsync<TContext>(
         string connectionString,
         Func<DbContextOptions<TContext>, TContext> factory,
+        string historySchema,
         CancellationToken ct)
         where TContext : DbContext
     {
         var optsBuilder = new DbContextOptionsBuilder<TContext>()
             .UseNpgsql(connectionString, npgsql =>
-                npgsql.MigrationsAssembly(typeof(TContext).Assembly.GetName().Name));
+            {
+                npgsql.MigrationsAssembly(typeof(TContext).Assembly.GetName().Name);
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", historySchema);
+            });
         await using var db = factory(optsBuilder.Options);
         await db.Database.MigrateAsync(ct);
     }

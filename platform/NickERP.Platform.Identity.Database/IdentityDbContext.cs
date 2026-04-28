@@ -137,7 +137,13 @@ public sealed class IdentityDbContextFactory : Microsoft.EntityFrameworkCore.Des
             ?? "Host=localhost;Port=5432;Database=nickerp_platform;Username=postgres;Password=designtime";
 
         var options = new DbContextOptionsBuilder<IdentityDbContext>()
-            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(IdentityDbContext).Assembly.GetName().Name))
+            .UseNpgsql(connectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly(typeof(IdentityDbContext).Assembly.GetName().Name);
+                // H3 — keep EF Core's history table inside the identity
+                // schema so nscim_app never needs CREATE on `public`.
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "identity");
+            })
             .Options;
 
         return new IdentityDbContext(options);

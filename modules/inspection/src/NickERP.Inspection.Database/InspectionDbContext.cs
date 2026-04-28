@@ -419,7 +419,13 @@ public sealed class InspectionDbContextFactory : Microsoft.EntityFrameworkCore.D
             ?? "Host=localhost;Port=5432;Database=nickerp_inspection;Username=postgres;Password=designtime";
 
         var options = new DbContextOptionsBuilder<InspectionDbContext>()
-            .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(InspectionDbContext).Assembly.GetName().Name))
+            .UseNpgsql(connectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly(typeof(InspectionDbContext).Assembly.GetName().Name);
+                // H3 — keep EF Core's history table inside the inspection
+                // schema so nscim_app never needs CREATE on `public`.
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "inspection");
+            })
             .Options;
 
         return new InspectionDbContext(options);
