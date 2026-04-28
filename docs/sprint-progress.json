@@ -11,13 +11,13 @@
         "id": "FU-1",
         "title": "Audit __EFMigrationsHistory grants for fresh-install Migrate()",
         "phase": "Followup",
-        "status": "in-progress",
+        "status": "done",
         "branch": "plan/fu1-audit-history-grants",
-        "commit": null,
+        "commit": "5854c81",
         "agentId": "master-coordinator-sprint4",
         "dispatchedAt": "2026-04-26",
-        "completedAt": null,
-        "notes": "~15 min. New EF migration grants UPDATE+DELETE on audit.__EFMigrationsHistory ONLY (audit.events stays append-only). Surfaced by E1."
+        "completedAt": "2026-04-26",
+        "notes": "Shipped. Fix migration 20260428140000 grants nscim_app UPDATE+DELETE on audit.__EFMigrationsHistory only; audit.events append-only invariant intact (verified). dotnet build 0 errors; dotnet test 22/22 pass."
       },
       {
         "id": "G1",
