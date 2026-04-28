@@ -1,7 +1,14 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": null,
+  "currentSprint": {
+    "id": "Sprint 5",
+    "name": "System Context Mechanism (G1-3)",
+    "startedAt": "2026-04-28",
+    "items": [
+      { "id": "G1-3", "title": "ITenantContext.SetSystemContext + audit.events RLS opt-in", "branch": "plan/g1-3-system-context", "status": "pending" }
+    ]
+  },
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
