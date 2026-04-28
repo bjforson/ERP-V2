@@ -138,8 +138,21 @@ could be large; defaults are page 1, page size 25, max page size 200.
 | Verb | Path | Body | Returns |
 |---|---|---|---|
 | `GET` | `/scopes` | — | `AppScopeDto[]` (filters: `tenantId`, `app`) |
-| `POST` | `/scopes` | `CreateAppScopeRequest` (code regex-validated to PascalCase + dots) | `201 AppScopeDto`, or `409` |
+| `POST` | `/scopes` | `CreateAppScopeRequest` (code regex-validated, see below) | `201 AppScopeDto`, or `409` |
 | `DELETE` | `/scopes/{id}` | — | `204` (sets `IsActive=false`; existing UserScope grants survive but resolver excludes them) |
+
+#### Scope code naming (G1 #6 — hard rule)
+
+Every `AppScope.Code` MUST match the regex `^[A-Z][A-Za-z]+(\.[A-Z][A-Za-z]+)+$`:
+
+- At least two dot-separated segments.
+- Each segment starts with an uppercase letter, then 1+ letters (no digits, no underscores, no dashes).
+- The first segment is the **app prefix** — `Identity`, `Inspection`, `Finance`, etc. — and acts as the namespace. Two apps cannot reuse a leaf without colliding (e.g. `Identity.Admin` and `Finance.Admin` are two different scopes).
+
+Valid: `Identity.Admin`, `Inspection.CaseReviewer`, `Finance.PettyCash.Approver`, `Finance.Reports.Read`.
+Rejected at `POST /scopes`: `admin` (single segment), `admin.foo` (lowercase), `Finance.123Approver` (digits), `Finance.Petty_Cash` (underscore), `Finance.A.B` (single-letter segment).
+
+The validator runs at the API boundary; existing rows from before G1 are not retroactively re-validated, but the dev seeder + tests use compliant names.
 
 ### Service tokens
 

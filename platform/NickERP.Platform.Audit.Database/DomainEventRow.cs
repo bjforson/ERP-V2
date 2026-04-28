@@ -11,7 +11,13 @@ namespace NickERP.Platform.Audit.Database;
 public sealed class DomainEventRow
 {
     public Guid EventId { get; set; }
-    public long TenantId { get; set; }
+    /// <summary>
+    /// Owning tenant. Nullable so the audit log can carry events that are
+    /// not scoped to a single tenant (suite-wide FX rates, global chart of
+    /// accounts updates). Module code that emits per-tenant events always
+    /// supplies a concrete value.
+    /// </summary>
+    public long? TenantId { get; set; }
     public Guid? ActorUserId { get; set; }
     public string? CorrelationId { get; set; }
     public string EventType { get; set; } = string.Empty;

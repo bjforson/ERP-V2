@@ -23,6 +23,14 @@ public sealed record PluginManifest(
     JsonElement? ConfigSchema)
 {
     /// <summary>
+    /// Owning module — namespaces the <see cref="TypeCode"/>. Must match
+    /// the <see cref="PluginAttribute.Module"/> on the concrete class.
+    /// Required (non-empty); the loader rejects manifests without it.
+    /// </summary>
+    [JsonPropertyName("module")]
+    public string Module { get; init; } = string.Empty;
+
+    /// <summary>
     /// Minimum host Abstractions assembly contract version required by this
     /// plugin. Format: <c>"major.minor"</c> (e.g. <c>"1.0"</c>). Required for
     /// any plugin that depends on a non-1.0 contract; left null (or omitted)
@@ -60,6 +68,9 @@ public sealed record PluginManifest(
         if (string.IsNullOrWhiteSpace(manifest.TypeCode)) throw new InvalidDataException($"{path}: TypeCode is required.");
         if (string.IsNullOrWhiteSpace(manifest.DisplayName)) throw new InvalidDataException($"{path}: DisplayName is required.");
         if (string.IsNullOrWhiteSpace(manifest.Version)) throw new InvalidDataException($"{path}: Version is required.");
+        // G1 #5 — Module namespacing. Required so two modules can ship
+        // plugins with the same TypeCode without colliding.
+        if (string.IsNullOrWhiteSpace(manifest.Module)) throw new InvalidDataException($"{path}: module is required (e.g. \"inspection\", \"finance\").");
 
         return manifest;
     }

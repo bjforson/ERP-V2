@@ -228,7 +228,7 @@ public sealed class ScannerIngestionWorker : BackgroundService
                 IScannerAdapter adapter;
                 try
                 {
-                    adapter = plugins.Resolve<IScannerAdapter>(instance.TypeCode, scope.ServiceProvider);
+                    adapter = plugins.Resolve<IScannerAdapter>("inspection", instance.TypeCode, scope.ServiceProvider);
                 }
                 catch (Exception ex)
                 {

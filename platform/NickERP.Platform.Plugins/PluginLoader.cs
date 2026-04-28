@@ -38,7 +38,9 @@ public sealed class PluginLoader
         }
 
         var found = new List<RegisteredPlugin>();
-        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // G1 #5 — keys are (module, typeCode), so two modules can ship the
+        // same typeCode. Lower-cased for case-insensitive uniqueness.
+        var seenKeys = new HashSet<(string Module, string TypeCode)>();
 
         foreach (var dllPath in Directory.EnumerateFiles(pluginsDirectory, "*.dll", SearchOption.TopDirectoryOnly))
         {
@@ -66,9 +68,14 @@ public sealed class PluginLoader
                 continue;
             }
 
-            if (!seenCodes.Add(manifest.TypeCode))
+            var dedupKey = (
+                Module: (manifest.Module ?? string.Empty).ToLowerInvariant(),
+                TypeCode: manifest.TypeCode.ToLowerInvariant());
+            if (!seenKeys.Add(dedupKey))
             {
-                _logger.LogError("Duplicate plugin TypeCode '{TypeCode}' (manifest {Path}); skipping. The first registration wins.", manifest.TypeCode, manifestPath);
+                _logger.LogError(
+                    "Duplicate plugin (Module='{Module}', TypeCode='{TypeCode}') (manifest {Path}); skipping. The first registration wins.",
+                    manifest.Module, manifest.TypeCode, manifestPath);
                 continue;
             }
 
@@ -83,12 +90,12 @@ public sealed class PluginLoader
                 continue;
             }
 
-            var match = ExtractPluginType(asm, manifest.TypeCode);
+            var match = ExtractPluginType(asm, manifest.TypeCode, manifest.Module ?? string.Empty);
             if (match is null)
             {
                 _logger.LogError(
-                    "Plugin manifest {Path} declares TypeCode '{TypeCode}' but no [Plugin(\"{TypeCode}\")]-decorated class was found in {Assembly}.",
-                    manifestPath, manifest.TypeCode, manifest.TypeCode, asm.FullName ?? dllPath);
+                    "Plugin manifest {Path} declares (Module='{Module}', TypeCode='{TypeCode}') but no matching [Plugin(...)]-decorated class was found in {Assembly}.",
+                    manifestPath, manifest.Module, manifest.TypeCode, asm.FullName ?? dllPath);
                 continue;
             }
 
@@ -98,10 +105,10 @@ public sealed class PluginLoader
             }
 
             var contracts = match.GetInterfaces();
-            found.Add(new RegisteredPlugin(manifest.TypeCode, match, contracts, manifest));
+            found.Add(new RegisteredPlugin(manifest.Module ?? string.Empty, manifest.TypeCode, match, contracts, manifest));
             _logger.LogInformation(
-                "Loaded plugin {TypeCode} ({DisplayName}, v{Version}) from {Dll}; implements {ContractCount} contract(s).",
-                manifest.TypeCode, manifest.DisplayName, manifest.Version, dllPath, contracts.Length);
+                "Loaded plugin ({Module}, {TypeCode}) ({DisplayName}, v{Version}) from {Dll}; implements {ContractCount} contract(s).",
+                manifest.Module, manifest.TypeCode, manifest.DisplayName, manifest.Version, dllPath, contracts.Length);
         }
 
         return found;
@@ -224,15 +231,25 @@ public sealed class PluginLoader
         ArgumentNullException.ThrowIfNull(manifestsByTypeCode);
 
         var found = new List<RegisteredPlugin>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<(string Module, string TypeCode)>();
 
         foreach (var asm in assemblies)
         {
             foreach (var (type, attr) in EnumeratePluginTypes(asm))
             {
-                if (!seen.Add(attr.TypeCode))
+                if (string.IsNullOrWhiteSpace(attr.Module))
                 {
-                    _logger.LogError("Duplicate plugin TypeCode '{TypeCode}' across assemblies; skipping subsequent registrations.", attr.TypeCode);
+                    _logger.LogError(
+                        "[Plugin(\"{TypeCode}\")] type {Type} has no Module set; required by G1 #5. Skipping.",
+                        attr.TypeCode, type.FullName);
+                    continue;
+                }
+                var key = (attr.Module.ToLowerInvariant(), attr.TypeCode.ToLowerInvariant());
+                if (!seen.Add(key))
+                {
+                    _logger.LogError(
+                        "Duplicate plugin (Module='{Module}', TypeCode='{TypeCode}') across assemblies; skipping subsequent registrations.",
+                        attr.Module, attr.TypeCode);
                     continue;
                 }
                 if (!manifestsByTypeCode.TryGetValue(attr.TypeCode, out var manifest))
@@ -240,23 +257,31 @@ public sealed class PluginLoader
                     _logger.LogError("[Plugin(\"{TypeCode}\")] type {Type} has no matching manifest entry; skipping.", attr.TypeCode, type.FullName);
                     continue;
                 }
+                if (!string.Equals(manifest.Module, attr.Module, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError(
+                        "[Plugin(\"{TypeCode}\", Module=\"{AttrModule}\")] disagrees with manifest module '{ManifestModule}' for type {Type}; skipping.",
+                        attr.TypeCode, attr.Module, manifest.Module, type.FullName);
+                    continue;
+                }
                 if (!CheckContractVersions(manifest))
                 {
                     continue;
                 }
                 var contracts = type.GetInterfaces();
-                found.Add(new RegisteredPlugin(attr.TypeCode, type, contracts, manifest));
+                found.Add(new RegisteredPlugin(attr.Module, attr.TypeCode, type, contracts, manifest));
             }
         }
 
         return found;
     }
 
-    private static Type? ExtractPluginType(Assembly asm, string typeCode)
+    private static Type? ExtractPluginType(Assembly asm, string typeCode, string module)
     {
         foreach (var (type, attr) in EnumeratePluginTypes(asm))
         {
-            if (string.Equals(attr.TypeCode, typeCode, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(attr.TypeCode, typeCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(attr.Module, module, StringComparison.OrdinalIgnoreCase))
             {
                 return type;
             }

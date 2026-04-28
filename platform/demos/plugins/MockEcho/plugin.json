@@ -1,4 +1,5 @@
 {
+  "module": "demos",
   "typeCode": "mock-echo",
   "displayName": "Mock Echo Plugin",
   "version": "0.1.0",

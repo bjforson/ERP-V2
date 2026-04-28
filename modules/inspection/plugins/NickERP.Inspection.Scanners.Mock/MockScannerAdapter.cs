@@ -12,7 +12,7 @@ namespace NickERP.Inspection.Scanners.Mock;
 /// <c>EmitIntervalSeconds</c> (from instance config; default 30) until
 /// the cancellation token fires.
 /// </summary>
-[Plugin("mock-scanner")]
+[Plugin("mock-scanner", Module = "inspection")]
 public sealed class MockScannerAdapter : IScannerAdapter
 {
     public string TypeCode => "mock-scanner";

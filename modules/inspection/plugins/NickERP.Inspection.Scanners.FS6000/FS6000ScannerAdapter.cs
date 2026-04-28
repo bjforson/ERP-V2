@@ -32,7 +32,7 @@ namespace NickERP.Inspection.Scanners.FS6000;
 /// (via <c>Scan.IdempotencyKey</c>); this just stops a polling loop from
 /// re-emitting the same scan every cycle.
 /// </summary>
-[Plugin("fs6000")]
+[Plugin("fs6000", Module = "inspection")]
 public sealed class FS6000ScannerAdapter : IScannerAdapter
 {
     private const string HighSuffix = "high.img";

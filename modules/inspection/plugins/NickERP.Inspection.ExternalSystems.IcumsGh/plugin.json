@@ -1,4 +1,5 @@
 {
+  "module": "inspection",
   "typeCode": "icums-gh",
   "displayName": "ICUMS (Ghana Customs)",
   "version": "0.1.0",

@@ -9,7 +9,7 @@ namespace NickERP.Platform.Audit.Events;
 /// Postgres LISTEN/NOTIFY bus to in-process subscribers.
 /// </summary>
 /// <param name="EventId">Server-assigned unique id (Guid). Set by the persistence layer on insert; <see cref="Guid.Empty"/> on construction.</param>
-/// <param name="TenantId">The tenant the event belongs to.</param>
+/// <param name="TenantId">The tenant the event belongs to. <see langword="null"/> for events that are not owned by a single tenant — e.g. suite-wide FX-rate publications, GL chart-of-accounts changes that apply to every tenant. Module code that emits per-tenant events should always pass a concrete tenant id; the nullable case is reserved for genuinely cross-tenant system events.</param>
 /// <param name="ActorUserId">Who caused the event — a canonical <see cref="Guid"/> from the Identity layer (user or service-token id). Nullable for system-emitted events.</param>
 /// <param name="CorrelationId">Cross-service request correlation. Should match the structured-log <c>CorrelationId</c> for the same request.</param>
 /// <param name="EventType">Stable dotted code (e.g. <c>nickerp.identity.user_created</c>, <c>nickerp.inspection.case_reviewed</c>). Lowercase, dot-segmented, kept stable for the life of consumers.</param>
@@ -22,7 +22,7 @@ namespace NickERP.Platform.Audit.Events;
 /// <param name="PrevEventHash">Optional tamper-evident chain — sha256 of the previous event for the same <paramref name="EntityId"/>. Reserved for compliance-grade audit; populated by the persistence layer when enabled.</param>
 public sealed record DomainEvent(
     Guid EventId,
-    long TenantId,
+    long? TenantId,
     Guid? ActorUserId,
     string? CorrelationId,
     string EventType,
@@ -35,8 +35,9 @@ public sealed record DomainEvent(
     string? PrevEventHash)
 {
     /// <summary>Convenience factory for emitting a new event from application code. EventId is left empty; the persistence layer fills it on insert.</summary>
+    /// <remarks>Pass <see langword="null"/> for <paramref name="tenantId"/> only for genuinely cross-tenant system events (FX rates, suite-wide config). Module code emitting normal per-tenant events should always pass a concrete tenant id.</remarks>
     public static DomainEvent Create(
-        long tenantId,
+        long? tenantId,
         Guid? actorUserId,
         string? correlationId,
         string eventType,

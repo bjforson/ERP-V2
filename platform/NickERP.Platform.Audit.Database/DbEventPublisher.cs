@@ -41,10 +41,16 @@ internal sealed class DbEventPublisher : IEventPublisher
     {
         ArgumentNullException.ThrowIfNull(evt);
 
-        // Idempotency dedup inside the same tenant.
-        var existing = await _db.Events
-            .AsNoTracking()
-            .FirstOrDefaultAsync(r => r.TenantId == evt.TenantId && r.IdempotencyKey == evt.IdempotencyKey, ct);
+        // Idempotency dedup inside the same tenant. NULL-tenant
+        // (system) events dedupe in their own bucket via
+        // (TenantId IS NULL, IdempotencyKey).
+        var existing = evt.TenantId is null
+            ? await _db.Events
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.TenantId == null && r.IdempotencyKey == evt.IdempotencyKey, ct)
+            : await _db.Events
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.TenantId == evt.TenantId && r.IdempotencyKey == evt.IdempotencyKey, ct);
         if (existing is not null)
         {
             _logger.LogDebug(
@@ -79,9 +85,13 @@ internal sealed class DbEventPublisher : IEventPublisher
             // Race — concurrent insert with the same idempotency key won. Fetch the winner.
             _logger.LogDebug(ex, "Idempotency race for tenant {Tenant}, key {Key}; fetching winner", evt.TenantId, evt.IdempotencyKey);
             _db.Entry(row).State = EntityState.Detached;
-            var winner = await _db.Events
-                .AsNoTracking()
-                .FirstOrDefaultAsync(r => r.TenantId == evt.TenantId && r.IdempotencyKey == evt.IdempotencyKey, ct);
+            var winner = evt.TenantId is null
+                ? await _db.Events
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.TenantId == null && r.IdempotencyKey == evt.IdempotencyKey, ct)
+                : await _db.Events
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.TenantId == evt.TenantId && r.IdempotencyKey == evt.IdempotencyKey, ct);
             if (winner is null) throw;
             return ToDomain(winner);
         }
@@ -113,11 +123,24 @@ internal sealed class DbEventPublisher : IEventPublisher
         return output;
     }
 
-    /// <summary>Channel name = the dotted-namespace prefix of the event type. Subscribers can register against the prefix.</summary>
-    private static string ChannelFor(string eventType)
+    /// <summary>
+    /// Channel name = the <em>module</em> segment of the event type
+    /// (e.g. <c>nickerp.finance.transaction_recorded</c> →
+    /// <c>nickerp.finance</c>; <c>nickerp.inspection.case_opened</c> →
+    /// <c>nickerp.inspection</c>). G1 — earlier the channel was the
+    /// first segment only (always <c>nickerp</c>), so every subscriber
+    /// got every module's events and had to filter in-process.
+    /// Subscribers register against the two-segment prefix; events that
+    /// don't have a module (single-segment <c>"foo"</c>) keep the bare
+    /// segment as their channel.
+    /// </summary>
+    internal static string ChannelFor(string eventType)
     {
+        if (string.IsNullOrEmpty(eventType)) return eventType;
         var firstDot = eventType.IndexOf('.', StringComparison.Ordinal);
-        return firstDot < 0 ? eventType : eventType[..firstDot];
+        if (firstDot < 0) return eventType;
+        var secondDot = eventType.IndexOf('.', firstDot + 1);
+        return secondDot < 0 ? eventType : eventType[..secondDot];
     }
 
     private static bool IsUniqueViolation(DbUpdateException ex)

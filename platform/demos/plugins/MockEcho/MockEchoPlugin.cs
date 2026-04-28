@@ -5,7 +5,7 @@ namespace NickERP.Platform.Plugins.Demos.MockEcho;
 /// match the manifest's <c>plugin.json:typeCode</c>; the loader rejects
 /// mismatches.
 /// </summary>
-[Plugin("mock-echo")]
+[Plugin("mock-echo", Module = "demos")]
 public sealed class MockEchoPlugin : IEchoPlugin
 {
     public string TypeCode => "mock-echo";
