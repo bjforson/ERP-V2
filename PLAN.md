@@ -2132,3 +2132,7 @@ Two phases, both on the same branch:
 After Sprint 8, the rolling-master drainable backlog is **empty**. Remaining
 gated items (G2, P2, image-analysis track) are user-driven and need
 explicit unblocking calls.
+
+## 20. Product Calls 2026-04-29
+
+Deferred to docs/product-calls-2026-04-29.md, which captures the post-Sprint-8 drain answers covering G2 (NickFinance Petty Cash domain shape, all six calls), P2 (edge-node conflict resolution), the four-followup priority queue, the image-analysis track being explicitly user-driven, and the deploy target call. With these answers G2 and P2 are unblocked and the rolling-master drainable backlog refills as documented in that file.

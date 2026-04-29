@@ -2,7 +2,7 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Rolling-master drainable backlog is EMPTY as of 2026-04-29. Sprints 5–8 all shipped. Remaining items (G2 NickFinance, P2 edge node, image-analysis track) are gated on user input and require explicit unblocking.",
+  "currentSprintNote": "Awaiting next master spawn. Drainable backlog refilled 2026-04-29 after the post-Sprint-8 product-call drain (see docs/product-calls-2026-04-29.md). G2 and P2 are now unblocked with binding specs. Image-analysis track stays explicitly user-driven.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -15,14 +15,11 @@
     }
   ],
   "rollingMasterScope": {
-    "drainable": [],
-    "drainableNote": "Empty as of 2026-04-29 (Sprints 5–8 shipped end-to-end).",
-    "gated": [
-      { "id": "G2", "reason": "domain shape — Petty Cash voucher / custodian / ledger / approval / currency. User delivers ~6 product calls before it ships." },
-      { "id": "P2", "reason": "edge-node conflict-resolution semantics likely needs a design call mid-sprint; rolling master may halt on it." }
-    ],
+    "drainable": ["FU-deploy", "FU-userid", "FU-host-status", "FU-icums-signing", "G2", "P2"],
+    "drainableNote": "Refilled 2026-04-29 after the product-call drain. Execution priority is the array order: four followups first (sequential per user call), then G2 NickFinance Petty Cash pathfinder, then P2 edge node. Specs in docs/product-calls-2026-04-29.md.",
+    "gated": [],
     "outOfScope": [
-      { "id": "image-analysis-track", "reason": "Owns its own master spawn. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source. User has parallel work in progress (Inference.Abstractions, Inference.Mock, Inference.OnnxRuntime, tools/v1-label-export/) — not touched by rolling master." }
+      { "id": "image-analysis-track", "reason": "User-driven; spawns its own master run when ready. Heads-up: untracked IInboundOutcomeAdapter.cs may reference the old AuthorityDocument DTO name — rename to AuthorityDocumentDto (FU-7) when resuming. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source." }
     ]
   },
   "history": [
@@ -127,8 +124,12 @@
     }
   ],
   "backlog": [
-    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "blockedBy": "domain shape — user delivers ~6 product calls before it ships" },
-    { "id": "P2", "title": "Edge node — SQLite buffer + replay", "phase": "Production prep", "estimateDays": "5-7", "blockedBy": "edge-node conflict-resolution semantics design call" }
+    { "id": "FU-deploy", "title": "Deploy.ps1 (or successor) for ERP V2 prod", "phase": "Production prep", "estimateDays": "0.5-1", "spec": "docs/product-calls-2026-04-29.md §3.1", "deployTarget": "Same Windows host as v1, new NSSM services on :5410/:5400 + reserved ranges :5420/:5430" },
+    { "id": "FU-userid", "title": "app.user_id session setting + RLS user-isolation promotion", "phase": "Production prep", "estimateDays": "1-1.5", "spec": "docs/product-calls-2026-04-29.md §3.2" },
+    { "id": "FU-host-status", "title": "BackgroundService liveness endpoint /healthz/workers", "phase": "Production prep", "estimateDays": "0.5", "spec": "docs/product-calls-2026-04-29.md §3.3" },
+    { "id": "FU-icums-signing", "title": "IcumsGh envelope signing + key rotation", "phase": "Production prep", "estimateDays": "1", "spec": "docs/product-calls-2026-04-29.md §3.4" },
+    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "spec": "docs/product-calls-2026-04-29.md §1 (all six calls captured; binding)" },
+    { "id": "P2", "title": "Edge node — SQLite buffer + replay (server-authoritative)", "phase": "Production prep", "estimateDays": "5-7", "spec": "docs/product-calls-2026-04-29.md §2 (binding)" }
   ],
   "followups": [
     { "id": "P1-FU-deploy-script", "title": "Author Deploy.ps1 (or successor) for ERP V2 prod", "from": "P1 / Sprint 7", "severity": "medium (operational gap; runbook 01 is the de-facto spec)" },
