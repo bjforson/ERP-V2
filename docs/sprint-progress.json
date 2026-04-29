@@ -2,26 +2,26 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": {
-    "id": "Sprint 10",
-    "name": "G2 — NickFinance Petty Cash pathfinder",
-    "goal": "First NickFinance module pathfinder: Petty Cash. Money primitive, voucher state machine, ledger event projection, period locks, FX. Binding spec in docs/product-calls-2026-04-29.md §1.",
+    "id": "Sprint 11",
+    "name": "P2 — Edge node SQLite buffer + replay (server-authoritative)",
+    "goal": "Last drainable item. Edge nodes buffer events offline in SQLite and replay to server on reconnect as fresh appends. Server-authoritative; nothing in core schema is mutable from edge side. Binding spec in docs/product-calls-2026-04-29.md §2.",
     "startedAt": "2026-04-29",
     "items": [
       {
-        "id": "G2",
-        "title": "NickFinance Petty Cash pathfinder (single-agent, ~5–7 days)",
-        "phase": "Generalization",
+        "id": "P2",
+        "title": "Edge node SQLite buffer + replay (single-agent, ~5–7 days)",
+        "phase": "Production prep",
         "status": "in-progress",
-        "branch": "plan/g2-nickfinance-pathfinder",
+        "branch": "plan/p2-edge-node-buffer",
         "commit": null,
         "agentId": "dispatched 2026-04-29",
         "dispatchedAt": "2026-04-29",
         "completedAt": null,
-        "notes": "Money value object, per-box currency, Request→Approve→Disburse→Reconcile, per-box approver, single-entry append-only ledger, soft period locks, FX snapshot on every event, daily-manual FX publish (suite-wide). Binding spec: docs/product-calls-2026-04-29.md §1."
+        "notes": "edge_outbox SQLite table; per-edge FIFO replay; edge_timestamp preserved as canonical posted_at; reads only of cached reference data; no edge mutations or deletes. Binding spec: docs/product-calls-2026-04-29.md §2."
       }
     ]
   },
-  "currentSprintNote": "Sprint 10 — G2 NickFinance Petty Cash pathfinder. Sprint 9 (Followup-2 sweep) shipped end-to-end at 4c05b5d.",
+  "currentSprintNote": "Sprint 11 — P2 edge node, the last drainable in the post-Sprint-8 product-call queue. After this lands the rolling-master backlog is empty.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -34,8 +34,8 @@
     }
   ],
   "rollingMasterScope": {
-    "drainable": ["P2"],
-    "drainableNote": "Sprint 10 (G2) is in-flight as currentSprint. After G2 lands, P2 (edge node SQLite buffer + replay) is the last drainable. Specs in docs/product-calls-2026-04-29.md.",
+    "drainable": [],
+    "drainableNote": "Sprint 11 (P2 edge node) is the last in-flight sprint. After it lands the drainable backlog is empty for the second time in this run.",
     "gated": [],
     "outOfScope": [
       { "id": "image-analysis-track", "reason": "User-driven; spawns its own master run when ready. Heads-up: untracked IInboundOutcomeAdapter.cs may reference the old AuthorityDocument DTO name — rename to AuthorityDocumentDto (FU-7) when resuming. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source. Stash@{0} preserved with parallel inference DbSet edits to InspectionDbContext.cs + Modelsnapshot.cs (conflict resolution from FU-icums-signing took main; user reconciles when resuming)." }
@@ -43,16 +43,26 @@
   },
   "history": [
     {
+      "id": "Sprint 10",
+      "name": "G2 — NickFinance Petty Cash pathfinder",
+      "shippedAt": "2026-04-29",
+      "mainCommit": "3421b7b",
+      "itemCount": 1,
+      "items": [
+        { "id": "G2", "title": "NickFinance Petty Cash full vertical slice (Core/Database/Web + 3 audit notification rules + portal wiring + 94 new tests; 185 total)", "commit": "b59e86e" }
+      ]
+    },
+    {
       "id": "Sprint 9",
       "name": "Followup-2 Sweep (sequential)",
       "shippedAt": "2026-04-29",
       "mainCommit": "4c05b5d",
       "itemCount": 4,
       "items": [
-        { "id": "FU-deploy", "title": "Deploy.ps1 for ERP V2 same-Windows-host target (408 lines, 6-phase, PS 5.1+7 compatible)", "commit": "7f9ec49" },
-        { "id": "FU-userid", "title": "app.user_id session setting + audit.notifications RLS user-isolation (TenantConnectionInterceptor + IUserContext + UserResolutionMiddleware)", "commit": "7bd62ae" },
-        { "id": "FU-host-status", "title": "/healthz/workers endpoint + IBackgroundServiceProbe + 4 worker probe impls", "commit": "7b5f0a8" },
-        { "id": "FU-icums-signing", "title": "HMAC-SHA256 envelope signing + per-tenant key rotation behind IcumsGh:Sign flag", "commit": "b6b04e8" }
+        { "id": "FU-deploy", "title": "Deploy.ps1 for ERP V2 same-Windows-host target", "commit": "7f9ec49" },
+        { "id": "FU-userid", "title": "app.user_id session setting + audit.notifications RLS user-isolation", "commit": "7bd62ae" },
+        { "id": "FU-host-status", "title": "/healthz/workers endpoint + IBackgroundServiceProbe", "commit": "7b5f0a8" },
+        { "id": "FU-icums-signing", "title": "HMAC-SHA256 envelope signing + per-tenant key rotation", "commit": "b6b04e8" }
       ]
     },
     {
@@ -62,7 +72,7 @@
       "mainCommit": "f9a595d",
       "itemCount": 1,
       "items": [
-        { "id": "P3", "title": "audit.notifications projection (table + RLS + projector + 3 rules) + inbox UI (bell + page + 3 endpoints) + 9 new tests (60 total)", "commit": "7549c6e" }
+        { "id": "P3", "title": "audit.notifications projection + inbox UI + 9 new tests", "commit": "7549c6e" }
       ]
     },
     {
@@ -72,7 +82,7 @@
       "mainCommit": "f0e5afc",
       "itemCount": 1,
       "items": [
-        { "id": "P1", "title": "Operations runbooks: README + 01-deploy + 02-secret-rotation + 03-prerender-stalled + 04-plugin-load-failure + 05-icums-outbox-backlog (~2200 lines)", "commit": "15e2488" }
+        { "id": "P1", "title": "Operations runbooks (~2200 lines): README + 01-deploy + 02-secret-rotation + 03-prerender-stalled + 04-plugin-load-failure + 05-icums-outbox-backlog", "commit": "15e2488" }
       ]
     },
     {
@@ -156,15 +166,23 @@
     }
   ],
   "backlog": [
-    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "spec": "docs/product-calls-2026-04-29.md §1 (all six calls captured; binding)" },
     { "id": "P2", "title": "Edge node — SQLite buffer + replay (server-authoritative)", "phase": "Production prep", "estimateDays": "5-7", "spec": "docs/product-calls-2026-04-29.md §2 (binding)" }
   ],
   "followups": [
     { "id": "P1-FU-external-systems-enable-col", "title": "Confirm external_system_instances enable-column name (IsEnabled vs IsActive)", "from": "P1 / Sprint 7", "severity": "low (doc clarity)" },
     { "id": "P3-FU-plan-md-services-path", "title": "PLAN.md §19.2 references Audit/Services/ but correct layer is Audit.Database/Services/", "from": "P3 / Sprint 8", "severity": "low (doc sync)" },
-    { "id": "FU-icums-strict-mode", "title": "Add ?strict=true query to /healthz/workers returning 503 when any worker Unhealthy (LB integration)", "from": "FU-host-status / Sprint 9", "severity": "low (LB ergonomics)" },
+    { "id": "FU-host-status-strict-mode", "title": "Add ?strict=true query to /healthz/workers returning 503 when any worker Unhealthy (LB integration)", "from": "FU-host-status / Sprint 9", "severity": "low (LB ergonomics)" },
     { "id": "FU-icums-cluster-key-ring", "title": "Data-protection key ring needs PersistKeysToFileSystem(shared) or Azure Blob for clustered prod", "from": "FU-icums-signing / Sprint 9", "severity": "medium (single-host prod fine; clustered breaks)" },
     { "id": "FU-icums-cross-tenant-rotation", "title": "Cross-tenant 'rotate all tenants' admin action via SetSystemContext", "from": "FU-icums-signing / Sprint 9", "severity": "low (per-tenant flow shipped)" },
-    { "id": "FU-plugin-authoring-scoped-services", "title": "Document IServiceScopeFactory pattern for singleton plugins needing scoped DbContext (PLUGIN-AUTHORING.md)", "from": "FU-icums-signing / Sprint 9", "severity": "low (DI gotcha for future plugins)" }
+    { "id": "FU-plugin-authoring-scoped-services", "title": "Document IServiceScopeFactory pattern for singleton plugins needing scoped DbContext (PLUGIN-AUTHORING.md)", "from": "FU-icums-signing / Sprint 9", "severity": "low (DI gotcha for future plugins)" },
+    { "id": "G2-FU-role-resolver", "title": "Platform IRoleResolver story (NickFinance role checks are claim-based stubs)", "from": "G2 / Sprint 10", "severity": "medium (production needs role management)" },
+    { "id": "G2-FU-gl-projection", "title": "Double-entry GL projection table on top of single-entry ledger_event", "from": "G2 / Sprint 10", "severity": "low (deferred per §1.6)" },
+    { "id": "G2-FU-tenant-currency-rename", "title": "Either rename Tenant.Currency → BaseCurrencyCode or document the alias platform-wide", "from": "G2 / Sprint 10", "severity": "low (cosmetic)" },
+    { "id": "G2-FU-per-tenant-fx", "title": "Per-tenant FX overrides (column exists, not exercised)", "from": "G2 / Sprint 10", "severity": "low (deferred per §1.10)" },
+    { "id": "G2-FU-replenish-archive-ui", "title": "Box archive workflow + Replenish ledger event UI (enum exists, no code path)", "from": "G2 / Sprint 10", "severity": "low (operational gap)" },
+    { "id": "G2-FU-external-fx-feed", "title": "Bank-of-Ghana / ECB FX rate publisher worker (deferred per §1.10)", "from": "G2 / Sprint 10", "severity": "low (operational ergonomics)" },
+    { "id": "G2-FU-e2e-tests", "title": "NickFinance E2E test suite running against a live host", "from": "G2 / Sprint 10", "severity": "low (Core/DB/Web unit tests in place)" },
+    { "id": "G2-FU-bl0008-sweep", "title": "Refactor [SupplyParameterFromForm] initializer pattern (4+5 BL0008 warnings)", "from": "G2 / Sprint 10", "severity": "low (cosmetic)" },
+    { "id": "G2-FU-sequence-promotion", "title": "Promote per-box voucher sequence_number from MAX+1 to a real Postgres sequence under multi-writer load", "from": "G2 / Sprint 10", "severity": "low (single-writer path safe today)" }
   ]
 }
