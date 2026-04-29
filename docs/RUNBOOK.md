@@ -2,8 +2,13 @@
 
 This runbook captures one-off operational notes that ops engineers may
 need when applying migrations, deploying services, or recovering from
-incidents. Sprint-7 will expand it; for now it carries only items that
-have shipped.
+incidents.
+
+> **Named-incident runbooks** (deploy, secret rotation, PreRender
+> stalled, plugin-load failure, ICUMS outbox backlog) live in
+> [`runbooks/`](runbooks/README.md) — start there for any alert /
+> response work. This file remains the home for one-off cleanups
+> like the FU-6 entry below.
 
 ## Migration cleanups
 

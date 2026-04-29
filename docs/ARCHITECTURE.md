@@ -538,6 +538,7 @@ Point-in-time copies into v2 new files with rename. **No shared references.**
 - **This repo (`C:\Shared\ERP V2\`):**
   - [`../README.md`](../README.md) — entry point.
   - [`MIGRATION-FROM-V1.md`](MIGRATION-FROM-V1.md) — cutover plan.
+  - [`runbooks/README.md`](runbooks/README.md) — named-incident operations runbooks (Sprint 7 / P1).
 - **v1 repo (`C:\Shared\NSCIM_PRODUCTION\`) — sibling, not parent:**
   - `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` — Phase 7 entry points back here.
   - `C:\Shared\NSCIM_PRODUCTION\PLATFORM.md` — shared platform contracts (what we consume).
