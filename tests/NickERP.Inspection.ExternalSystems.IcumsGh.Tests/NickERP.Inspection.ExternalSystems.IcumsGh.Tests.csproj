@@ -1,6 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!--
+      Sprint 9 / FU-icums-signing — IcumsGhAdapterSubmitAsyncTests
+      builds an in-memory IConfiguration to drive the IcumsGh:Sign
+      feature flag. AddInMemoryCollection is in the
+      Microsoft.Extensions.Configuration meta-package.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.ExternalSystems.IcumsGh\NickERP.Inspection.ExternalSystems.IcumsGh.csproj" />
   </ItemGroup>
 

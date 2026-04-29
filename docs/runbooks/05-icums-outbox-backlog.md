@@ -256,23 +256,41 @@ downstream picks it up.
 ### 5.4 The signing key rotated mid-flight
 
 Symptom: §4.6 shows the downstream **is** reading, but **rejecting**
-files written before a key rotation. v2's IcumsGh adapter does not
-sign payloads today — the envelope is plain JSON (see §4.3) — so
-this case is currently moot. **If a future contract bump adds
-signing**, the resolution is:
+files written before a key rotation.
 
-1. Identify the cutoff mtime (the moment the new key took effect).
-2. For files with mtime older than the cutoff, re-emit with the new
-   signature. The simplest way is to re-trigger submission from the
-   `outbound_submissions` row (the host's `SubmitAsync` will rewrite
-   the file with the current key — same `idempotencyKey`, idempotent
-   by contract).
-3. Old files (with the old signature) can be deleted only after
-   replacement files are written. **Don't delete first** — atomic
+**As of Sprint 9 / FU-icums-signing, the IcumsGh adapter can sign
+envelopes** behind the feature flag `IcumsGh:Sign` (default off). When
+enabled, each `<idempotencyKey>.json` envelope has a sibling
+`<idempotencyKey>.json.sig` carrying an HMAC-SHA256 signature header
+(format: `icums-hmac-sha256 keyId=<k> sig=<base64>`). Both files
+**must drain together**; an envelope without its `.sig` is unverifiable.
+
+```bash
+# Drain check: every envelope has a sibling .sig (when signing is on).
+for f in "$OUTBOX_PATH"/*.json; do
+  [ -f "$f.sig" ] || echo "MISSING SIG: $f"
+done
+```
+
+If signing was rotated mid-flight (operator ran `POST /api/icums/keys/activate`
+while the backlog was non-empty), the resolution is:
+
+1. **Honour the verification overlap window.** As long as the old
+   key's `VerificationOnlyUntil` is in the future, signatures
+   minted under the old key still verify. Don't re-emit the
+   backlog — it'll drain naturally.
+2. **If the window has already closed**, identify the cutoff mtime
+   (the moment the new key took effect) and re-trigger submission
+   from the `outbound_submissions` row for files older than the
+   cutoff. The host's `SubmitAsync` will rewrite both the JSON and
+   the `.sig` with the current key — same `idempotencyKey`, idempotent
+   by contract.
+3. **Old files (envelope + sig pair) can be deleted only after the
+   replacement pair is written.** Don't delete first — atomic
    rewrite isn't atomic across this boundary.
 
-This sub-runbook is the seed for an actual rotation procedure when
-signing lands. Until then, document any deviation in §7.
+For the rotation procedure itself, see
+[`02-secret-rotation.md`](02-secret-rotation.md) §6a.
 
 ### 5.5 Disk full / outbox path not writable
 
@@ -396,9 +414,12 @@ entry against the plugin's `version` bump.
 
 ### 8.1 Future work
 
-The signing-key rotation case (§5.4) is a placeholder — current v2
-does not sign envelopes. When signing lands, this section becomes a
-real runbook step. File a CHANGELOG entry and update §5.4 then.
+The signing-key rotation procedure landed in Sprint 9
+(FU-icums-signing) — see §5.4 above and
+[`02-secret-rotation.md`](02-secret-rotation.md) §6a. The feature
+flag `IcumsGh:Sign` is OFF by default until ICUMS asks for signed
+envelopes; the runbook step is rehearsable today by enabling the
+flag in a non-prod tenant.
 
 A "Phase 2" for this runbook would be wiring an HTTP-direct path to
 ICUMS (instead of file-based outbox), with the file outbox kept as

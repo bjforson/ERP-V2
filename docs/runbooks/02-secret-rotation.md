@@ -314,6 +314,118 @@ audience and everything to do with `TeamDomain` being wrong (it's
 the CF subdomain, e.g. `nickscan` — not a URL). Rotating audiences
 without changing `TeamDomain` is the safe path.
 
+## 6a. Resolution — ICUMS envelope signing key rotation
+
+> **When this applies.** The IcumsGh adapter writes verdict envelopes
+> as JSON files into a configured outbox (runbook 05). When the
+> feature flag `IcumsGh:Sign` is on (default off as of FU-icums-signing,
+> Sprint 9), each envelope is paired with a sibling `<idempotency>.json.sig`
+> file carrying an HMAC-SHA256 signature header. The HMAC key is
+> per-tenant, stored in `inspection.icums_signing_keys`, encrypted at
+> rest via ASP.NET Core data protection (purpose
+> `icums-signing-keys-v1`). Rotation = generate new key → activate
+> (with overlap window) → wait → confirm.
+
+### 6a.1 When to rotate
+
+- **Scheduled:** quarterly, or whenever the data-protection key ring
+  is rotated (the wrapped column is invalidated either way).
+- **Suspected compromise:** treat as P1; rotate immediately.
+- **Verifier rejecting valid sigs:** before rotating, check the
+  data-protection key ring (was a key revoked from
+  `%LOCALAPPDATA%\ASP.NET\DataProtection-Keys` or the equivalent on
+  the prod box?). If yes, restore the ring; rotation won't help.
+
+### 6a.2 Rotate via the admin API
+
+The rotation flow is an admin REST surface gated by the
+`Inspection.Admin` scope. v0 is per-tenant — each tenant's admin
+rotates their own key. (A future "rotate every tenant" flow would
+need `SetSystemContext()` and lands in `system-context-audit-register.md`
+when added; not in scope here.)
+
+```bash
+# 1. Generate a new (inactive) key for the calling tenant.
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://127.0.0.1:5410/api/icums/keys/rotate
+# {"keyId":"k2"}
+
+# 2. Verify the key list — the new key is present, ActivatedAt null.
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://127.0.0.1:5410/api/icums/keys
+# {"keys":[{"keyId":"k1","activatedAt":"...","retiredAt":null,...},
+#          {"keyId":"k2","activatedAt":null,"retiredAt":null,...}]}
+
+# 3. Activate the new key. Default verification window 7 days.
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"newKeyId":"k2","verificationWindowDays":7}' \
+  http://127.0.0.1:5410/api/icums/keys/activate
+# {"activatedKeyId":"k2","activatedAt":"...","retiredKeyId":"k1",
+#  "verificationOnlyUntil":"<now+7d>"}
+```
+
+After step 3:
+
+- The signer uses `k2` for new submissions.
+- The verifier accepts both `k1` and `k2` until
+  `verificationOnlyUntil` passes — anything ICUMS already received
+  with a `k1` signature will still validate during that window.
+- After the window closes, `k1` signatures fail verification.
+
+### 6a.3 Restart? — no
+
+Unlike the DB password flow (§5), no host restart is needed. The
+signer reads keys per-call from `inspection.icums_signing_keys` (no
+in-process cache). The next outbound submission picks up the new
+state.
+
+### 6a.4 Validate after activation
+
+- **No envelopes in the outbox lacking a `.sig` sibling.**
+
+  ```bash
+  OUTBOX_PATH="..."  # from external_system_instances.ConfigJson
+  for f in "$OUTBOX_PATH"/*.json; do
+    [ -f "$f.sig" ] || echo "MISSING SIG: $f"
+  done
+  ```
+
+  Empty output = every envelope is signed (when `IcumsGh:Sign` is on).
+
+- **Spot-check signature validity.** If the receiver provides a
+  verification path, re-feed a recent envelope + its `.sig` through
+  the receiver and confirm 200 OK. If your deployment is
+  filesystem-only (no live receiver), use the host's
+  `IIcumsEnvelopeSigner.VerifyAsync` from a local script or a
+  scheduled job.
+
+- **Watch the audit events.** Each rotate / activate emits an
+  `IcumsGh signing key * activated for tenant *; retired *` log line
+  via `IcumsKeyRotationService`. Tail Seq filtered to that signature
+  to confirm the action took effect.
+
+### 6a.5 Key never deletes
+
+The `inspection.icums_signing_keys` table grants `SELECT, INSERT,
+UPDATE` to `nscim_app` — no `DELETE`. Retired keys stay in the row
+forever for forensic purposes. If the row volume becomes a concern
+(years from now), an admin migration can drop fully-retired rows
+under postgres-superuser; out of scope for v0.
+
+### 6a.6 Postmortem template
+
+```
+## ICUMS signing key rotation: <YYYY-MM-DD HH:MM> — tenant <N>
+- Trigger: scheduled | compromise-suspected | DP-key-rotated
+- New keyId: kN
+- Retired keyId: kN-1
+- Verification window: <days>
+- Time to first signed-with-new submission: <seconds>
+- Anomalies: <none / details>
+- Followups filed: <CHANGELOG.md / open-issue links>
+```
+
 ## 7. Resolution — service-token client secrets
 
 Service tokens (`identity.service_token_identities`) carry a hashed

@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using NickERP.Inspection.ExternalSystems.Abstractions;
 using NickERP.Platform.Plugins;
 
@@ -38,6 +40,15 @@ namespace NickERP.Inspection.ExternalSystems.IcumsGh;
 [Plugin("icums-gh", Module = "inspection")]
 public sealed class IcumsGhAdapter : IExternalSystemAdapter
 {
+    /// <summary>
+    /// Feature-flag config key. When true, <see cref="SubmitAsync"/>
+    /// signs the envelope via <see cref="IIcumsEnvelopeSigner"/> and
+    /// writes a <c>.sig</c> sibling file. Default false (no signing,
+    /// no sibling file) — pre-emptive contract that lights up when
+    /// ICUMS asks for it.
+    /// </summary>
+    public const string SignFeatureFlagKey = "IcumsGh:Sign";
+
     public string TypeCode => "icums-gh";
 
     public ExternalSystemCapabilities Capabilities { get; } = new(
@@ -48,6 +59,57 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
     /// <summary>One batch index per <see cref="ExternalSystemConfig.InstanceId"/> + drop path tuple.</summary>
     private static readonly ConcurrentDictionary<string, IcumBatchIndex> _indexes =
         new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly IIcumsEnvelopeSigner? _explicitSigner;
+    private readonly bool _signEnvelopes;
+
+    /// <summary>
+    /// Parameterless ctor — preserves zero-config behaviour for the
+    /// plugin loader's reflection-based instantiation in environments
+    /// where DI hasn't wired the signer yet (e.g. the IcumBatchIndex
+    /// schema-drift unit tests). Equivalent to construction with no
+    /// signer + signing disabled, matching pre-FU-icums-signing
+    /// behaviour byte-for-byte.
+    /// </summary>
+    public IcumsGhAdapter() : this((IServiceScopeFactory?)null, (IConfiguration?)null) { }
+
+    /// <summary>
+    /// Production-DI ctor. The plugin is registered as a singleton, so
+    /// the signer (which captures a scoped <c>InspectionDbContext</c>
+    /// + <c>IDataProtector</c>) must be resolved via a fresh scope per
+    /// <see cref="SubmitAsync"/> call. <paramref name="scopeFactory"/>
+    /// may be null when running outside DI (tests); the
+    /// <see cref="SignFeatureFlagKey"/> defaults to false when
+    /// <paramref name="config"/> is null or doesn't carry the flag.
+    /// </summary>
+    public IcumsGhAdapter(IServiceScopeFactory? scopeFactory, IConfiguration? config)
+    {
+        _scopeFactory = scopeFactory;
+        _explicitSigner = null;
+        _signEnvelopes = config?.GetValue<bool?>(SignFeatureFlagKey) ?? false;
+    }
+
+    /// <summary>
+    /// Test-only factory — wraps an explicit signer instance for unit
+    /// tests that don't want to stand up a full DI graph. Production
+    /// callers reach the adapter through the
+    /// <see cref="IcumsGhAdapter(IServiceScopeFactory?, IConfiguration?)"/>
+    /// overload.
+    /// </summary>
+    public static IcumsGhAdapter ForTests(IIcumsEnvelopeSigner? signer, IConfiguration? config)
+    {
+        return new IcumsGhAdapter(signer: signer, config: config, _testMarker: 0);
+    }
+
+    // Private "test ctor" disambiguator — the int parameter prevents
+    // DI from accidentally resolving this overload at runtime.
+    private IcumsGhAdapter(IIcumsEnvelopeSigner? signer, IConfiguration? config, int _testMarker)
+    {
+        _scopeFactory = null;
+        _explicitSigner = signer;
+        _signEnvelopes = config?.GetValue<bool?>(SignFeatureFlagKey) ?? false;
+    }
 
     public Task<ConnectionTestResult> TestAsync(ExternalSystemConfig config, CancellationToken ct = default)
     {
@@ -173,11 +235,44 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
             if (File.Exists(outPath)) File.Delete(outPath);
             File.Move(tmpPath, outPath);
 
+            // Sprint 9 / FU-icums-signing — when the IcumsGh:Sign feature
+            // flag is on AND a signer is wired, write a sibling .sig file
+            // next to the envelope. The .sig contains the signature
+            // header (algorithm + keyId + base64 sig). Atomic write same
+            // as the envelope. When the flag is off, no .sig file is
+            // produced — this matches pre-FU-icums-signing behaviour
+            // byte-for-byte.
+            //
+            // The signer is scoped (it captures a DbContext); the adapter
+            // is singleton. So we resolve the signer through a fresh
+            // service scope per SubmitAsync call. Tests reach the
+            // signer via the ForTests() helper which side-steps the
+            // scope dance.
+            string? sigOutPath = null;
+            if (_signEnvelopes)
+            {
+                var signed = await SignWithResolvedSignerAsync(config.TenantId, bytes, ct);
+                if (signed is not null)
+                {
+                    sigOutPath = outPath + ".sig";
+                    var sigTmpPath = sigOutPath + ".tmp";
+                    await File.WriteAllTextAsync(sigTmpPath, signed.SignatureHeader, ct);
+                    if (File.Exists(sigOutPath)) File.Delete(sigOutPath);
+                    File.Move(sigTmpPath, sigOutPath);
+                }
+                // signed == null means "flag is on but no signer is
+                // wired" — fall through to write the envelope without a
+                // .sig sibling. This is defence-in-depth: a host that
+                // forgot to call AddDataProtection / register the
+                // signer should NOT silently break submissions.
+            }
+
             var responseJson = JsonSerializer.Serialize(new
             {
                 accepted = true,
                 outboxPath = outPath,
-                idempotencyKey = request.IdempotencyKey
+                idempotencyKey = request.IdempotencyKey,
+                sigPath = sigOutPath
             });
             return new SubmissionResult(Accepted: true, AuthorityResponseJson: responseJson, Error: null);
         }
@@ -192,6 +287,36 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
     }
 
     // --- helpers --------------------------------------------------------
+
+    /// <summary>
+    /// Resolve the <see cref="IIcumsEnvelopeSigner"/> for this call.
+    /// Production: open a fresh service scope and pull the signer
+    /// (scoped). Tests: return the explicit signer captured at
+    /// construction. Returns null if neither path produces a signer —
+    /// callers fall through to unsigned behaviour.
+    /// </summary>
+    private async Task<SignedEnvelope?> SignWithResolvedSignerAsync(
+        long tenantId,
+        byte[] envelopeBytes,
+        CancellationToken ct)
+    {
+        var tenantStr = tenantId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        if (_explicitSigner is not null)
+        {
+            return await _explicitSigner.SignAsync(tenantStr, envelopeBytes, ct);
+        }
+
+        if (_scopeFactory is not null)
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var signer = scope.ServiceProvider.GetService<IIcumsEnvelopeSigner>();
+            if (signer is null) return null;
+            return await signer.SignAsync(tenantStr, envelopeBytes, ct);
+        }
+
+        return null;
+    }
 
     private static AdapterConfig ParseConfig(ExternalSystemConfig config)
     {

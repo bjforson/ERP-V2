@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Database;
@@ -67,6 +68,30 @@ builder.Services.AddDbContext<InspectionDbContext>((sp, opts) =>
         sp.GetRequiredService<TenantConnectionInterceptor>(),
         sp.GetRequiredService<TenantOwnedEntityInterceptor>());
 });
+
+// ---------------------------------------------------------------------------
+// Sprint 9 / FU-icums-signing — ASP.NET Core data protection. Used to
+// wrap the per-tenant HMAC keys at rest in inspection.icums_signing_keys.
+// Key ring lives at the platform default (
+// %LOCALAPPDATA%\ASP.NET\DataProtection-Keys on Windows / ~/.aspnet/DataProtection-Keys
+// on Linux); for clustered deploys the ring needs to be shared (FileShare
+// or AzureBlob persistKeysToX). Out of scope for FU-icums-signing — the
+// rotation runbook calls this out as a follow-up.
+//
+// The application name keeps the key ring scoped to this host's purpose
+// strings; without it, two NickERP services on the same box would share
+// data-protection keys (harmless but surprising).
+// ---------------------------------------------------------------------------
+builder.Services.AddDataProtection()
+    .SetApplicationName("NickERP.Inspection.Web");
+
+// IIcumsEnvelopeSigner — registered unconditionally (cheap; only called
+// when the IcumsGh:Sign feature flag is on). Scoped because it captures
+// the request-scoped InspectionDbContext.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.IcumsHmacEnvelopeSigner>();
+builder.Services.AddScoped<NickERP.Inspection.ExternalSystems.Abstractions.IIcumsEnvelopeSigner>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.IcumsHmacEnvelopeSigner>());
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.IcumsKeyRotationService>();
 
 // ---------------------------------------------------------------------------
 // Track A — Plugins. Loads adapter DLLs from {ContentRoot}/plugins. The
@@ -243,6 +268,11 @@ app.MapRazorComponents<App>()
 // Sprint 8 P3 — notifications inbox API. Tenant + user scoping enforced
 // at the endpoint layer (LINQ) and at the DB layer (RLS); auth required.
 app.MapNotificationsEndpoints();
+
+// Sprint 9 / FU-icums-signing — admin endpoints for rotating per-tenant
+// IcumsGh signing keys. Auth + Inspection.Admin role required; tenant-
+// scoped via the caller's tenant claim + RLS narrowing.
+app.MapIcumsKeyRotationEndpoints();
 
 // Sprint 9 / FU-host-status — /healthz/workers aggregator over every
 // registered IBackgroundServiceProbe (PreRenderWorker, SourceJanitor,
