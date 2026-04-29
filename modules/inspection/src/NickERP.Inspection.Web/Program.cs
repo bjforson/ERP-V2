@@ -274,6 +274,13 @@ app.MapNotificationsEndpoints();
 // scoped via the caller's tenant claim + RLS narrowing.
 app.MapIcumsKeyRotationEndpoints();
 
+// Sprint 11 / P2 — server-side replay endpoint. Anonymous endpoint
+// gated by an X-Edge-Token header (shared secret matched against
+// EdgeNode:SharedSecret in config). Writes audit.events under
+// SetSystemContext on behalf of multiple tenants in a single batch
+// — registered in docs/system-context-audit-register.md.
+app.MapEdgeReplayEndpoint();
+
 // Sprint 9 / FU-host-status — /healthz/workers aggregator over every
 // registered IBackgroundServiceProbe (PreRenderWorker, SourceJanitor,
 // ScannerIngestion, AuditNotificationProjector). Auth required —
