@@ -61,6 +61,7 @@ public sealed class ScannerThresholdResolver
 
     private CancellationTokenSource? _stopCts;
     private Task? _listenLoop;
+    private int _disposed;
 
     /// <summary>For the migration runner / on-host start: connection string is read from <c>ConnectionStrings:Inspection</c>.</summary>
     private const string InspectionConnectionStringName = "Inspection";
@@ -394,8 +395,15 @@ public sealed class ScannerThresholdResolver
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
-        _stopCts?.Cancel();
+        // Idempotent: the same singleton instance is reachable through both
+        // the IScannerThresholdResolver root and the IHostedService root, so
+        // the DI container can call DisposeAsync twice during host shutdown.
+        // Use Interlocked.Exchange to short-circuit the second call so we
+        // don't Cancel() / Dispose() an already-disposed CancellationTokenSource.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+        try { _stopCts?.Cancel(); } catch (ObjectDisposedException) { /* race with StopAsync */ }
         _stopCts?.Dispose();
+        _stopCts = null;
         return ValueTask.CompletedTask;
     }
 
