@@ -326,6 +326,31 @@ The vendor-neutral pre-rendering pipeline lives inside `NickERP.Inspection.Appli
 
 **Acceptance bar (rolls into Phase 7.1)**: thumbs ≤ 50 ms p95 from Redis, previews ≤ 80 ms p95 from disk; cache hit rate ≥ 85% after 1 h warm operation; ingestion throughput unaffected (±5% per scanner).
 
+#### 7.7.1 Cross-tenant blob collision posture (FU-3)
+
+**The setup.** `DiskImageStore` is content-addressed by SHA-256: every source blob lands at `{StorageRoot}/source/{hash[0..2]}/{hash}.{ext}`, and `SaveSourceAsync` is idempotent — if the file already exists, the existing path is returned. The path is **not** tenant-scoped. By contrast, the `ScanArtifact` row that points at the blob *is* tenant-scoped (`ITenantOwned`, RLS-enforced via `TenantConnectionInterceptor`).
+
+**The theoretical hazard.** If two tenants ever produced byte-identical source bytes, their two `ScanArtifact` rows would carry the same `ContentHash` and resolve to the same on-disk file. `SourceJanitorWorker` runs per-tenant under RLS — for each active tenant it asks "are any *of my own* rows still referencing this hash from a non-Closed/Cancelled case?" — so one tenant moving their case to `Closed` past retention could let the worker delete a blob that another tenant's open case still references. The deletion is silent: the surviving tenant's `ScanArtifact` row stays, but its `StorageUri` no longer points at bytes.
+
+**Why this is astronomically unlikely.**
+
+- **Collision-resistance.** SHA-256 has a 256-bit output. The birthday-bound for an *accidental* collision is ~2^128 distinct inputs — orders of magnitude beyond the bytes the platform will ever process. A *deliberate* collision against SHA-256 has no published preimage attack.
+- **Scan-byte uniqueness in practice.** Real scanner output is densely keyed by per-scan metadata baked into the file: timestamp at sub-second resolution, scanner serial number, frame counters, and (for FS6000) firmware-stamped session IDs. Two tenants producing the *exact same bytes* would need to share a scanner instance at the same instant — which the federation-by-location model already forbids (scanners bind to one location, locations bind to one tenant).
+- **Adversarial path is dead.** Even if a tenant could craft a colliding input, they would need to know another tenant's hash to target it. The `ContentHash` column lives in the tenant-scoped `inspection.scan_artifacts` table; RLS hides foreign rows. The attacker has no read path into the foreign hash space, so cannot pick a target to collide against.
+
+**Defence-in-depth posture (today).**
+
+- `ScanArtifact` rows are tenant-scoped (`ITenantOwned`) and RLS-hidden across tenants. Confidentiality is preserved at the *row* layer regardless of blob sharing.
+- The shared resource is **storage only** — bytes on disk. An attacker cannot enumerate blob paths because `{hash[0..2]}/{hash}.{ext}` requires reading rows they cannot see; the filesystem itself sits behind the service account.
+- The worst-case impact of an accidental collision is therefore an **availability** issue (eviction races a delete out from under a sibling tenant), not a confidentiality breach. The blob can be reconstructed from the original source path on the scanner side; analyst review still has rendered derivatives in `{StorageRoot}/render/`, which are keyed by `ScanArtifactId` and are *not* shared across tenants.
+
+**Race-eviction note.** `SourceJanitorWorker.SweepTenantAsync` reduces candidates by content hash and only evicts when no row in the *current tenant's* RLS-narrowed view still references the hash from a non-Closed/Cancelled case (see `SourceJanitorWorker.cs` lines 178–219). The check is correct *within* a tenant; it is not cross-tenant. A genuine cross-tenant guard would require either:
+
+1. A `BYPASSRLS`-equivalent existence query (Sprint-5's `ITenantContext.SetSystemContext()` mechanism), **plus**
+2. An opt-in clause on the `inspection.scan_artifacts` RLS policy that admits the system context — without weakening the per-tenant default.
+
+Both are out of scope for FU-3. The hook is declared as `ImagingOptions.EnforceCrossTenantBlobGuard` (default `false`); when enforcement lands in a future sprint, flipping the flag to `true` will make the worker refuse to evict any blob whose hash appears in another tenant's rows. Until then the per-tenant check is the documented, deliberate behaviour, with the analysis above as justification.
+
 ### 7.8 Observability
 
 - **Logs:** Serilog → Seq, same sink as main roadmap Track A.1.
