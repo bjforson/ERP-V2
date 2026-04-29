@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NickERP.Inspection.Database;
@@ -18,7 +19,9 @@ namespace NickERP.Inspection.E2E.Tests;
 ///         analyst, and Tenant 2's Tema analyst each see only their own
 ///         location's case on <c>/cases</c>.</item>
 ///   <item>Cross-tenant URL guess. Tenant 1's analyst GETing Tenant 2's
-///         case id directly returns 404, not 200 with the foreign data.</item>
+///         case id directly returns 404 (FU-2), not 200 with empty-state.
+///         Same-tenant case still returns 200; anonymous still redirects
+///         to login.</item>
 ///   <item>DB-layer RLS canary. A fresh Npgsql connection as
 ///         <c>nscim_app</c> with no <c>app.tenant_id</c> set sees zero
 ///         rows; with the right tenant pushed, it sees that tenant's
@@ -590,43 +593,107 @@ public sealed class MultiLocationFederationTests
         SeededTopology seed,
         CancellationToken ct)
     {
-        // Resolve T2's case id via the postgres-admin connection
-        // (RLS-bypassing) so we can craft the foreign URL even though
-        // the test's WebApplicationFactory connection couldn't see it.
-        await using var scope = factory.Services.CreateAsyncScope();
-        var sp = scope.ServiceProvider;
-        var tenant = sp.GetRequiredService<ITenantContext>();
-        // Push tenant 2 onto the scoped ITenantContext so the F1
-        // interceptor's connection-open hook lets us read T2's case.
-        // CreateScope() doesn't run middleware so we must do it
-        // explicitly.
-        tenant.SetTenant(seed.T2Tema.TenantId);
-        var inspection = sp.GetRequiredService<InspectionDbContext>();
-        var t2Case = await inspection.Cases
-            .AsNoTracking()
-            .FirstAsync(c => c.SubjectIdentifier == seed.T2Tema.Stem, ct);
-
-        // Now hit /cases/{t2Case.Id} as analyst-tema@t1 — the host's
-        // tenancy middleware will set tenant 1, the RLS policy will
-        // filter the foreign row out of the load, and the page should
-        // either return 404 or render a "loading" / not-found stub
-        // that does NOT include T2's stem.
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Dev-User", seed.T1Tema.AnalystEmail);
-        var response = await client.GetAsync($"/cases/{t2Case.Id}", ct);
-
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        // Resolve T1's and T2's case ids via the postgres-admin connection
+        // (RLS-bypassing) so we can craft both the foreign URL (T2's case
+        // id under a T1 analyst) and the same-tenant control URL (T1's
+        // case id under a T1 analyst) even though the test's
+        // WebApplicationFactory connection couldn't see across tenants.
+        Guid t2CaseId;
+        Guid t1CaseId;
+        await using (var scope = factory.Services.CreateAsyncScope())
         {
-            // The brief calls 404 the expected outcome. Nothing more to assert.
-            return;
+            var sp = scope.ServiceProvider;
+            var tenant = sp.GetRequiredService<ITenantContext>();
+            var inspection = sp.GetRequiredService<InspectionDbContext>();
+
+            // Push tenant 2 onto the scoped ITenantContext so the F1
+            // interceptor's connection-open hook lets us read T2's case.
+            // CreateScope() doesn't run middleware so we must do it
+            // explicitly.
+            tenant.SetTenant(seed.T2Tema.TenantId);
+            t2CaseId = (await inspection.Cases
+                .AsNoTracking()
+                .FirstAsync(c => c.SubjectIdentifier == seed.T2Tema.Stem, ct)).Id;
+
+            // Same trick for T1 — we need its tema-stemmed case for the
+            // 200-on-same-tenant control assertion below.
+            tenant.SetTenant(seed.T1Tema.TenantId);
+            t1CaseId = (await inspection.Cases
+                .AsNoTracking()
+                .FirstAsync(c => c.SubjectIdentifier == seed.T1Tema.Stem, ct)).Id;
         }
 
-        // 200 is also acceptable IF the body doesn't expose foreign data.
-        // Verify the markup excludes T2's stem.
-        var body = await response.Content.ReadAsStringAsync(ct);
-        body.Should().NotContain(seed.T2Tema.Stem,
-            because: "a Tenant 1 analyst URL-guessing a Tenant 2 case must not get the foreign data; "
-                     + "RLS should filter the row out so the page renders Loading… / not-found instead");
+        // ---- Foreign-tenant — must return 404 (FU-2) -------------------
+        // Hit /cases/{t2Case.Id} as analyst-tema@t1 — the host's tenancy
+        // middleware sets tenant 1, the RLS policy filters the foreign
+        // row out of the EF load, CaseDetail.razor sees null, sets
+        // Response.StatusCode = 404, and UseStatusCodePagesWithReExecute
+        // re-renders the NotFound page. We assert on the status code
+        // alone — that's the FU-2 contract. The body must also be free
+        // of T2's stem (defense in depth, in case some future change
+        // accidentally leaks fields before the 404 takes effect).
+        using (var client = factory.CreateClient())
+        {
+            client.DefaultRequestHeaders.Add("X-Dev-User", seed.T1Tema.AnalystEmail);
+            var response = await client.GetAsync($"/cases/{t2CaseId}", ct);
+
+            response.StatusCode.Should().Be(
+                System.Net.HttpStatusCode.NotFound,
+                because: "FU-2 — a T1 analyst URL-guessing a T2 case must get HTTP 404, "
+                         + "not 200-with-empty-state. RLS hides the row, CaseDetail.razor "
+                         + "detects null and sets Response.StatusCode = 404; "
+                         + "UseStatusCodePagesWithReExecute re-renders /not-found.");
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            body.Should().NotContain(seed.T2Tema.Stem,
+                because: "the not-found page body must never echo a foreign tenant's "
+                         + "SubjectIdentifier — even on the rare path where re-execute is bypassed");
+        }
+
+        // ---- Same-tenant — must still return 200 (regression guard) ----
+        // FU-2 must not break the happy path. Hitting one's own tenant's
+        // case id should still get 200 and render the case detail (we
+        // confirm by looking for T1's stem in the body).
+        using (var client = factory.CreateClient())
+        {
+            client.DefaultRequestHeaders.Add("X-Dev-User", seed.T1Tema.AnalystEmail);
+            var response = await client.GetAsync($"/cases/{t1CaseId}", ct);
+
+            response.StatusCode.Should().Be(
+                System.Net.HttpStatusCode.OK,
+                because: "FU-2 regression guard — a T1 analyst hitting their own "
+                         + "tenant's case id must still get HTTP 200 with the case detail");
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            body.Should().Contain(seed.T1Tema.Stem,
+                because: "the same-tenant case body should still render the SubjectIdentifier");
+        }
+
+        // ---- Anonymous — must NOT 200 and must NOT 404 -----------------
+        // FU-2 must not break the existing auth posture either. An
+        // unauthenticated client hitting /cases/{guid} must still be
+        // treated as an auth failure — never a not-found, because that
+        // would let an unauthenticated probe distinguish "case exists"
+        // from "case doesn't exist". The current v2 platform handler
+        // (NickErpAuthenticationHandler) returns NoResult on no-auth and
+        // ASP.NET responds 401; an OIDC sub-app would 302 to its IdP
+        // instead. Accept any 3xx (login redirect) or 401 — but never
+        // 200 (would leak the case body) and never 404 (FU-2's new
+        // not-found path must not trigger before auth).
+        using (var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        }))
+        {
+            // Deliberately NO X-Dev-User header.
+            var response = await client.GetAsync($"/cases/{t1CaseId}", ct);
+
+            var code = (int)response.StatusCode;
+            (code == 401 || (code >= 300 && code < 400)).Should().BeTrue(
+                because: "FU-2 regression guard — an anonymous /cases/{guid} request "
+                         + "must redirect to login (3xx) or return 401, never 200 "
+                         + $"(would leak the case) or 404 (would conflate auth + not-found). Got {code}.");
+        }
     }
 
     // ---------------------------------------------------------------------
