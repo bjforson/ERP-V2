@@ -690,7 +690,107 @@ steps before applying `Init_NickFinance` + `Add_RLS_And_Grants`.
 
 ---
 
-## 14. Related documents
+## 14. Edge nodes (P2 — Sprint 11)
+
+The edge story is for deployments where the central server isn't
+reliably reachable: port-of-entry inspection lanes, remote
+NickFinance branches with intermittent connectivity, scanner-attached
+field nodes. P2 ships the offline mechanism end-to-end.
+
+### 14.1 Posture: server-authoritative + append-only
+
+- **Server is the single source of truth.** The edge buffers events
+  locally when offline and replays them on reconnect.
+- **Append-only.** Replayed events are processed by the same code
+  path as live events — they land in `audit.events` as fresh appends.
+  No special "edge merge" logic, no conflict resolution; the schema
+  is append-only so conflicts dissolve naturally.
+- **Edge cannot mutate or delete server-side state.** v0 only writes
+  new audit rows. The edge cannot post events with future timestamps
+  (server rejects with 60s clock-skew tolerance).
+
+### 14.2 Components
+
+| Component | Where | Responsibility |
+|---|---|---|
+| `EdgeBufferDbContext` | `apps/edge-node/NickERP.EdgeNode/` | EF SQLite context, single table `edge_outbox`. |
+| `IEdgeEventCapture` | same | Adapter seam; called by edge UI / scanner adapters to enqueue an event. Always offline-safe. |
+| `EdgeReplayWorker` | same | `BackgroundService` ticking every N seconds (default 30). Probes `/healthz/ready`, drains FIFO up to `MaxBatchSize`, marks `ReplayedAt` on success. |
+| `IEdgeReplayClient` | same | HTTP seam; production impl talks `X-Edge-Token`-authed JSON to `/api/edge/replay`. Mocked in tests. |
+| `/api/edge/replay` | `modules/inspection/src/NickERP.Inspection.Web/Endpoints/EdgeReplayEndpoint.cs` | Anonymous endpoint gated by `X-Edge-Token` shared secret. Writes audit rows on behalf of multiple tenants under SetSystemContext. |
+| `audit.edge_node_authorizations` | `platform/NickERP.Platform.Audit.Database/` | Pre-configured (edge_node_id, tenant_id) pairs. Suite-wide reference data — no tenant RLS. |
+| `audit.edge_node_replay_log` | same | One row per replayed batch. Operator visibility into edge activity. No tenant RLS — batches can carry multiple tenants. |
+
+### 14.3 Per-edge FIFO ordering
+
+Each edge replays its own events strictly in capture order (by
+auto-increment `Id`). The server does **not** try to interleave
+across edges into a global order — Edge A's audit rows land in their
+captured order, Edge B's land in their captured order, and the two
+streams interleave in `audit.events.IngestedAt` but each preserves
+its own `OccurredAt` timeline.
+
+### 14.4 Edge timestamps preserved
+
+Every captured row carries an `EdgeTimestamp` from the edge's wall-
+clock. On replay the server uses it as the audit row's `OccurredAt`
+("when did this happen") and the server's wall-clock at replay-time
+becomes `IngestedAt` ("when did the audit log first see it"). Replay-
+time is also injected into the audit payload as `replay_source =
+"edge"`, `replay_node_id = <edge id>`, `replayed_at = <server time>`
+so consumers can spot edge-replayed events.
+
+### 14.5 Idempotent replay
+
+The dedup key on the audit row is the existing
+`(TenantId, IdempotencyKey)` unique index. The server constructs the
+key deterministically as
+`edge|<edge-id>|<edge-ticks>|<sha256-of-payload>` so two replays of
+the same edge row collapse to a single audit row. A re-replayed
+batch returns `ok=true` for every entry but writes a fresh
+`edge_node_replay_log` summary, so ops sees the retry happened.
+
+### 14.6 v0 scope: audit events only
+
+The replay endpoint accepts only one `eventTypeHint` value:
+`audit.event.replay`. The payload is a `DomainEvent`-shape (event
+type, entity, optional actor + correlation), and the server writes
+it to `audit.events` verbatim plus the replay metadata.
+
+The fan-out to other event types (scan-captured, voucher-disbursed)
+is a follow-up sprint when actual edge use-cases land. The mechanism
+is what matters; v0 ships the mechanism end-to-end without
+refactoring every existing append code path.
+
+### 14.7 Auth + secret rotation (TODO)
+
+v0 uses a shared `X-Edge-Token` secret matched against the server's
+`EdgeNode:SharedSecret` config. Rotating the secret invalidates every
+edge until they're re-deployed with the new value. This is a
+deliberate v0 simplification, called out in
+[`runbooks/06-edge-node-stalled.md`](runbooks/06-edge-node-stalled.md)
+as a TODO: per-edge mTLS or per-edge JWTs are the proper edge-auth
+path, layered on top of a network ACL that limits ingress to known
+edge addresses.
+
+### 14.8 SetSystemContext caller
+
+The replay endpoint writes audit rows for multiple tenants in a
+single batch and is registered in
+[`system-context-audit-register.md`](system-context-audit-register.md)
+as a `SetSystemContext()` caller. The Sprint 5 opt-in clause on
+`audit.events` already admits the writes via the
+`OR app.tenant_id = '-1'` policy clause; no new opt-in is required.
+
+The two new tables (`edge_node_authorizations`,
+`edge_node_replay_log`) are deliberately NOT under tenant RLS —
+documented inline in the migration. Authorizations are suite-wide
+reference data; replay-log rows can carry multiple tenants in a
+single batch.
+
+---
+
+## 15. Related documents
 
 - **This repo (`C:\Shared\ERP V2\`):**
   - [`../README.md`](../README.md) — entry point.
