@@ -200,7 +200,13 @@ order:
     `NickERP_NickHR_*` on `:5430` range
 - **Publish dir.** `C:\Shared\ERP V2\publish\<service>\` (mirrors v1's
   `C:\Shared\NSCIM_PRODUCTION\publish\`).
-- **Robocopy source.** `Y:\` per the existing v1 pattern.
+- **Robocopy source.** v0 picked the simpler same-host pattern: `dotnet
+  publish -o C:\Shared\ERP V2\publish\<service>\` writes directly into
+  the NSSM `AppDirectory`, collapsing v1's separate robocopy step into
+  the publish step. The cross-host `Y:\` variant (separate dev box →
+  robocopy from `Y:\` into prod) is documented in `Deploy.ps1`'s header
+  as the "future when dev box is separate from prod" pattern; switch
+  shape if/when that ever becomes the case.
 - **Script shape.** Mirror `Deploy.ps1` from v1 (parameters
   `-ApiOnly`, `-WebAppOnly`, `-SkipBuild`, `-DryRun`). Each ERP V2
   service gets a publish step + a service-restart step + a healthz
