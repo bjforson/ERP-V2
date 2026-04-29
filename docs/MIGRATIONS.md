@@ -127,3 +127,89 @@ should run anyway (a reviewable SQL artifact, not a black-box
 
 If a future .NET / EF Core release fixes this, drop this section.
 Until then: assume the quirk, run migrations the documented way.
+
+---
+
+## NickFinance prerequisites (G2)
+
+The NickFinance pathfinder (G2) introduced a NEW Postgres database
+(`nickerp_nickfinance`) — sibling to `nickerp_platform` /
+`nickerp_inspection`, owns the petty-cash domain. Before running
+`Init_NickFinance` + `Add_RLS_And_Grants`, the database must already
+exist (EF migrations cannot `CREATE DATABASE` themselves).
+
+### One-time prereqs
+
+```bash
+# 1. Create the database. Run as postgres superuser; owner stays postgres
+#    so the EF migration's grants stanza can ALTER DEFAULT PRIVILEGES.
+PGPASSWORD="$NICKSCAN_DB_PASSWORD" \
+  '/c/Program Files/PostgreSQL/18/bin/psql.exe' \
+  -U postgres -d postgres \
+  -c 'CREATE DATABASE nickerp_nickfinance OWNER postgres;'
+
+# 2. (One-time, idempotent) ensure the nscim_app role exists. The
+#    Add_RLS_And_Grants migration also runs this stanza, so this is
+#    only needed if you're applying migrations the script-and-pipe
+#    way and want to confirm the role is in place before granting.
+PGPASSWORD="$NICKSCAN_DB_PASSWORD" \
+  '/c/Program Files/PostgreSQL/18/bin/psql.exe' \
+  -U postgres -d nickerp_nickfinance \
+  -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nscim_app') THEN CREATE ROLE nscim_app WITH LOGIN NOSUPERUSER NOBYPASSRLS; END IF; END \$\$;"
+
+# 3. (One-time) grant CONNECT on the new DB so nscim_app can reach it.
+PGPASSWORD="$NICKSCAN_DB_PASSWORD" \
+  '/c/Program Files/PostgreSQL/18/bin/psql.exe' \
+  -U postgres -d nickerp_nickfinance \
+  -c 'GRANT CONNECT ON DATABASE nickerp_nickfinance TO nscim_app;'
+```
+
+### Connection string env var
+
+Hosts that wire NickFinance read `ConnectionStrings:NickFinance`
+(canonical) or, if set, the env var `NICKERP_NICKFINANCE_DB_CONNECTION`
+for design-time scenarios (e.g. `dotnet ef migrations script`). The
+runtime connection string lives in `appsettings.json`:
+
+```json
+"ConnectionStrings": {
+  "NickFinance": "Host=localhost;Port=5432;Database=nickerp_nickfinance;Username=nscim_app;Password=__OVERRIDE_VIA_USER_SECRETS_OR_ENV__"
+}
+```
+
+### Generating + applying the migrations
+
+```bash
+cd "C:/Shared/erp-v2-g2/modules/nickfinance/src/NickERP.NickFinance.Database"
+
+# Idempotent SQL artifact — review before applying.
+dotnet ef migrations script 0 Add_RLS_And_Grants \
+  --idempotent --output /tmp/g2-init.sql --context NickFinanceDbContext
+
+# Apply via psql (avoids the dotnet-ef child-process env-var quirk).
+PGPASSWORD="$NICKSCAN_DB_PASSWORD" \
+  '/c/Program Files/PostgreSQL/18/bin/psql.exe' \
+  -U postgres -d nickerp_nickfinance -f /tmp/g2-init.sql
+```
+
+### What the migrations install
+
+- `Init_NickFinance` (`20260429131827`) — creates the `nickfinance`
+  schema and 5 tables: `petty_cash_boxes`, `petty_cash_vouchers`,
+  `petty_cash_ledger_events`, `petty_cash_periods`, `fx_rate`. Includes
+  CHECK constraints (custodian ≠ approver, opening-balance currency =
+  box currency, ledger amounts ≥ 0, FX rate > 0).
+- `Add_RLS_And_Grants` (`20260429131858`) — enables + FORCE-enables
+  RLS on all 5 tables; standard `tenant_isolation_*` policy on the
+  4 tenant-owned tables; `fx_rate` opts in to `app.tenant_id = '-1'`
+  for NULL-tenant inserts via `SetSystemContext`. Grants
+  SELECT/INSERT/UPDATE on every table to `nscim_app` —
+  **no DELETE** (ledger is append-only).
+
+### Smoke
+
+After the migrations apply, the host's normal startup path
+(`Database.Migrate()` if `RunMigrationsOnStartup=true`) will be a
+no-op against a freshly-applied DB. The Postgres-backed RLS smoke
+tests in `tests/NickERP.NickFinance.Database.Tests/` pass against a
+real cluster; they auto-skip when the DB doesn't exist.
