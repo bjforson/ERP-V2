@@ -23,6 +23,11 @@
     <ProjectReference Include="..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Web.Shared\NickERP.Platform.Web.Shared.csproj" />
+    <!-- G2 — NickFinance pathfinder. Program.cs guards on
+         ConnectionStrings:NickFinance and skips registration if absent. -->
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Core\NickERP.NickFinance.Core.csproj" />
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Database\NickERP.NickFinance.Database.csproj" />
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Web\NickERP.NickFinance.Web.csproj" />
   </ItemGroup>
 
 </Project>

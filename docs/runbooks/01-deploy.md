@@ -12,6 +12,16 @@
 > `NickERP_NickHR_*` on the `:5430` range) follow the same pattern; the
 > service catalogue in `Deploy.ps1` is the place to add them.
 >
+> **G2 — NickFinance Petty Cash pathfinder.** As of 2026-04-29 the
+> `NickERP.NickFinance.*` projects ship as a Razor class library
+> hosted by `apps/portal` (no separate web service). A new database
+> `nickerp_nickfinance` MUST be created out-of-band before the first
+> deploy with NickFinance enabled — see
+> [`docs/MIGRATIONS.md`](../MIGRATIONS.md) "NickFinance prerequisites".
+> The portal reads `ConnectionStrings:NickFinance` and skips
+> registration when absent, so a deployment without the new DB still
+> boots cleanly.
+>
 > **Sister docs:** [`02-secret-rotation.md`](02-secret-rotation.md) for
 > credential rotations,
 > [`docs/MIGRATIONS.md`](../MIGRATIONS.md) for the EF migration env-var

@@ -1,0 +1,144 @@
+@page "/finance/fx-rates"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Identity.Auth
+@inject NickFinanceDbContext Db
+@inject FxRatePublishService Publisher
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>FX Rates — NickFinance</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>FX rates</h1>
+        <p class="portal-page-subtitle">
+            Suite-wide; published daily by finance admin under SetSystemContext.
+            See <code>docs/system-context-audit-register.md</code>.
+        </p>
+    </div>
+</header>
+
+@if (!_hasPublishRole)
+{
+    <section class="portal-section">
+        <div class="portal-card">
+            <p>You need the <code>petty_cash.publish_fx</code> role to publish rates.</p>
+        </div>
+    </section>
+}
+else
+{
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Publish a rate</h2>
+            <EditForm Model="_form" OnValidSubmit="PublishAsync" FormName="publish-fx" class="portal-form">
+                <div class="portal-form-row">
+                    <label><span>From</span><InputText class="portal-input" @bind-Value="_form.From" placeholder="USD" /></label>
+                    <label><span>To</span><InputText class="portal-input" @bind-Value="_form.To" placeholder="GHS" /></label>
+                    <label><span>Rate</span><InputNumber class="portal-input" @bind-Value="_form.Rate" /></label>
+                    <label><span>Effective date</span><InputDate class="portal-input" @bind-Value="_form.EffectiveDate" /></label>
+                </div>
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary">Publish</button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="portal-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </section>
+}
+
+<section class="portal-section">
+    <h2>Recent rates</h2>
+    @if (_rates is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_rates.Count == 0)
+    {
+        <p>No rates published yet.</p>
+    }
+    else
+    {
+        <table class="portal-table">
+            <thead>
+                <tr><th>From</th><th>To</th><th>Effective</th><th>Rate</th><th>Published</th><th>By</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _rates)
+                {
+                    <tr>
+                        <td>@r.FromCurrency</td>
+                        <td>@r.ToCurrency</td>
+                        <td>@r.EffectiveDate.ToString("yyyy-MM-dd")</td>
+                        <td>@r.Rate.ToString("F8")</td>
+                        <td>@r.PublishedAt.ToString("u")</td>
+                        <td><code>@r.PublishedByUserId</code></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<FxRate>? _rates;
+    private bool _hasPublishRole;
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm]
+    private PublishForm _form { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        _hasPublishRole = PeriodLockService.HasPublishFxRole(auth.User);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _rates = await Db.FxRates.AsNoTracking()
+            .OrderByDescending(r => r.EffectiveDate)
+            .ThenBy(r => r.FromCurrency)
+            .Take(50)
+            .ToListAsync();
+    }
+
+    private async Task PublishAsync()
+    {
+        try
+        {
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = auth.User?.FindFirst(NickErpClaims.Id)?.Value;
+            if (!Guid.TryParse(idClaim, out var actor))
+            {
+                _message = "No authenticated user id.";
+                return;
+            }
+
+            await Publisher.PublishAsync(actor, new[]
+            {
+                new FxRatePublishRequest(_form.From, _form.To, _form.Rate, _form.EffectiveDate)
+            });
+
+            _form = new PublishForm();
+            _message = "Published.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    public sealed class PublishForm
+    {
+        public string From { get; set; } = "USD";
+        public string To { get; set; } = "GHS";
+        public decimal Rate { get; set; } = 1m;
+        public DateTime EffectiveDate { get; set; } = DateTime.UtcNow.Date;
+    }
+}

@@ -533,7 +533,164 @@ Point-in-time copies into v2 new files with rename. **No shared references.**
 
 ---
 
-## 13. Related documents
+## 13. NickFinance (G2 — pathfinder for second module)
+
+**Status (2026-04-29):** Petty Cash vertical slice — first implementation.
+
+NickFinance is the second module on the v2 platform after Inspection.
+G2 ships the Petty Cash pathfinder — a complete vertical slice
+(domain → DB → projection → UI → endpoints → tests) that proves the
+platform supports more than one module. Design of record:
+[`product-calls-2026-04-29.md`](product-calls-2026-04-29.md) §1
+("G2 — NickFinance Petty Cash domain shape"). Every "Decision" line
+in that doc is binding; this section summarises the shape only.
+
+### 13.1 Module layout
+
+```
+modules/nickfinance/
+├── src/
+│   ├── NickERP.NickFinance.Core/        Money value object, voucher
+│   │                                     state-machine validator,
+│   │                                     entities, role constants.
+│   ├── NickERP.NickFinance.Database/    NickFinanceDbContext + 2
+│   │                                     EF migrations
+│   │                                     (Init_NickFinance,
+│   │                                      Add_RLS_And_Grants).
+│   └── NickERP.NickFinance.Web/         Razor class library (NOT a
+│                                         standalone web app — hosted
+│                                         by apps/portal). Contributes
+│                                         pages + endpoints + workflow
+│                                         services to the portal.
+└── (no plugins — Petty Cash core IS the module; vendor adapters
+   only land when there's a vendor in the loop).
+```
+
+### 13.2 Database
+
+NickFinance owns its own database — `nickerp_nickfinance` — sibling
+to `nickerp_platform` and `nickerp_inspection`. Five tables in the
+`nickfinance` schema:
+
+| Table | Tenant-owned | RLS shape |
+|---|---|---|
+| `petty_cash_boxes` | yes | `tenant_isolation_*` |
+| `petty_cash_vouchers` | yes | `tenant_isolation_*` |
+| `petty_cash_ledger_events` | yes (append-only) | `tenant_isolation_*` |
+| `petty_cash_periods` | yes (composite PK) | `tenant_isolation_*` |
+| `fx_rate` | suite-wide (TenantId nullable) | opt-in `OR app.tenant_id = '-1'` (G2 entry in audit register) |
+
+`nscim_app` gets SELECT/INSERT/UPDATE on every table —
+**no DELETE** (ledger is append-only; vouchers / boxes mutate via
+state but never disappear).
+
+### 13.3 Domain shape
+
+- **`Money` value object.** `(decimal Amount, string CurrencyCode)`,
+  `decimal(18,4)` backing, currency-aware operators reject
+  mismatched-currency arithmetic at the type level. Amount is
+  always `>= 0`; direction is carried on the ledger event's
+  `LedgerDirection` enum (Debit / Credit / Adjust).
+- **Voucher state machine.** `Request → Approve → Disburse →
+  Reconcile`, plus terminal exits `Rejected` and `Cancelled`. Cash
+  moves on `Disburse` only — that's the only transition that emits a
+  Debit ledger event. `Reconcile` may emit an Adjust ledger event
+  for over- or under-spend. Validated by
+  `Core.Services.VoucherTransitions.IsAllowed` (pure function;
+  unit-tested without DI).
+- **Boxes have a custodian + an approver.** Both required at box
+  creation; CHECK constraint enforces they differ
+  (separation-of-duties at the DB layer).
+- **Ledger events.** Single-entry per cash movement; carries BOTH
+  the native amount (in box currency) AND the base amount (in
+  tenant base currency) snapshot at posted-at. Reversals are paired
+  rows, never updates. A future GL projection table can synthesize
+  paired debit/credit rows against a Chart of Accounts without
+  losing fidelity.
+- **Period locks.** Soft locks: closing a period rejects new ledger
+  events whose `posted_at` lands inside it, unless the actor holds
+  `petty_cash.reopen_period`. Late posts emit
+  `nickfinance.petty_cash.late_post` for SOX-style review.
+- **FX rates.** Suite-wide (NULL `TenantId`); published daily by
+  finance admin via `SetSystemContext()`. Per-event lookup resolves
+  the latest row whose `effective_date <= posted_at::date`. Missing
+  rate → `FxRateNotPublishedException` ("ask finance to publish").
+
+### 13.4 Cross-DB tenant base-currency lookup
+
+Per §1.8 of the product-calls doc, NickFinance ledger events need the
+tenant's base currency to compute `amount_base`. The base currency
+lives on the `tenants` row in `nickerp_platform`, not in
+`nickerp_nickfinance`. We chose option 2 of the two options in the
+spec: inject an `ITenantBaseCurrencyLookup` service that reads from
+the platform `TenancyDbContext` (already in DI on every host that
+loads NickFinance). Cached in-process for 5 minutes.
+
+**Schema decision (departure from literal spec text).** The
+`tenants` table already has a `Currency` column with default `'GHS'`
+that carries exactly the semantic the spec calls for. We read from
+that column rather than introduce a duplicate `base_currency_code`
+field. A future sprint can rename the column platform-wide if the
+naming bothers anyone.
+
+### 13.5 Audit + notifications
+
+Workflow events emitted via `IEventPublisher` (the same audit pipeline
+inspection uses):
+
+- `nickfinance.box.created`
+- `nickfinance.voucher.requested`
+- `nickfinance.voucher.approved`
+- `nickfinance.voucher.rejected`
+- `nickfinance.voucher.cancelled`
+- `nickfinance.voucher.disbursed`
+- `nickfinance.voucher.reconciled`
+- `nickfinance.petty_cash.late_post`
+- `nickfinance.fx_rate.published`
+
+Three notification rules in
+`platform/NickERP.Platform.Audit.Database/Services/NotificationRules/`:
+`VoucherApprovalRequestedRule` (notifies box approver),
+`VoucherApprovedRule` + `VoucherDisbursedRule` (notify requester).
+Plug into the existing `AuditNotificationProjector` via DI, surface
+in the existing P3 inbox UI.
+
+### 13.6 Hosting + roles
+
+The pathfinder is hosted by `apps/portal` — `NickFinance.Web` is a
+Razor class library (`Microsoft.NET.Sdk.Razor`), not a standalone web
+app. The portal calls `AddNickErpNickFinanceWeb(Configuration)`
+which registers the module IFF `ConnectionStrings:NickFinance` is
+present; the sidenav AppCard is hidden when not. Endpoints live at
+`/api/nickfinance/...`, pages at `/finance/petty-cash/...`.
+
+Three roles, today claim-based (TODO: move to platform
+role-management when that lands):
+
+- `petty_cash.reopen_period` — can post into closed periods.
+- `petty_cash.publish_fx` — can publish suite-wide FX rates
+  (the only NickFinance `SetSystemContext` caller for v0).
+- `petty_cash.manage_periods` — can close / reopen periods.
+
+### 13.7 Tests
+
+- `tests/NickERP.NickFinance.Core.Tests/` — Money invariants +
+  voucher transition matrix.
+- `tests/NickERP.NickFinance.Database.Tests/` — Postgres-backed RLS
+  smoke (auto-skip when `nickerp_nickfinance` is unreachable).
+- `tests/NickERP.NickFinance.Web.Tests/` — workflow service +
+  endpoints + notification rules + period-lock service via the EF
+  in-memory provider.
+
+### 13.8 Migrations + ops
+
+See [`MIGRATIONS.md`](MIGRATIONS.md) "NickFinance prerequisites"
+section — covers the one-time `CREATE DATABASE` + GRANT CONNECT
+steps before applying `Init_NickFinance` + `Add_RLS_And_Grants`.
+
+---
+
+## 14. Related documents
 
 - **This repo (`C:\Shared\ERP V2\`):**
   - [`../README.md`](../README.md) — entry point.

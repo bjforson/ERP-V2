@@ -1,0 +1,162 @@
+@page "/finance/petty-cash/periods"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Identity.Auth
+@using NickERP.Platform.Tenancy
+@inject NickFinanceDbContext Db
+@inject PeriodLockService PeriodLock
+@inject ITenantContext TenantCtx
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Periods — NickFinance</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Period locks</h1>
+        <p class="portal-page-subtitle">
+            Soft locks: closed periods reject new ledger events unless the actor holds
+            <code>petty_cash.reopen_period</code>. Late posts emit
+            <code>nickfinance.petty_cash.late_post</code>.
+        </p>
+    </div>
+</header>
+
+@if (!_hasManageRole)
+{
+    <section class="portal-section">
+        <div class="portal-card">
+            <p>You need the <code>petty_cash.manage_periods</code> role to close or reopen periods.</p>
+        </div>
+    </section>
+}
+else
+{
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Close a period</h2>
+            <EditForm Model="_form" OnValidSubmit="CloseAsync" FormName="close-period" class="portal-form">
+                <div class="portal-form-row">
+                    <label><span>Year-month (YYYY-MM)</span><InputText class="portal-input" @bind-Value="_form.YearMonth" placeholder="2026-04" /></label>
+                </div>
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary">Close</button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="portal-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </section>
+}
+
+<section class="portal-section">
+    <h2>Recent period rows</h2>
+    @if (_periods is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_periods.Count == 0)
+    {
+        <p>No closed periods yet.</p>
+    }
+    else
+    {
+        <table class="portal-table">
+            <thead>
+                <tr><th>Period</th><th>Closed at</th><th>By</th><th></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var p in _periods)
+                {
+                    <tr>
+                        <td>@p.PeriodYearMonth</td>
+                        <td>@(p.ClosedAt?.ToString("u") ?? "—")</td>
+                        <td>@(p.ClosedByUserId is null ? "—" : (object)p.ClosedByUserId)</td>
+                        <td>
+                            @if (p.IsClosed && _hasManageRole)
+                            {
+                                <button class="portal-button" @onclick="() => ReopenAsync(p.PeriodYearMonth)">Reopen</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<PettyCashPeriod>? _periods;
+    private bool _hasManageRole;
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm]
+    private CloseForm _form { get; set; } = new() { YearMonth = DateTime.UtcNow.ToString("yyyy-MM") };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        _hasManageRole = PeriodLockService.HasManagePeriodsRole(auth.User);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _periods = await Db.Periods.AsNoTracking()
+            .OrderByDescending(p => p.PeriodYearMonth)
+            .Take(24)
+            .ToListAsync();
+    }
+
+    private async Task CloseAsync()
+    {
+        try
+        {
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = auth.User?.FindFirst(NickErpClaims.Id)?.Value;
+            if (!Guid.TryParse(idClaim, out var actor))
+            {
+                _message = "No authenticated user id.";
+                return;
+            }
+            if (!TenantCtx.IsResolved)
+            {
+                _message = "Tenant context not resolved.";
+                return;
+            }
+
+            await PeriodLock.CloseAsync(TenantCtx.TenantId, _form.YearMonth, actor);
+            _message = $"Closed {_form.YearMonth}.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    private async Task ReopenAsync(string ym)
+    {
+        try
+        {
+            if (!TenantCtx.IsResolved)
+            {
+                _message = "Tenant context not resolved.";
+                return;
+            }
+            await PeriodLock.ReopenAsync(TenantCtx.TenantId, ym);
+            _message = $"Reopened {ym}.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    public sealed class CloseForm
+    {
+        public string YearMonth { get; set; } = string.Empty;
+    }
+}

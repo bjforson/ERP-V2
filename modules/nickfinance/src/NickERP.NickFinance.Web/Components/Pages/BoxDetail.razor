@@ -1,0 +1,152 @@
+@page "/finance/petty-cash/boxes/{BoxId:guid}"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@inject NickFinanceDbContext Db
+@inject VoucherWorkflowService Workflow
+@inject NavigationManager Nav
+
+<PageTitle>Box detail — NickFinance</PageTitle>
+
+@if (_box is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <header class="portal-page-header">
+        <div>
+            <h1>@_box.Name <small style="font-weight:400">(@_box.Code)</small></h1>
+            <p class="portal-page-subtitle">
+                Currency <strong>@_box.CurrencyCode</strong>;
+                opening balance @_box.OpeningBalanceAmount.ToString("F2");
+                period <strong>@_currentPeriod</strong>.
+            </p>
+        </div>
+    </header>
+
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Current balance (book)</h2>
+            <p class="portal-stats">
+                <strong>@_balance.ToString("F2") @_box.CurrencyCode</strong>
+                — opening @_box.OpeningBalanceAmount.ToString("F2"),
+                disbursed @_disbursed.ToString("F2"),
+                replenished @_replenished.ToString("F2"),
+                adjusted @_adjusted.ToString("F2")
+            </p>
+        </div>
+    </section>
+
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Raise a new voucher</h2>
+            <EditForm Model="_form" OnValidSubmit="RaiseAsync" FormName="raise-voucher" class="portal-form">
+                <div class="portal-form-row">
+                    <label><span>Purpose</span><InputText class="portal-input" @bind-Value="_form.Purpose" placeholder="Office supplies" /></label>
+                    <label><span>Amount (@_box.CurrencyCode)</span><InputNumber class="portal-input" @bind-Value="_form.Amount" /></label>
+                </div>
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary">Request</button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="portal-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </section>
+
+    <section class="portal-section">
+        <h2>Vouchers</h2>
+        @if (_vouchers is null || _vouchers.Count == 0)
+        {
+            <p>No vouchers yet.</p>
+        }
+        else
+        {
+            <table class="portal-table">
+                <thead>
+                    <tr><th>#</th><th>Purpose</th><th>Amount</th><th>State</th><th>Requester</th><th></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var v in _vouchers)
+                    {
+                        <tr>
+                            <td>@v.SequenceNumber</td>
+                            <td>@v.Purpose</td>
+                            <td>@v.RequestedAmount.ToString("F2") @v.RequestedCurrency</td>
+                            <td>@v.State</td>
+                            <td><code>@v.RequestedByUserId</code></td>
+                            <td><a class="portal-link" href="@($"/finance/petty-cash/vouchers/{v.Id}")">Open</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid BoxId { get; set; }
+
+    private PettyCashBox? _box;
+    private List<Voucher>? _vouchers;
+    private decimal _balance;
+    private decimal _disbursed;
+    private decimal _replenished;
+    private decimal _adjusted;
+    private string _currentPeriod = string.Empty;
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm]
+    private RaiseForm _form { get; set; } = new();
+
+    protected override async Task OnParametersSetAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _box = await Db.Boxes.AsNoTracking().FirstOrDefaultAsync(b => b.Id == BoxId);
+        if (_box is null) return;
+        _vouchers = await Db.Vouchers.AsNoTracking()
+            .Where(v => v.BoxId == BoxId)
+            .OrderByDescending(v => v.SequenceNumber)
+            .ToListAsync();
+
+        var ledger = await Db.LedgerEvents.AsNoTracking()
+            .Where(le => le.BoxId == BoxId)
+            .ToListAsync();
+        _disbursed = ledger
+            .Where(le => le.EventType == LedgerEventType.Disburse && le.Direction == LedgerDirection.Debit)
+            .Sum(le => le.AmountNative);
+        _replenished = ledger
+            .Where(le => le.EventType == LedgerEventType.Replenish)
+            .Sum(le => le.AmountNative);
+        _adjusted = ledger
+            .Where(le => le.EventType == LedgerEventType.Adjust)
+            .Sum(le => le.Direction == LedgerDirection.Debit ? -le.AmountNative : le.AmountNative);
+        _balance = _box.OpeningBalanceAmount + _replenished - _disbursed + _adjusted;
+
+        _currentPeriod = PeriodLockService.GetYearMonth(DateTimeOffset.UtcNow);
+    }
+
+    private async Task RaiseAsync()
+    {
+        try
+        {
+            await Workflow.RequestAsync(BoxId, _form.Purpose, _form.Amount);
+            _form = new RaiseForm();
+            _message = "Voucher raised.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    public sealed class RaiseForm
+    {
+        public string Purpose { get; set; } = string.Empty;
+        public decimal Amount { get; set; } = 0m;
+    }
+}
