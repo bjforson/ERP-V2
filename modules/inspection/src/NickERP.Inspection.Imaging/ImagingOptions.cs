@@ -57,4 +57,29 @@ public sealed class ImagingOptions
     /// budgets but trade off Postgres pressure.
     /// </summary>
     public int SourceJanitorIntervalMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// FU-3 (Sprint 6) — defence-in-depth hook for the astronomically
+    /// unlikely cross-tenant SHA-256 collision case. <c>DiskImageStore</c>
+    /// is content-addressed: <c>source/{hash[0..2]}/{hash}.{ext}</c>.
+    /// If two tenants ever produced byte-identical scans, both
+    /// <see cref="Core.Entities.ScanArtifact"/> rows would point at the
+    /// same blob and <see cref="SourceJanitorWorker"/>'s per-tenant
+    /// "still-referenced" check could race-evict the blob from under
+    /// the other tenant.
+    ///
+    /// <para>
+    /// When <c>true</c>, <see cref="SourceJanitorWorker"/> would refuse
+    /// to evict a content-addressed blob whose hash appears in any other
+    /// tenant's <c>scan_artifacts</c> rows. <strong>Currently NOT
+    /// enforced</strong> — declared as a future-hardening hook (FU-3).
+    /// Enforcement requires Sprint-5's
+    /// <c>ITenantContext.SetSystemContext()</c> mechanism plus an
+    /// <c>inspection.scan_artifacts</c> RLS opt-in clause; both are out
+    /// of scope for FU-3. See <c>docs/ARCHITECTURE.md</c> §7.7.1
+    /// (Cross-tenant blob collision posture) for the full rationale and
+    /// the deferred-enforcement plan. Default: <c>false</c>.
+    /// </para>
+    /// </summary>
+    public bool EnforceCrossTenantBlobGuard { get; set; } = false;
 }
