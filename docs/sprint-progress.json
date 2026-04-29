@@ -1,8 +1,63 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": null,
-  "currentSprintNote": "Awaiting next master spawn. Drainable backlog refilled 2026-04-29 after the post-Sprint-8 product-call drain (see docs/product-calls-2026-04-29.md). G2 and P2 are now unblocked with binding specs. Image-analysis track stays explicitly user-driven.",
+  "currentSprint": {
+    "id": "Sprint 9",
+    "name": "Followup-2 Sweep (sequential)",
+    "goal": "Drain the four-followup queue captured by the 2026-04-29 product calls. Per user call: 'all sequentially' — one agent at a time, in priority order. Specs in docs/product-calls-2026-04-29.md §3.",
+    "startedAt": "2026-04-29",
+    "items": [
+      {
+        "id": "FU-deploy",
+        "title": "Deploy.ps1 for ERP V2 (same-Windows-host target)",
+        "phase": "Production prep",
+        "status": "in-progress",
+        "branch": "plan/fu-deploy-script",
+        "commit": null,
+        "agentId": "dispatched 2026-04-29",
+        "dispatchedAt": "2026-04-29",
+        "completedAt": null,
+        "notes": "NickERP_Inspection_Web :5410, NickERP_Portal :5400, reserved :5420/:5430. Per docs/product-calls-2026-04-29.md §3.1."
+      },
+      {
+        "id": "FU-userid",
+        "title": "app.user_id session setting + RLS user-isolation promotion",
+        "phase": "Production prep",
+        "status": "queued",
+        "branch": "plan/fu-userid-rls",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "Plumb through IdentityTenancyInterceptor; promote audit.notifications user filter from LINQ to RLS. Per §3.2."
+      },
+      {
+        "id": "FU-host-status",
+        "title": "BackgroundService liveness endpoint /healthz/workers",
+        "phase": "Production prep",
+        "status": "queued",
+        "branch": "plan/fu-host-status-endpoint",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "IBackgroundServiceProbe interface + /healthz/workers endpoint. Per §3.3."
+      },
+      {
+        "id": "FU-icums-signing",
+        "title": "IcumsGh envelope signing + key rotation",
+        "phase": "Production prep",
+        "status": "queued",
+        "branch": "plan/fu-icums-signing",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "HMAC-SHA256 detached signature; SetSystemContext rotation with overlap window. Per §3.4."
+      }
+    ]
+  },
+  "currentSprintNote": "Sprint 9 — Followup-2 sweep, sequential execution per user call.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -15,8 +70,8 @@
     }
   ],
   "rollingMasterScope": {
-    "drainable": ["FU-deploy", "FU-userid", "FU-host-status", "FU-icums-signing", "G2", "P2"],
-    "drainableNote": "Refilled 2026-04-29 after the product-call drain. Execution priority is the array order: four followups first (sequential per user call), then G2 NickFinance Petty Cash pathfinder, then P2 edge node. Specs in docs/product-calls-2026-04-29.md.",
+    "drainable": ["G2", "P2"],
+    "drainableNote": "Sprint 9 (Followup-2 sweep: FU-deploy, FU-userid, FU-host-status, FU-icums-signing) is in-flight as currentSprint. Remaining drainable: G2 NickFinance pathfinder, then P2 edge node. Specs in docs/product-calls-2026-04-29.md.",
     "gated": [],
     "outOfScope": [
       { "id": "image-analysis-track", "reason": "User-driven; spawns its own master run when ready. Heads-up: untracked IInboundOutcomeAdapter.cs may reference the old AuthorityDocument DTO name — rename to AuthorityDocumentDto (FU-7) when resuming. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source." }
