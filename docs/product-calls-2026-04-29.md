@@ -220,10 +220,13 @@ order:
 
 - **Why.** P3 deferred this. Lets `audit.notifications` user-isolation
   move from LINQ-level to RLS-level. Mirrors `app.tenant_id` plumbing.
-- **Plumb in `IdentityTenancyInterceptor`** (the Sprint-2 / H2 piece).
-  On `ConnectionOpening`, if there's a current user (from `IUserContext`
-  or equivalent), `SET app.user_id = <uuid>::uuid`. Mirror with
-  fail-closed default `'00000000-0000-0000-0000-000000000000'`.
+- **Plumb in `TenantConnectionInterceptor`** (the Sprint-1 / F1 piece in
+  `NickERP.Platform.Tenancy`; spec earlier mistakenly called this
+  `IdentityTenancyInterceptor` — that class doesn't exist). On
+  `ConnectionOpened`, resolve the current user via `IUserContext` and
+  emit `SET app.user_id = <uuid>::uuid` alongside `SET app.tenant_id`.
+  Fail-closed default for unauthenticated paths and system context:
+  `'00000000-0000-0000-0000-000000000000'`.
 - **Promote `audit.notifications` user filter.** Drop the LINQ filter;
   add an RLS policy clause `"UserId" = current_setting('app.user_id', true)::uuid`.
 - **System-context interaction.** `SetSystemContext()` paths reading
