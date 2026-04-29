@@ -6,6 +6,7 @@ using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Platform.Plugins;
+using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
 
@@ -38,13 +39,18 @@ namespace NickERP.Inspection.Web.Services;
 /// the watch folder. The SQL-backed durable queue (ARCHITECTURE §7.7) lifts
 /// this restriction in a later sprint.
 /// </summary>
-public sealed class ScannerIngestionWorker : BackgroundService
+public sealed class ScannerIngestionWorker : BackgroundService, IBackgroundServiceProbe
 {
     private static readonly TimeSpan DiscoveryInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RestartBackoff = TimeSpan.FromSeconds(30);
 
     private readonly IServiceProvider _services;
     private readonly ILogger<ScannerIngestionWorker> _logger;
+
+    // Sprint 9 / FU-host-status — probe scratchpad. The discovery loop
+    // is the load-bearing tick (per-instance pumps run as their own
+    // Tasks); we record start/success/failure on the discovery pass.
+    private readonly BackgroundServiceProbeState _probe = new();
 
     public ScannerIngestionWorker(
         IServiceProvider services,
@@ -54,8 +60,15 @@ public sealed class ScannerIngestionWorker : BackgroundService
         _logger = logger;
     }
 
+    /// <inheritdoc />
+    public string WorkerName => nameof(ScannerIngestionWorker);
+
+    /// <inheritdoc />
+    public BackgroundServiceState GetState() => _probe.Snapshot();
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _probe.SetPollInterval(DiscoveryInterval);
         _logger.LogInformation(
             "ScannerIngestionWorker starting — discovering active instances every {Interval}s.",
             DiscoveryInterval.TotalSeconds);
@@ -68,6 +81,7 @@ public sealed class ScannerIngestionWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            _probe.RecordTickStart();
             try
             {
                 var discovered = await DiscoverActiveInstancesAsync(stoppingToken);
@@ -81,9 +95,11 @@ public sealed class ScannerIngestionWorker : BackgroundService
                         () => StreamForInstanceAsync(instanceId, tenantId, stoppingToken),
                         stoppingToken);
                 }
+                _probe.RecordTickSuccess();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                _probe.RecordTickFailure(ex);
                 _logger.LogError(ex, "ScannerIngestionWorker discovery failed; will retry in {Interval}s.",
                     DiscoveryInterval.TotalSeconds);
             }

@@ -74,13 +74,28 @@ else (browser cache, ETag bug). A growing positive number is the
 real stall.
 
 ```bash
-# Is the worker still alive at all?
-# Tail Seq for "PreRenderWorker started" (start-of-run) and "rendered
-# N derivative(s)" (drain progress). The worker logs at LogLevel
-# Information on start, Debug per drained batch.
+# Is the worker still alive at all? Sprint 9 / FU-host-status — the
+# /healthz/workers endpoint reports per-BackgroundService liveness
+# (lastTickAt, tickCount, errorCount, lastError, health verdict).
+# See §4.4 for the response shape.
+curl -s -H "X-Dev-User: dev@nickscan.com" \
+  http://127.0.0.1:5410/healthz/workers | jq '.workers[] | select(.name=="PreRenderWorker")'
 ```
 
+If the response shows `"health": "Healthy"` and a recent `lastTickAt`
+the worker is alive — go on to §4.1 to map the backlog directly. If
+`"health": "Unhealthy"` jump to §5.2 (worker wedged) or §5.1 if the
+last error implicates Postgres. If `/healthz/workers` itself is
+unresponsive, fall back to §4.4's log-tail.
+
 ## 4. Diagnostic commands
+
+> **Start with `/healthz/workers`** (Sprint 9 / FU-host-status). The
+> aggregator endpoint reports per-`BackgroundService` liveness directly:
+> `PreRenderWorker`, `SourceJanitorWorker`, `ScannerIngestionWorker`,
+> `AuditNotificationProjector`. Use it instead of grepping logs for tick
+> lines — the §4.4 log tail remains as a fallback for when the endpoint
+> itself is wedged. See §4.4 for the curl command and the response shape.
 
 ### 4.1 Map the backlog
 
@@ -147,13 +162,62 @@ Patterns:
 
 ### 4.4 Confirm worker liveness
 
-The worker registers as a `BackgroundService` via
-`AddNickErpImaging` in `Program.cs`. There is no host-level "worker
-status" endpoint as of Sprint 7 — liveness is inferred from log
-volume. Tail Seq for the host filtered to the `PreRenderWorker`
-SourceContext. The "alive" signature is a `Debug` event every
-`WorkerPollIntervalSeconds` (5 s prod, 3 s dev) — quiet periods longer
-than 30 s mean the worker is wedged.
+Sprint 9 / FU-host-status added a `/healthz/workers` aggregator that
+turns this from log-grep into one curl. Each `BackgroundService` in
+the host implements `IBackgroundServiceProbe`; the endpoint snapshots
+all of them.
+
+```bash
+curl -s --cookie-jar /tmp/cj --cookie /tmp/cj \
+  -H "X-Dev-User: dev@nickscan.com" \
+  http://127.0.0.1:5410/healthz/workers | jq .
+```
+
+Auth is required (existing `[Authorize]` posture — the response body
+carries last-error messages we don't expose anonymously). Response
+shape:
+
+```json
+{
+  "overall": "Healthy",
+  "workers": [
+    {
+      "name": "AuditNotificationProjector",
+      "health": "Healthy",
+      "lastTickAt": "2026-04-29T11:48:58Z",
+      "lastSuccessAt": "2026-04-29T11:48:58Z",
+      "tickCount": 1234,
+      "errorCount": 0,
+      "lastError": null,
+      "lastErrorAt": null
+    },
+    { "name": "PreRenderWorker", "health": "Healthy", ... },
+    { "name": "ScannerIngestionWorker", "health": "Healthy", ... },
+    { "name": "SourceJanitorWorker", "health": "Healthy", ... }
+  ]
+}
+```
+
+`health` per worker is one of:
+
+- **`Healthy`** — ticked within poll-interval × 3, no recent error.
+- **`Degraded`** — ticked recently but the last cycle errored. Look at
+  `lastError` for the cause; cross-reference §4.3 (attempt history)
+  for poison-message patterns.
+- **`Unhealthy`** — no tick in poll-interval × 5+ (loop wedged) or the
+  worker has never ticked since startup. Almost always means §5.2
+  (host restart) or §5.1 (the worker can't open its DbContext).
+
+Always returns HTTP 200 — the body carries the verdict. The endpoint
+itself going 503 / connection refused means the host is wedged at the
+HTTP layer, not the worker; restart the host (§5.2).
+
+> **Fallback if `/healthz/workers` is itself wedged.** Tail Seq for
+> the host filtered to the worker's SourceContext (`PreRenderWorker`,
+> `SourceJanitorWorker`, `ScannerIngestionWorker`,
+> `AuditNotificationProjector`). The "alive" signature is a `Debug`
+> event every `WorkerPollIntervalSeconds` (5 s prod, 3 s dev) — quiet
+> periods longer than 30 s mean the worker is wedged.
 
 If the host as a whole has had no log events for 30+ s, the host
 process itself is wedged — different problem, restart the host.

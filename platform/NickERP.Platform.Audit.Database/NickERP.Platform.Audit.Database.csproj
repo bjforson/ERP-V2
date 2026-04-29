@@ -26,6 +26,8 @@
     <ProjectReference Include="..\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
     <!-- Phase F1 — AddDbContext wires TenantConnectionInterceptor + TenantOwnedEntityInterceptor. -->
     <ProjectReference Include="..\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <!-- Sprint 9 / FU-host-status — AuditNotificationProjector implements IBackgroundServiceProbe. -->
+    <ProjectReference Include="..\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
   </ItemGroup>
 
   <ItemGroup>
