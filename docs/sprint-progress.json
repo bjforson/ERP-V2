@@ -2,22 +2,22 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": {
-    "id": "Sprint 7",
-    "name": "Operations Runbooks (P1)",
-    "goal": "Ship the standalone operations runbooks the production deploy needs. Per PLAN.md §18.",
+    "id": "Sprint 8",
+    "name": "Audit Projection + Notifications Inbox (P3)",
+    "goal": "Ship audit.notifications projection + notifications inbox UI. After this lands, the rolling-master drainable backlog is empty. Per PLAN.md §19.",
     "startedAt": "2026-04-29",
     "items": [
       {
-        "id": "P1",
-        "title": "Standalone operations runbooks (5 runbooks + README)",
+        "id": "P3",
+        "title": "Audit projection + notifications inbox (Phase A projection + Phase B UI)",
         "phase": "Production prep",
         "status": "in-progress",
-        "branch": "plan/p1-operations-runbooks",
+        "branch": "plan/p3-audit-projection-notifications",
         "commit": null,
         "agentId": "dispatched 2026-04-29",
         "dispatchedAt": "2026-04-29",
         "completedAt": null,
-        "notes": "docs/runbooks/{README.md, 01-deploy.md, 02-secret-rotation.md, 03-prerender-stalled.md, 04-plugin-load-failure.md, 05-icums-outbox-backlog.md}. Per PLAN.md §18.2."
+        "notes": "Phase A: audit.notifications table + AuditNotificationProjector worker + 3 hardcoded INotificationRules. Phase B: NotificationsBell.razor (top-nav) + Notifications.razor (/notifications page) + 3 endpoints + 2 test files. Per PLAN.md §19.2."
       }
     ]
   },
@@ -33,7 +33,7 @@
     }
   ],
   "rollingMasterScope": {
-    "drainable": ["P1", "P3"],
+    "drainable": ["P3"],
     "gated": [
       { "id": "G2", "reason": "domain shape — Petty Cash voucher / custodian / ledger / approval / currency. User delivers ~6 product calls before it ships." },
       { "id": "P2", "reason": "edge-node conflict-resolution semantics likely needs a design call mid-sprint; rolling master may halt on it." }
@@ -43,6 +43,16 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 7",
+      "name": "Operations Runbooks (P1)",
+      "shippedAt": "2026-04-29",
+      "mainCommit": "f0e5afc",
+      "itemCount": 1,
+      "items": [
+        { "id": "P1", "title": "Operations runbooks: README + 01-deploy + 02-secret-rotation + 03-prerender-stalled + 04-plugin-load-failure + 05-icums-outbox-backlog (~2200 lines)", "commit": "15e2488" }
+      ]
+    },
     {
       "id": "Sprint 6",
       "name": "Followup Sweep (FU-2 .. FU-7)",
