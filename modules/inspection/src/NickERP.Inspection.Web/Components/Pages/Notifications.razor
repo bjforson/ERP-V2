@@ -1,0 +1,186 @@
+@page "/notifications"
+@attribute [Authorize]
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Audit.Database
+@using NickERP.Platform.Audit.Database.Entities
+@using NickERP.Platform.Identity.Auth
+@inject AuditDbContext Audit
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Notifications — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Notifications</h1>
+        <p class="inspection-page-subtitle">Activity from across the suite, scoped to your tenant.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-filter-bar inspection-button-row">
+        <label class="inspection-checkbox-label">
+            <input type="checkbox" @bind="_unreadOnly" @bind:after="ReloadAsync" />
+            Unread only
+        </label>
+        <button type="button" class="inspection-button"
+                disabled="@(_rows is null || _rows.All(r => r.ReadAt is not null))"
+                @onclick="MarkAllReadAsync">
+            Mark all as read
+        </button>
+        <span class="inspection-page-subtitle">@_unreadCount unread / @_totalCount total</span>
+    </div>
+
+    @if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0)
+    {
+        <p class="inspection-empty">No notifications. The bell will increment when something needs your attention.</p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Title</th>
+                    <th>Body</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var n in _rows)
+                {
+                    <tr>
+                        <td>@n.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>@n.Title</td>
+                        <td>@n.Body</td>
+                        <td>@(n.ReadAt is null ? "Unread" : "Read")</td>
+                        <td>
+                            @if (n.ReadAt is null)
+                            {
+                                <button class="inspection-button" type="button" @onclick="() => MarkReadAsync(n.Id)">
+                                    Mark as read
+                                </button>
+                            }
+                            @if (!string.IsNullOrEmpty(n.Link))
+                            {
+                                <button class="inspection-button" type="button" @onclick="() => Follow(n)">
+                                    Follow link
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (_page > 1 || _rows.Count == PageSize)
+        {
+            <div class="inspection-button-row">
+                <button class="inspection-button" type="button"
+                        disabled="@(_page <= 1)"
+                        @onclick="PreviousPageAsync">
+                    ‹ Newer
+                </button>
+                <span class="inspection-page-subtitle">Page @_page</span>
+                <button class="inspection-button" type="button"
+                        disabled="@(_rows.Count < PageSize)"
+                        @onclick="NextPageAsync">
+                    Older ›
+                </button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    private const int PageSize = 20;
+    private bool _unreadOnly;
+    private int _page = 1;
+    private int _totalCount;
+    private int _unreadCount;
+    private List<Notification>? _rows;
+    private Guid _currentUser;
+
+    /// <inheritdoc />
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var raw = auth.User.FindFirst(NickErpClaims.Id)?.Value
+                  ?? auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(raw) || !Guid.TryParse(raw, out _currentUser))
+        {
+            _rows = new List<Notification>();
+            return;
+        }
+
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var q = Audit.Notifications.AsNoTracking().Where(n => n.UserId == _currentUser);
+        if (_unreadOnly) q = q.Where(n => n.ReadAt == null);
+
+        _totalCount = await q.CountAsync();
+        _unreadCount = await Audit.Notifications.AsNoTracking()
+            .Where(n => n.UserId == _currentUser && n.ReadAt == null)
+            .CountAsync();
+
+        _rows = await q
+            .OrderByDescending(n => n.CreatedAt)
+            .Skip((_page - 1) * PageSize)
+            .Take(PageSize)
+            .ToListAsync();
+    }
+
+    private async Task MarkReadAsync(Guid id)
+    {
+        var row = await Audit.Notifications.FirstOrDefaultAsync(n => n.Id == id && n.UserId == _currentUser);
+        if (row is null || row.ReadAt is not null) return;
+        row.ReadAt = DateTimeOffset.UtcNow;
+        await Audit.SaveChangesAsync();
+        await ReloadAsync();
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var unread = await Audit.Notifications
+            .Where(n => n.UserId == _currentUser && n.ReadAt == null)
+            .ToListAsync();
+        foreach (var n in unread) n.ReadAt = now;
+        if (unread.Count > 0) await Audit.SaveChangesAsync();
+        await ReloadAsync();
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_page <= 1) return;
+        _page -= 1;
+        await ReloadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        _page += 1;
+        await ReloadAsync();
+    }
+
+    private void Follow(Notification n)
+    {
+        if (string.IsNullOrEmpty(n.Link)) return;
+        // Mark read (fire-and-forget) on follow — common UX pattern.
+        if (n.ReadAt is null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await MarkReadAsync(n.Id); } catch { /* best-effort */ }
+            });
+        }
+        Nav.NavigateTo(n.Link);
+    }
+}

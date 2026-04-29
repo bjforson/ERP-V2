@@ -4,6 +4,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Web.Components;
+using NickERP.Inspection.Web.Endpoints;
 using NickERP.Inspection.Web.HealthChecks;
 using NickERP.Platform.Audit.Database;
 using NickERP.Platform.Identity;
@@ -39,6 +40,15 @@ builder.Services.AddNickErpTenancy();
 // (`tenancy.tenants` is the only table not under RLS).
 builder.Services.AddNickErpTenancyCore(platformConn);
 builder.Services.AddNickErpAuditCore(platformConn);
+
+// Sprint 8 P3 — projection of audit.events into the user-facing
+// notifications inbox. 1s poll in dev / 5s in prod (default). Three
+// hardcoded rules: case-opened (notifies opener), case-assigned
+// (notifies analyst), verdict-rendered (notifies opener).
+builder.Services.AddNickErpAuditNotifications(opts =>
+{
+    opts.PollIntervalSeconds = builder.Environment.IsDevelopment() ? 1 : 5;
+});
 
 // Inspection's own DbContext. Phase F1 — wires the tenancy interceptors
 // (push app.tenant_id to Postgres for RLS + stamp TenantId on inserts).
@@ -218,6 +228,10 @@ app.UseAntiforgery();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+// Sprint 8 P3 — notifications inbox API. Tenant + user scoping enforced
+// at the endpoint layer (LINQ) and at the DB layer (RLS); auth required.
+app.MapNotificationsEndpoints();
 
 // ---------------------------------------------------------------------------
 // Image pipeline endpoint — streams the pre-rendered derivative for a given

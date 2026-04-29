@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NickERP.Platform.Audit.Database.Entities;
 
 namespace NickERP.Platform.Audit.Database;
 
@@ -18,7 +19,7 @@ namespace NickERP.Platform.Audit.Database;
 /// expose update/delete codepaths, but a bad actor with DB access could
 /// still mutate rows unless the role grants are tightened.
 /// </remarks>
-public sealed class AuditDbContext : DbContext
+public class AuditDbContext : DbContext
 {
     public const string SchemaName = "audit";
 
@@ -32,7 +33,36 @@ public sealed class AuditDbContext : DbContext
     /// </summary>
     public DbSet<DomainEventRow> Events => Set<DomainEventRow>();
 
+    /// <summary>
+    /// User-facing notifications, written by
+    /// <c>AuditNotificationProjector</c> as it projects
+    /// <see cref="Events"/> rows through registered notification rules
+    /// (Sprint 8 P3). Tenant-isolated via RLS; user-isolation enforced at
+    /// the LINQ layer (no <c>app.user_id</c> session setting today).
+    /// </summary>
+    public DbSet<Notification> Notifications => Set<Notification>();
+
+    /// <summary>
+    /// Per-projector bookmark table. Single row per projector name; the
+    /// row carries the latest <c>IngestedAt</c> the projector has already
+    /// processed so the next tick can <c>WHERE IngestedAt &gt; checkpoint</c>.
+    /// Intentionally NOT under RLS — system bookmark, no tenant payload.
+    /// </summary>
+    public DbSet<ProjectionCheckpoint> ProjectionCheckpoints => Set<ProjectionCheckpoint>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // virtual so test subclasses can layer in additional model
+        // configuration (e.g. a JsonDocument↔string converter for the EF
+        // in-memory provider, which can't natively map jsonb).
+        OnAuditModelCreating(modelBuilder);
+    }
+
+    /// <summary>
+    /// Production model definition. Pulled out of <see cref="OnModelCreating"/>
+    /// so tests can subclass and add provider-specific configuration on top.
+    /// </summary>
+    protected virtual void OnAuditModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
 
@@ -84,6 +114,57 @@ public sealed class AuditDbContext : DbContext
             e.HasIndex(x => new { x.EventType, x.OccurredAt })
                 .HasDatabaseName("ix_audit_events_system_type_time")
                 .HasFilter("\"TenantId\" IS NULL");
+        });
+
+        // ---- Sprint 8 P3 — audit.notifications -----------------------
+        modelBuilder.Entity<Notification>(e =>
+        {
+            e.ToTable("notifications");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.UserId).IsRequired();
+            e.Property(x => x.EventId).IsRequired();
+            e.Property(x => x.EventType).IsRequired().HasMaxLength(200);
+            e.Property(x => x.Title).IsRequired().HasMaxLength(200);
+            e.Property(x => x.Body).HasMaxLength(2000);
+            e.Property(x => x.Link).HasMaxLength(500);
+            e.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.ReadAt);
+
+            // FK to audit.events.EventId. Cascade delete is intentional: if
+            // an audit row is removed (administrative purge — never in
+            // normal operation), drop the notifications too.
+            e.HasOne<DomainEventRow>()
+                .WithMany()
+                .HasForeignKey(x => x.EventId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Idempotency: re-projecting the same event for the same user
+            // is a no-op. The projector relies on this unique index to
+            // make replays safe (combined with the checkpoint, replays
+            // shouldn't happen in steady state — but a crash mid-tick can
+            // re-process events whose checkpoint hadn't been advanced yet).
+            e.HasIndex(x => new { x.UserId, x.EventId })
+                .IsUnique()
+                .HasDatabaseName("ux_notifications_user_event");
+
+            // Hot-path index for the inbox query: unread rows for a user
+            // in a tenant, newest-first. Partial index on ReadAt IS NULL
+            // keeps it small as old read rows don't pollute it.
+            e.HasIndex(x => new { x.UserId, x.TenantId })
+                .HasDatabaseName("ix_notifications_user_unread")
+                .HasFilter("\"ReadAt\" IS NULL");
+        });
+
+        // ---- Sprint 8 P3 — audit.projection_checkpoints --------------
+        modelBuilder.Entity<ProjectionCheckpoint>(e =>
+        {
+            e.ToTable("projection_checkpoints");
+            e.HasKey(x => x.ProjectionName);
+            e.Property(x => x.ProjectionName).HasMaxLength(100);
+            e.Property(x => x.LastIngestedAt).IsRequired();
+            e.Property(x => x.UpdatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
         });
     }
 }
