@@ -10,6 +10,11 @@ incidents.
 > response work. This file remains the home for one-off cleanups
 > like the FU-6 entry below.
 
+> **Routine deploys.** Use [`Deploy.ps1`](../Deploy.ps1) at the repo
+> root (Sprint 9 / FU-deploy). See
+> [`runbooks/01-deploy.md`](runbooks/01-deploy.md) §5.0 for the
+> supervised flow.
+
 ## Migration cleanups
 
 ### FU-6 — drop pre-H3 `public.__EFMigrationsHistory` remnants

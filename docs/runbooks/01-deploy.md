@@ -1,9 +1,16 @@
 # Runbook 01 — Deploying a new build to live
 
 > **Scope.** Shipping a green build of `plan/main` from CI to the live
-> ERP V2 host on `:5410` (Inspection module). Everything else (Portal on
-> `:5400`, future modules) is parked behind the same pattern; deploy
-> targets for those are TBD.
+> ERP V2 host. The supervised target is the same Windows host as v1
+> NSCIM, with NSSM-managed services on the `:5410` (Inspection Web) and
+> `:5400` (Portal) ports — see
+> [`docs/product-calls-2026-04-29.md` §3.1](../product-calls-2026-04-29.md#31-fu-deploy--deployps1-for-erp-v2)
+> for the binding spec, and [`Deploy.ps1`](../../Deploy.ps1) at the
+> repo root for the deploy automation.
+>
+> Future modules (`NickERP_NickFinance_*` on the `:5420` range,
+> `NickERP_NickHR_*` on the `:5430` range) follow the same pattern; the
+> service catalogue in `Deploy.ps1` is the place to add them.
 >
 > **Sister docs:** [`02-secret-rotation.md`](02-secret-rotation.md) for
 > credential rotations,
@@ -127,18 +134,47 @@ call.
 
 ## 5. Resolution — the deploy
 
-> **Deploy target undefined as of Sprint 7.** ERP V2 does not yet have
-> a canonical `Deploy.ps1` + Windows-service wrapper. The v1 pattern
-> (`Deploy.ps1` + `robocopy` from `Y:\` into `C:\Shared\NSCIM_PRODUCTION\publish\`
-> + `nssm` services) is the model — port it across when prod hosting
-> is decided. Tracked in `ROADMAP.md` (Phase 7.6 / prod-deploy
-> decisions). Until then, deploys are operator-driven `dotnet publish`
-> + manual host start, documented below.
+> **Deploy target (defined Sprint 9 / FU-deploy).** ERP V2 ships via
+> [`Deploy.ps1`](../../Deploy.ps1) at the repo root, modelled on v1's
+> `Deploy.ps1`. Default mode does Inspection Web (`:5410`) + Portal
+> (`:5400`); flags narrow that down (see §5.0 below). The script
+> assumes the prod box is the same Windows host the worktree builds
+> on — `dotnet publish` writes directly into
+> `C:\Shared\ERP V2\publish\<service>\`, which is the canonical path
+> each NSSM service's `AppDirectory` points at. Cross-host robocopy
+> (separate dev box) is documented as a future variant in
+> `Deploy.ps1`'s header docstring; it is not wired in v0.
+>
+> Spec is binding in
+> [`docs/product-calls-2026-04-29.md` §3.1](../product-calls-2026-04-29.md#31-fu-deploy--deployps1-for-erp-v2).
 
-The following procedure works against the dev / staging host that
-runs from the worktree directly. It produces a self-contained deploy
-artifact you can robocopy or zip elsewhere, **without** assuming a
-service supervisor.
+The following sections cover both the supervised path (§5.0
+`Deploy.ps1`) and the operator-driven `dotnet publish` + manual host
+start fallback (§5.1–§5.6) for cases where you need to deploy without
+NSSM (e.g. a fresh checkout on a brand-new dev box).
+
+### 5.0 Supervised deploy (recommended)
+
+```powershell
+cd "C:\Shared\erp-v2-fu-deploy"   # or whichever worktree is the deploy source
+.\Deploy.ps1 -DryRun              # print plan, do nothing
+.\Deploy.ps1                      # default: Inspection Web + Portal
+.\Deploy.ps1 -ApiOnly             # Inspection Web only
+.\Deploy.ps1 -WebAppOnly          # Portal only
+.\Deploy.ps1 -SkipBuild           # skip dotnet publish; just restart + probe
+```
+
+The script runs six phases: **stop → publish → verify binaries →
+start → /healthz/ready probe → per-service summary**. It fails fast
+on the first phase that errors and surfaces the failing service
+name. NSSM service install commands (one-time, ops-only) live in the
+header docstring of `Deploy.ps1`.
+
+`NICKSCAN_DB_PASSWORD` must be set on each NSSM service's
+`AppEnvironmentExtra` (the `nscim_app` Postgres password); the
+script does not write secrets. When FU-userid lands, the
+`app.user_id` plumbing will appear in the same env-var stanza —
+tracked as a TODO comment in `Deploy.ps1`.
 
 ### 5.1 Pre-flight
 
@@ -220,26 +256,27 @@ powershell.exe -NoProfile -Command \
    | ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force }"
 ```
 
-For a supervised service (once Phase 7.6 lands), the v1 idiom is:
+For an NSSM-supervised host (Sprint 9 / FU-deploy and later), the
+canonical idiom is:
 
 ```powershell
-# v1 reference — adapt for ERP V2 once `nssm`-supervised:
-nssm stop ERPV2_Inspection
+# Use Deploy.ps1 — it stops, publishes, restarts, and probes.
+.\Deploy.ps1 -ApiOnly       # Inspection Web only
+# Or manually:
+Stop-Service NickERP_Inspection_Web
 ```
 
 ### 5.5 Swap the artifact and start
 
-If the running host points at the worktree, your `dotnet publish`
-already overwrote the publish folder; re-launching is enough. For a
-service-supervised deploy (when prod-deploy is wired):
+The supervised path is `Deploy.ps1 -ApiOnly` (or default for
+both services); see §5.0. The script publishes directly into
+`C:\Shared\ERP V2\publish\<service>\` (same path each NSSM service's
+`AppDirectory` points at), so the "robocopy from a separate publish
+dir" step that v1 carried is collapsed into the publish step itself.
 
-```bash
-# Stop, robocopy, restart — mirroring v1's Deploy.ps1 pattern.
-robocopy ./publish/inspection-web "C:/Shared/ERP_V2/publish/inspection-web" /MIR /NFL /NDL /NP
-nssm start ERPV2_Inspection   # once wired
-```
-
-Or, today, run directly:
+For a one-off without the script (e.g. an unsupervised dev / staging
+host that runs from the worktree directly), run the entry-point
+directly:
 
 ```bash
 cd "C:/Shared/erp-v2-p1/modules/inspection/src/NickERP.Inspection.Web"
@@ -369,9 +406,15 @@ incident's runbook with whatever you wish you'd known.
   context for the readiness check shape.
 - [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) §7.6 — migration
   readiness posture.
+- [`Deploy.ps1`](../../Deploy.ps1) — the ERP V2 deploy script
+  (Sprint 9 / FU-deploy). Stop / publish / verify / start / probe
+  pipeline, mirroring v1's shape.
+- [`docs/product-calls-2026-04-29.md` §3.1](../product-calls-2026-04-29.md#31-fu-deploy--deployps1-for-erp-v2)
+  — binding spec for the ERP V2 deploy target (ports, NSSM service
+  names, publish dir).
 - v1 reference — `C:\Shared\NSCIM_PRODUCTION\Deploy.ps1` (read-only;
-  v1 is currently the live system) shows the supervised-service
-  pattern ERP V2 will inherit when prod-deploy is wired.
+  v1 is currently the live system) is the original pattern that ERP
+  V2's `Deploy.ps1` derived from.
 - [`02-secret-rotation.md`](02-secret-rotation.md) — for the secret
   side of any deploy that includes a credential rotation.
 - [`PLAN.md`](../../PLAN.md) §18 — Sprint 7 / P1 origin of this
