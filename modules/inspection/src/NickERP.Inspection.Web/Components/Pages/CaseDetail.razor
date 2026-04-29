@@ -1,6 +1,8 @@
 @page "/cases/{CaseId:guid}"
 @attribute [Authorize]
 @using System.Text.Json
+@using Microsoft.AspNetCore.Diagnostics
+@using Microsoft.AspNetCore.Http
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Inspection.Authorities.Abstractions
 @using NickERP.Inspection.Core.Entities
@@ -12,7 +14,46 @@
 
 <PageTitle>Case @ShortId — Inspection v2</PageTitle>
 
-@if (_case is null)
+@if (_notFound)
+{
+    @* FU-2 — when the case load returns null (either because no row exists
+       at this id at all, or because RLS hid a foreign-tenant row), we set
+       Response.StatusCode = 404 in OnInitializedAsync (see @code below).
+
+       Why this shape (status-code on cascading HttpContext + inline body)
+       over a NavigateTo("/not-found") redirect: keeps the browser at
+       /cases/{guid} (so back-button + URL-share semantics line up with
+       what the user did), avoids a redirect roundtrip, and avoids
+       provoking a fresh DI scope via UseStatusCodePagesWithReExecute
+       (which races EF DbContext disposal on the test host). Mirrors the
+       pattern in Error.razor.
+
+       We render the not-found body INLINE here instead of relying on
+       UseStatusCodePagesWithReExecute to swap in NotFound.razor — the
+       re-execute creates a new scope whose Inspection / Identity
+       DbContexts open fresh Postgres connections through the F1 tenant
+       interceptor, and on a small body the response disposes before the
+       new scope's connection-open completes (Npgsql 'Connecting' state
+       race). OnInitializedAsync also flips IStatusCodePagesFeature.Enabled
+       off for this request so the middleware doesn't try the re-execute
+       at all. Body text is deliberately generic — never the
+       SubjectIdentifier — so we don't disclose tenant existence. *@
+    <header class="inspection-page-header">
+        <div>
+            <h1>Case not found</h1>
+            <p class="inspection-page-subtitle">
+                The case you requested does not exist or you do not have access to it.
+            </p>
+        </div>
+    </header>
+
+    <section class="inspection-section">
+        <p class="inspection-empty">
+            Try the <a href="/cases">Cases</a> list.
+        </p>
+    </section>
+}
+else if (_case is null)
 {
     <p>Loading…</p>
 }
@@ -255,7 +296,17 @@ else
 @code {
     [Parameter] public Guid CaseId { get; set; }
 
+    // FU-2 — cascading HttpContext lets us set Response.StatusCode = 404
+    // on the foreign-tenant / not-found path. Null in interactive
+    // (websocket) renders, which is fine: the not-found path only runs
+    // on the initial SSR load (before _case is bound), and after that
+    // any re-Reload() that returns null only happens for an existing
+    // case that was just deleted in another tab — vanishingly rare and
+    // not worth the round-trip.
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
     private InspectionCase? _case;
+    private bool _notFound;
     private List<Scan> _scans = new();
     private List<AuthorityDocument> _documents = new();
     private List<OutboundSubmission> _submissions = new();
@@ -282,7 +333,37 @@ else
     private async Task Reload()
     {
         _case = await Db.Cases.Include(c => c.Verdict).FirstOrDefaultAsync(c => c.Id == CaseId);
-        if (_case is null) return;
+        if (_case is null)
+        {
+            // FU-2 — Either the case id doesn't exist, or it belongs to a
+            // different tenant and the TenantConnectionInterceptor's
+            // app.tenant_id push caused RLS to hide the row from this
+            // connection. Both cases look identical from here (and that's
+            // the right posture: don't disclose tenant existence). Set 404
+            // on the response; the @if (_notFound) branch above renders an
+            // inline not-found body (so the URL stays at /cases/{guid} and
+            // there's no redirect roundtrip). The HttpContext null-check
+            // guards against the post-prerender interactive path where
+            // there is no longer an ambient response to mutate.
+            //
+            // We also turn OFF the Program.cs-wired
+            // UseStatusCodePagesWithReExecute("/not-found") for this
+            // request: re-executing into NotFound.razor under a fresh DI
+            // scope opens new Postgres connections through the F1 tenant
+            // interceptor that race EF DbContext disposal at scope-end on
+            // the test host, surfacing as "Can't close, connection is in
+            // state Connecting". Disabling the feature means the inline
+            // body above is the response body — same status code, same
+            // visual outcome, no re-execute scope churn.
+            _notFound = true;
+            if (HttpContext is { Response.HasStarted: false } http)
+            {
+                http.Response.StatusCode = StatusCodes.Status404NotFound;
+                var scpFeature = http.Features.Get<IStatusCodePagesFeature>();
+                if (scpFeature is not null) scpFeature.Enabled = false;
+            }
+            return;
+        }
         _scans = await Db.Scans.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.CapturedAt).ToListAsync();
         _documents = await Db.AuthorityDocuments.AsNoTracking().Where(d => d.CaseId == CaseId).OrderByDescending(d => d.ReceivedAt).ToListAsync();
         _submissions = await Db.OutboundSubmissions.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.SubmittedAt).ToListAsync();
