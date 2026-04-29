@@ -1,16 +1,27 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": null,
-  "decisionsNeeded": [
-    {
-      "id": "ROLLING-MASTER-NO-AGENT-TOOL",
-      "title": "Rolling master cannot dispatch sub-agents in this environment",
-      "raisedAt": "2026-04-28",
-      "context": "Sprint 4's master used Agent(general-purpose, run_in_background=true) to dispatch worktree-isolated sub-agents per work item. This Claude Code session has no Agent / Task / sub-agent tool available — only TodoWrite, Monitor, scheduled-tasks, and standard editing tools. The per-sprint protocol step #3 (dispatch agents) cannot execute. Sprints 5–8 are fully PLANNED in main (commit 6bf3236) but unshipped. See docs/master-decisions-needed.md.",
-      "fullEntry": "docs/master-decisions-needed.md"
-    }
-  ],
+  "currentSprint": {
+    "id": "Sprint 5",
+    "name": "System Context Mechanism (G1-3)",
+    "goal": "Land SetSystemContext() on ITenantContext + sentinel '-1' interceptor write + audit.events RLS opt-in clause + system-context audit register. Implements the option-2 decision the user resolved on 2026-04-28.",
+    "startedAt": "2026-04-29",
+    "items": [
+      {
+        "id": "G1-3",
+        "title": "ITenantContext.SetSystemContext() + audit.events opt-in",
+        "phase": "Generalization",
+        "status": "in-progress",
+        "branch": "plan/g1-3-system-context",
+        "commit": null,
+        "agentId": "dispatched 2026-04-29",
+        "dispatchedAt": "2026-04-29",
+        "completedAt": null,
+        "notes": "Single-item sprint — touches platform tenancy contract + interceptor + RLS migration. Per PLAN.md §16.2."
+      }
+    ]
+  },
+  "decisionsNeeded": [],
   "resolvedDecisions": [
     {
       "id": "G1-3",
