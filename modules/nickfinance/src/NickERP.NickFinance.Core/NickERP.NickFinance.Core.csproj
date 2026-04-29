@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.NickFinance.Core</RootNamespace>
+    <AssemblyName>NickERP.NickFinance.Core</AssemblyName>
+    <Description>NickERP NickFinance v2 — Core domain. Money value object, voucher state machine, ledger event shape, FX rate authority. Pathfinder slice: Petty Cash. Vendor-neutral; the core knows about cash, currencies, and approvers — it does NOT know about specific banks, GL adapters, or reporting formats.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+  </ItemGroup>
+
+</Project>
