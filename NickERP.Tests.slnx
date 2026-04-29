@@ -4,12 +4,7 @@
   <Folder Name="/modules/inspection/plugins/">
     <Project Path="modules/inspection/plugins/NickERP.Inspection.Authorities.CustomsGh/NickERP.Inspection.Authorities.CustomsGh.csproj" />
     <Project Path="modules/inspection/plugins/NickERP.Inspection.ExternalSystems.IcumsGh/NickERP.Inspection.ExternalSystems.IcumsGh.csproj" />
-    <Project Path="modules/inspection/plugins/NickERP.Inspection.Inference.Mock/NickERP.Inspection.Inference.Mock.csproj" />
-    <Project Path="modules/inspection/plugins/NickERP.Inspection.Inference.OnnxRuntime/NickERP.Inspection.Inference.OnnxRuntime.csproj" />
     <Project Path="modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/NickERP.Inspection.Scanners.FS6000.csproj" />
-  </Folder>
-  <Folder Name="/modules/inspection/tools/">
-    <Project Path="modules/inspection/tools/InferenceSmokeTest/NickERP.Inspection.Tools.InferenceSmokeTest.csproj" />
   </Folder>
   <Folder Name="/modules/inspection/src/">
     <Project Path="modules/inspection/src/NickERP.Inspection.Authorities.Abstractions/NickERP.Inspection.Authorities.Abstractions.csproj" />
@@ -17,7 +12,6 @@
     <Project Path="modules/inspection/src/NickERP.Inspection.Database/NickERP.Inspection.Database.csproj" />
     <Project Path="modules/inspection/src/NickERP.Inspection.ExternalSystems.Abstractions/NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
     <Project Path="modules/inspection/src/NickERP.Inspection.Imaging/NickERP.Inspection.Imaging.csproj" />
-    <Project Path="modules/inspection/src/NickERP.Inspection.Inference.Abstractions/NickERP.Inspection.Inference.Abstractions.csproj" />
     <Project Path="modules/inspection/src/NickERP.Inspection.Scanners.Abstractions/NickERP.Inspection.Scanners.Abstractions.csproj" />
     <Project Path="modules/inspection/src/NickERP.Inspection.Web/NickERP.Inspection.Web.csproj" />
   </Folder>
