@@ -218,11 +218,15 @@ public sealed class SystemContextTests : IDisposable
     {
         var ctxTenant = new TenantContext();
         tenant = ctxTenant;
+        // FU-userid — TenantConnectionInterceptor now takes IUserContext as
+        // well; these tests don't exercise user-isolation so an unresolved
+        // UserContext is fine (the interceptor pushes the zero-UUID default).
+        var ctxUser = new UserContext();
         var connectionString = BuildAppConnectionString(database);
         var options = new DbContextOptionsBuilder<AuditDbContext>()
             .UseNpgsql(connectionString)
             .AddInterceptors(
-                new TenantConnectionInterceptor(ctxTenant, NullLogger<TenantConnectionInterceptor>.Instance),
+                new TenantConnectionInterceptor(ctxTenant, ctxUser, NullLogger<TenantConnectionInterceptor>.Instance),
                 new TenantOwnedEntityInterceptor(ctxTenant))
             .Options;
         return new AuditDbContext(options);

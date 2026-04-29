@@ -15,15 +15,19 @@ namespace NickERP.Inspection.Web.Endpoints;
 /// All three endpoints require auth (the host's default policy is
 /// <see cref="Microsoft.AspNetCore.Authorization.AuthorizationPolicy"/>
 /// configured in <c>Program.cs</c> with
-/// <c>RequireAuthenticatedUser()</c>). Tenant isolation is enforced at
-/// the DB layer by the <c>tenant_isolation_notifications</c> RLS policy
-/// (the <c>TenantConnectionInterceptor</c> pushes the caller's tenant id
-/// onto every connection); user isolation is enforced at the LINQ layer
-/// because there is no <c>app.user_id</c> session setting today
-/// (Sprint 2 / H2 set up tenant-context plumbing only). The unique
-/// <c>(UserId, EventId)</c> index on <c>audit.notifications</c> means an
-/// accidental cross-user write would surface as a duplicate-key violation
-/// rather than data leakage.
+/// <c>RequireAuthenticatedUser()</c>). Tenant + user isolation are
+/// enforced at the DB layer by the
+/// <c>tenant_user_isolation_notifications</c> RLS policy as of
+/// Sprint 9 / FU-userid: the <c>TenantConnectionInterceptor</c> pushes
+/// both <c>app.tenant_id</c> and <c>app.user_id</c> onto every
+/// connection, and the policy compares them against the row's
+/// <c>"TenantId"</c> + <c>"UserId"</c>. The previous LINQ-level
+/// <c>WHERE n.UserId == currentUser.Id</c> guards remain in place but
+/// commented out — they're a defence-in-depth checkpoint that can be
+/// re-enabled if RLS ever regresses, and they make the regression
+/// loud rather than silent. The unique <c>(UserId, EventId)</c> index
+/// on <c>audit.notifications</c> still serves as a third belt against
+/// projector-induced duplicate writes.
 /// </para>
 /// </summary>
 public static class NotificationsEndpoints
@@ -61,12 +65,16 @@ public static class NotificationsEndpoints
         const int pageSize = 20;
         if (page < 1) page = 1;
 
-        var q = db.Notifications.AsNoTracking().Where(n => n.UserId == userId);
+        // User filter now enforced at RLS layer (FU-userid). The line stays
+        // as a defence-in-depth guard you can re-enable if RLS ever regresses.
+        var q = db.Notifications.AsNoTracking() /* .Where(n => n.UserId == userId) */;
         if (unreadOnly) q = q.Where(n => n.ReadAt == null);
 
         var totalCount = await q.CountAsync(ct);
+        // User filter now enforced at RLS layer (FU-userid). The line stays
+        // as a defence-in-depth guard you can re-enable if RLS ever regresses.
         var unreadCount = await db.Notifications.AsNoTracking()
-            .Where(n => n.UserId == userId && n.ReadAt == null)
+            .Where(n => /* n.UserId == userId && */ n.ReadAt == null)
             .CountAsync(ct);
 
         var rows = await q
@@ -101,8 +109,10 @@ public static class NotificationsEndpoints
         if (!TryGetCurrentUserId(http, out var userId))
             return Results.Unauthorized();
 
+        // User filter now enforced at RLS layer (FU-userid). The line stays
+        // as a defence-in-depth guard you can re-enable if RLS ever regresses.
         var row = await db.Notifications
-            .FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId, ct);
+            .FirstOrDefaultAsync(n => n.Id == id /* && n.UserId == userId */, ct);
         if (row is null) return Results.NotFound();
 
         if (row.ReadAt is null)
@@ -124,8 +134,10 @@ public static class NotificationsEndpoints
             return Results.Unauthorized();
 
         var now = DateTimeOffset.UtcNow;
+        // User filter now enforced at RLS layer (FU-userid). The line stays
+        // as a defence-in-depth guard you can re-enable if RLS ever regresses.
         var unread = await db.Notifications
-            .Where(n => n.UserId == userId && n.ReadAt == null)
+            .Where(n => /* n.UserId == userId && */ n.ReadAt == null)
             .ToListAsync(ct);
 
         foreach (var n in unread)

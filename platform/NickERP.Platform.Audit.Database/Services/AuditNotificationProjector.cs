@@ -16,23 +16,27 @@ namespace NickERP.Platform.Audit.Database.Services;
 ///
 /// <para>
 /// Mirrors the per-tenant scope discipline used by
-/// <c>PreRenderWorker</c> in the inspection module: enumerate active
-/// tenants from <c>tenancy.tenants</c> (the only table not under RLS),
-/// set <see cref="ITenantContext.SetTenant"/> for each one, and run the
-/// projection inside that scope. RLS narrows reads + writes to that
-/// tenant; the unique <c>(UserId, EventId)</c> index on
-/// <c>audit.notifications</c> makes accidental re-projection (after a
-/// crash before the checkpoint advanced) a benign duplicate-key swallow.
+/// <c>PreRenderWorker</c> in the inspection module: enumerate the set of
+/// tenants that have new <c>audit.events</c> rows since the checkpoint,
+/// then for each tenant project the events into notifications.
 /// </para>
 ///
 /// <para>
-/// We deliberately do NOT use <see cref="ITenantContext.SetSystemContext"/>:
-/// per-tenant iteration is sufficient (a notification is always for
-/// exactly one tenant's user; cross-tenant fan-out is meaningless), and
-/// using the system sentinel would require both an opt-in clause on
-/// <c>audit.notifications</c> + an entry in
-/// <c>docs/system-context-audit-register.md</c>. Sprint 5's invariant
-/// stays intact: only <c>audit.events</c> opts in.
+/// Sprint 9 / FU-userid — the per-tenant fan-out runs under
+/// <see cref="ITenantContext.SetSystemContext"/> rather than
+/// <see cref="ITenantContext.SetTenant"/>. Reason: the new
+/// <c>tenant_user_isolation_notifications</c> RLS policy on
+/// <c>audit.notifications</c> compares <c>"UserId"</c> against
+/// <c>app.user_id</c>, and a background worker has no current user to
+/// push (the interceptor pushes the zero UUID), so per-tenant <c>SetTenant</c>
+/// + a real <c>UserId</c> on the row fails the WITH CHECK. The OR clause
+/// on <c>app.tenant_id = '-1'</c> mirrors Sprint 5's <c>audit.events</c>
+/// opt-in and admits these writes. Per-tenant fan-out is preserved
+/// because the LINQ <c>where e.TenantId == tenantId</c> still narrows
+/// reads — RLS is permissive under system context but the LINQ filter
+/// keeps the query plan tight. Both the projector caller and the
+/// <c>audit.notifications</c> table are registered in
+/// <c>docs/system-context-audit-register.md</c>.
 /// </para>
 ///
 /// <para>
@@ -187,10 +191,18 @@ public sealed class AuditNotificationProjector : BackgroundService
 
         if (rules.Count == 0) return (0, checkpoint);
 
-        tenant.SetTenant(tenantId);
+        // Sprint 9 / FU-userid — system context lets the projector pass
+        // the tenant_user_isolation_notifications WITH CHECK clause when
+        // it inserts rows whose UserId belongs to a real human (the
+        // projector itself has no current user, so app.user_id is the
+        // zero UUID and a non-system context would fail the policy).
+        // audit.events is already opted in (Sprint 5), audit.notifications
+        // is opted in by FU-userid; both are tracked in
+        // docs/system-context-audit-register.md.
+        tenant.SetSystemContext();
         // Force a fresh connection so the interceptor pushes the new
-        // app.tenant_id (pooled connection might still carry the previous
-        // tenant id from another tick).
+        // app.tenant_id = '-1' (pooled connection might still carry the
+        // previous tenant id from another tick).
         try
         {
             if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
@@ -200,14 +212,20 @@ public sealed class AuditNotificationProjector : BackgroundService
 
         var batchSize = Math.Max(1, _opts.Value.BatchSize);
 
-        // Pull events under regular tenant context — RLS narrows to this
-        // tenant. Filter by EventType IN (rule.EventType) so we don't
-        // materialise events no rule subscribes to.
+        // Pull events under system context — RLS on audit.events admits
+        // both per-tenant rows and NULL-tenant suite-wide rows under the
+        // sentinel. We narrow to this tenant in LINQ for query-plan
+        // ergonomics + correctness (we deliberately don't want suite-wide
+        // events folded into a tenant's notification stream here). Filter
+        // by EventType IN (rule.EventType) so we don't materialise events
+        // no rule subscribes to.
         var subscribedTypes = rules.Select(r => r.EventType).Distinct().ToArray();
 
         var events = await db.Events
             .AsNoTracking()
-            .Where(e => e.IngestedAt > checkpoint && subscribedTypes.Contains(e.EventType))
+            .Where(e => e.TenantId == tenantId
+                && e.IngestedAt > checkpoint
+                && subscribedTypes.Contains(e.EventType))
             .OrderBy(e => e.IngestedAt)
             .Take(batchSize)
             .ToListAsync(ct);
