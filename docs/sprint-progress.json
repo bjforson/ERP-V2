@@ -2,22 +2,82 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": {
-    "id": "Sprint 5",
-    "name": "System Context Mechanism (G1-3)",
-    "goal": "Land SetSystemContext() on ITenantContext + sentinel '-1' interceptor write + audit.events RLS opt-in clause + system-context audit register. Implements the option-2 decision the user resolved on 2026-04-28.",
+    "id": "Sprint 6",
+    "name": "Followup Sweep (FU-2 .. FU-7)",
+    "goal": "Drain the small-followups queue from Sprint 1-2 retrospectives. Six parallel-safe items, six agents, one merge cycle. Per PLAN.md §17.",
     "startedAt": "2026-04-29",
     "items": [
       {
-        "id": "G1-3",
-        "title": "ITenantContext.SetSystemContext() + audit.events opt-in",
-        "phase": "Generalization",
-        "status": "in-progress",
-        "branch": "plan/g1-3-system-context",
+        "id": "FU-2",
+        "title": "/cases/{guid} foreign-tenant 404 instead of 200-with-empty-state",
+        "phase": "Followup",
+        "status": "pending",
+        "branch": "plan/fu2-foreign-case-404",
         "commit": null,
-        "agentId": "dispatched 2026-04-29",
-        "dispatchedAt": "2026-04-29",
+        "agentId": null,
+        "dispatchedAt": null,
         "completedAt": null,
-        "notes": "Single-item sprint — touches platform tenancy contract + interceptor + RLS migration. Per PLAN.md §16.2."
+        "notes": "CaseDetail.razor: set HttpContext.Response.StatusCode=404 when EF query returns null. Flip E1's existing 1f assertion."
+      },
+      {
+        "id": "FU-3",
+        "title": "Source-blob cross-tenant SHA-256 collision defense doc + flag",
+        "phase": "Followup",
+        "status": "pending",
+        "branch": "plan/fu3-source-blob-collision-doc",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "Doc section + ImagingOptions.EnforceCrossTenantBlobGuard flag (declared, not enforced). Enforcement is future sprint."
+      },
+      {
+        "id": "FU-4",
+        "title": "Cleanup stale __EFMigrationsHistory row 20260427164643_Add_ScanRenderArtifact",
+        "phase": "Followup",
+        "status": "pending",
+        "branch": "plan/fu4-stale-migrations-history-row",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "New EF migration on InspectionDbContext, single DELETE, irreversible Down."
+      },
+      {
+        "id": "FU-5",
+        "title": "Document dotnet ef env-var passthrough quirk on Windows",
+        "phase": "Followup",
+        "status": "pending",
+        "branch": "plan/fu5-dotnet-ef-env-var-doc",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "Doc-only. New section in docs/RUNBOOK.md or new docs/MIGRATIONS.md."
+      },
+      {
+        "id": "FU-6",
+        "title": "Drop public.__EFMigrationsHistory from both DBs",
+        "phase": "Followup",
+        "status": "pending",
+        "branch": "plan/fu6-drop-public-migrations-history",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "EF migration(s). Probe both DBs first, only ship a migration where the table exists."
+      },
+      {
+        "id": "FU-7",
+        "title": "Rename ExternalSystems.Abstractions.AuthorityDocument → AuthorityDocumentDto",
+        "phase": "Followup",
+        "status": "pending",
+        "branch": "plan/fu7-authoritydocument-rename",
+        "commit": null,
+        "agentId": null,
+        "dispatchedAt": null,
+        "completedAt": null,
+        "notes": "DTO rename (entity keeps the cleaner name). Touches IcumsGh + Mock adapters + CaseWorkflowService + tests."
       }
     ]
   },
@@ -33,7 +93,7 @@
     }
   ],
   "rollingMasterScope": {
-    "drainable": ["G1-3", "FU-2", "FU-3", "FU-4", "FU-5", "FU-6", "FU-7", "P1", "P3"],
+    "drainable": ["FU-2", "FU-3", "FU-4", "FU-5", "FU-6", "FU-7", "P1", "P3"],
     "gated": [
       { "id": "G2", "reason": "domain shape — Petty Cash voucher / custodian / ledger / approval / currency. User delivers ~6 product calls before it ships." },
       { "id": "P2", "reason": "edge-node conflict-resolution semantics likely needs a design call mid-sprint; rolling master may halt on it." }
@@ -43,6 +103,16 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 5",
+      "name": "System Context Mechanism (G1-3)",
+      "shippedAt": "2026-04-29",
+      "mainCommit": "5a1938c",
+      "itemCount": 1,
+      "items": [
+        { "id": "G1-3", "title": "ITenantContext.SetSystemContext() + audit.events RLS opt-in + system-context audit register", "commit": "63063a7" }
+      ]
+    },
     {
       "id": "Sprint 4",
       "name": "Platform Tightening + Audit Grants Fix",
@@ -99,17 +169,10 @@
     }
   ],
   "backlog": [
-    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "blockedBy": "G1-3 decision (see decisionsNeeded)" },
+    { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "blockedBy": "domain shape — user delivers ~6 product calls before it ships" },
     { "id": "P1", "title": "Standalone operations runbooks", "phase": "Production prep", "estimateDays": "1" },
     { "id": "P2", "title": "Edge node — SQLite buffer + replay", "phase": "Production prep", "estimateDays": "5-7" },
     { "id": "P3", "title": "Audit projection + notifications", "phase": "Production prep", "estimateDays": "2-3" }
   ],
-  "followups": [
-    { "id": "FU-2", "title": "Cross-tenant /cases/{guid} should 404 instead of 200-with-empty-state", "from": "E1", "severity": "low (UX polish)" },
-    { "id": "FU-3", "title": "Source-blob cross-tenant SHA-256 collision (theoretical)", "from": "H1", "severity": "low (astronomical)" },
-    { "id": "FU-4", "title": "Stale __EFMigrationsHistory row 20260427164643_Add_ScanRenderArtifact", "from": "H3", "severity": "low (benign, one-line DELETE)" },
-    { "id": "FU-5", "title": "dotnet ef database update env-var passthrough quirk on Windows", "from": "H3", "severity": "medium (forces script-and-pipe workaround)" },
-    { "id": "FU-6", "title": "Drop public.__EFMigrationsHistory once prod has flipped", "from": "H3", "severity": "low (held for safety)" },
-    { "id": "FU-7", "title": "AuthorityDocument type collision between Core.Entities and ExternalSystems.Abstractions", "from": "A1", "severity": "low (annoying)" }
-  ]
+  "followups": []
 }
