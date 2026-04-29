@@ -41,6 +41,9 @@ Are you responding to an alert / user report / log line?
     ├── Auth failing for one machine consumer ..... 02-secret-rotation.md §7
     │   (service-token rotation)
     │
+    ├── Edge node queue depth growing /
+    │   replays not draining ...................... 06-edge-node-stalled.md
+    │
     └── A capability silently disappeared
         (admin UI option missing, scanner
          no longer picks up files) ................ 04-plugin-load-failure.md
@@ -57,6 +60,7 @@ Are you responding to an alert / user report / log line?
 | [03](03-prerender-stalled.md) | `PreRenderWorker` not draining | analyst UI stuck on "rendering"; backlog growing | P1 (all tenants stuck) |
 | [04](04-plugin-load-failure.md) | Plugin DLL fails to load on host start | `plugin-registry` Unhealthy, missing capability | P1 (zero plugins loaded) |
 | [05](05-icums-outbox-backlog.md) | ICUMS file-based outbox backlog | files piling up unread in `OutboxPath` | P1 (>1000 files or > 4 h old) |
+| [06](06-edge-node-stalled.md) | Edge node queue depth growing / replays not draining | edge `/edge/healthz` `queueDepth` rises monotonically; no recent `audit.edge_node_replay_log` rows | P1 (disk-full risk) / P2 (typical) |
 
 ---
 
@@ -149,7 +153,9 @@ must present at least one non-weakening alternative first.
 These runbooks are deferred until the system has the surface to
 warrant them:
 
-- **Edge node failover.** Phase 7.6, post-cutover.
+- **Edge node failover** (multi-edge cutover, hot-spare). Phase
+  7.6, post-cutover. The single-edge "stalled queue" case ships in
+  Sprint 11 as [`06-edge-node-stalled.md`](06-edge-node-stalled.md).
 - **Multi-host failover.** Today ERP V2 is single-host; multi-host
   posture lives in `ROADMAP.md` Phase 5+.
 - **NickFinance / NickHR runbooks.** Out of scope until those modules

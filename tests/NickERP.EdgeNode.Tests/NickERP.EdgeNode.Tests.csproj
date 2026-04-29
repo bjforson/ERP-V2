@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Sprint 11 / P2 — exercises the edge node's capture +
+      replay-worker logic against an in-memory SQLite database
+      (not EF in-memory; SQLite catches index/constraint shapes
+      EF in-memory misses, including the partial-index ReplayedAt
+      filter on the outbox). The replay client is mocked behind
+      IEdgeReplayClient — no network sockets in tests.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\apps\edge-node\NickERP.EdgeNode\NickERP.EdgeNode.csproj" />
+  </ItemGroup>
+
+</Project>

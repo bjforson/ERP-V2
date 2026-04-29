@@ -50,6 +50,20 @@ public class AuditDbContext : DbContext
     /// </summary>
     public DbSet<ProjectionCheckpoint> ProjectionCheckpoints => Set<ProjectionCheckpoint>();
 
+    /// <summary>
+    /// Sprint 11 / P2 — pre-configured (edge_node_id, tenant_id) pairs
+    /// the server uses to authorize incoming edge replay batches. Suite-
+    /// wide reference data; intentionally NOT under tenant RLS.
+    /// </summary>
+    public DbSet<EdgeNodeAuthorization> EdgeNodeAuthorizations => Set<EdgeNodeAuthorization>();
+
+    /// <summary>
+    /// Sprint 11 / P2 — one row per replay batch processed by the
+    /// server. Operator visibility into edge activity; not under tenant
+    /// RLS (a single batch can carry multiple tenants).
+    /// </summary>
+    public DbSet<EdgeNodeReplayLog> EdgeNodeReplayLogs => Set<EdgeNodeReplayLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // virtual so test subclasses can layer in additional model
@@ -165,6 +179,36 @@ public class AuditDbContext : DbContext
             e.Property(x => x.ProjectionName).HasMaxLength(100);
             e.Property(x => x.LastIngestedAt).IsRequired();
             e.Property(x => x.UpdatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+        });
+
+        // ---- Sprint 11 / P2 — audit.edge_node_authorizations ---------
+        modelBuilder.Entity<EdgeNodeAuthorization>(e =>
+        {
+            e.ToTable("edge_node_authorizations");
+            e.HasKey(x => new { x.EdgeNodeId, x.TenantId });
+            e.Property(x => x.EdgeNodeId).IsRequired().HasMaxLength(100);
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.AuthorizedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.AuthorizedByUserId);
+        });
+
+        // ---- Sprint 11 / P2 — audit.edge_node_replay_log -------------
+        modelBuilder.Entity<EdgeNodeReplayLog>(e =>
+        {
+            e.ToTable("edge_node_replay_log");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.EdgeNodeId).IsRequired().HasMaxLength(100);
+            e.Property(x => x.ReplayedAt).IsRequired();
+            e.Property(x => x.EventCount).IsRequired();
+            e.Property(x => x.OkCount).IsRequired();
+            e.Property(x => x.FailedCount).IsRequired();
+            e.Property(x => x.FailuresJson).HasColumnType("jsonb");
+
+            // Hot-path lookup: an admin "edge activity for X" page
+            // wants the latest batches per edge.
+            e.HasIndex(x => new { x.EdgeNodeId, x.ReplayedAt })
+                .HasDatabaseName("ix_edge_node_replay_log_edge_time");
         });
     }
 }

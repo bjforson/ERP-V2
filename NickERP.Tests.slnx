@@ -32,7 +32,12 @@
     <Project Path="modules/nickfinance/src/NickERP.NickFinance.Database/NickERP.NickFinance.Database.csproj" />
     <Project Path="modules/nickfinance/src/NickERP.NickFinance.Web/NickERP.NickFinance.Web.csproj" />
   </Folder>
+  <Folder Name="/apps/" />
+  <Folder Name="/apps/edge-node/">
+    <Project Path="apps/edge-node/NickERP.EdgeNode/NickERP.EdgeNode.csproj" />
+  </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/NickERP.EdgeNode.Tests/NickERP.EdgeNode.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Authorities.CustomsGh.Tests/NickERP.Inspection.Authorities.CustomsGh.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.E2E.Tests/NickERP.Inspection.E2E.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests.csproj" />
