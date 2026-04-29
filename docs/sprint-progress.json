@@ -37,23 +37,24 @@
         "id": "FU-host-status",
         "title": "BackgroundService liveness endpoint /healthz/workers",
         "phase": "Production prep",
-        "status": "in-progress",
+        "status": "done",
         "branch": "plan/fu-host-status-endpoint",
-        "commit": null,
+        "commit": "7b5f0a8",
+        "mergeCommit": null,
         "agentId": "dispatched 2026-04-29",
         "dispatchedAt": "2026-04-29",
-        "completedAt": null,
-        "notes": "IBackgroundServiceProbe interface + /healthz/workers endpoint. Per §3.3."
+        "completedAt": "2026-04-29",
+        "notes": "IBackgroundServiceProbe in NickERP.Platform.Telemetry (cycle-free). 4 workers wired: PreRender / SourceJanitor / ScannerIngestion / AuditNotificationProjector. /healthz/workers endpoint with aggregated verdict. Tests 63→68 (+5)."
       },
       {
         "id": "FU-icums-signing",
         "title": "IcumsGh envelope signing + key rotation",
         "phase": "Production prep",
-        "status": "queued",
+        "status": "in-progress",
         "branch": "plan/fu-icums-signing",
         "commit": null,
-        "agentId": null,
-        "dispatchedAt": null,
+        "agentId": "dispatched 2026-04-29",
+        "dispatchedAt": "2026-04-29",
         "completedAt": null,
         "notes": "HMAC-SHA256 detached signature; SetSystemContext rotation with overlap window. Per §3.4."
       }
