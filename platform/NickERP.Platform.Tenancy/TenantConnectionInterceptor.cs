@@ -25,6 +25,18 @@ namespace NickERP.Platform.Tenancy;
 /// so RLS policies fail closed by default. Make sure RLS policy definitions
 /// COALESCE to <c>'0'</c> too (see v1's reference_rls_now_enforces.md).
 /// </para>
+/// <para>
+/// When <see cref="ITenantContext.IsSystem"/> is <c>true</c> (i.e. the
+/// caller invoked <see cref="ITenantContext.SetSystemContext"/>), the
+/// variable is set to the sentinel <c>'-1'</c>. RLS policies that opt
+/// in to system access via <c>OR current_setting('app.tenant_id') = '-1'</c>
+/// will allow cross-tenant reads / NULL-tenant writes; tables that have
+/// not opted in continue to filter on the per-row <c>"TenantId"</c>
+/// (which never equals the sentinel), so reads return zero rows and
+/// writes fail the policy's WITH CHECK clause. Sprint 5 (G1-3) is the
+/// first table to opt in (<c>audit.events</c>); see
+/// <c>docs/system-context-audit-register.md</c>.
+/// </para>
 /// </remarks>
 public sealed class TenantConnectionInterceptor : DbConnectionInterceptor
 {
@@ -68,5 +80,15 @@ public sealed class TenantConnectionInterceptor : DbConnectionInterceptor
         }
     }
 
-    private long ResolvedId() => _tenant.IsResolved ? _tenant.TenantId : 0L;
+    private long ResolvedId()
+    {
+        if (_tenant.IsSystem)
+        {
+            // Sprint 5 (G1-3) — system-context sentinel. Tables that opt in
+            // see this and allow cross-tenant access; non-opt-in tables
+            // filter to zero rows.
+            return TenantContext.SystemSentinel;
+        }
+        return _tenant.IsResolved ? _tenant.TenantId : 0L;
+    }
 }

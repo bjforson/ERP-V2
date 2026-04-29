@@ -119,6 +119,10 @@ G2's domain-shape gating. G2 stays held until the user delivers the
 ~6 product calls (money type, voucher lifecycle, custodian/approver
 model, ledger event shape, period locks, currency conversion).
 
+**Implementation shipped 2026-04-29** — Sprint 5, commit `<sha-after-merge>`.
+See `docs/system-context-audit-register.md` for the audit register that
+tracks every `SetSystemContext()` caller going forward.
+
 ---
 
 ## 2026-04-28 — Rolling master cannot dispatch sub-agents in this environment
