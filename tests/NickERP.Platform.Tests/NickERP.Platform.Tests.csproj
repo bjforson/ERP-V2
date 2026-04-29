@@ -12,6 +12,9 @@
     <!-- G1-3 system-context tests open real Postgres connections to nickerp_platform / nickerp_inspection
          under the nscim_app role to exercise the new RLS opt-in policy on audit.events. -->
     <PackageReference Include="Npgsql" Version="10.0.2" />
+    <!-- Sprint 8 P3 — AuditNotificationProjectorTests use the EF in-memory provider to drive the
+         projector through one tick deterministically without a Postgres dependency. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.7" />
   </ItemGroup>
 
 </Project>

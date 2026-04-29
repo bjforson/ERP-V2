@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NickERP.Platform.Audit.Database.Services;
+using NickERP.Platform.Audit.Database.Services.NotificationRules;
 using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Tenancy;
 
@@ -46,6 +48,44 @@ public static class AuditDatabaseServiceCollectionExtensions
 
         services.AddSingleton<IEventBus, InProcessEventBus>();
         services.AddScoped<IEventPublisher, DbEventPublisher>();
+        return services;
+    }
+
+    /// <summary>
+    /// Sprint 8 P3 — register the <see cref="AuditNotificationProjector"/>
+    /// background service plus the three hardcoded notification rules.
+    ///
+    /// <para>
+    /// Rules are registered as <c>Scoped</c> rather than <c>Singleton</c>
+    /// because <see cref="CaseVerdictRenderedRule"/> takes a scoped
+    /// <see cref="AuditDbContext"/> for its case-opener lookup. The
+    /// projector creates a per-tick scope and resolves
+    /// <c>IEnumerable&lt;INotificationRule&gt;</c> from it; rules that
+    /// don't take a scoped dep (CaseOpenedRule, CaseAssignedRule) are
+    /// fine being constructed per scope.
+    /// </para>
+    ///
+    /// <para>
+    /// Call from any host that wants to project audit events into
+    /// notifications — typically the inspection / portal app. The
+    /// underlying <see cref="AuditDbContext"/> registration is from
+    /// <see cref="AddNickErpAuditCore"/>; the projector reuses it.
+    /// </para>
+    /// </summary>
+    public static IServiceCollection AddNickErpAuditNotifications(
+        this IServiceCollection services,
+        Action<AuditNotificationProjectorOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddOptions<AuditNotificationProjectorOptions>();
+        if (configure is not null) services.Configure(configure);
+
+        services.AddScoped<INotificationRule, CaseOpenedRule>();
+        services.AddScoped<INotificationRule, CaseAssignedRule>();
+        services.AddScoped<INotificationRule, CaseVerdictRenderedRule>();
+
+        services.AddHostedService<AuditNotificationProjector>();
         return services;
     }
 }

@@ -1,0 +1,73 @@
+@*
+ * Sprint 8 P3 — wraps the shared Web.Shared NotificationBell with a
+ * 30-second polling timer that refreshes the unread count from the
+ * AuditDbContext. Designed to slot into TopNav's NotificationsSlot.
+ *
+ * Keeps it server-side: this is a Blazor Server app and the audit
+ * context is already wired into DI, so no HTTP indirection is needed
+ * for the count read. The /api/notifications endpoints are still the
+ * canonical interface — they handle the mark-as-read calls and any
+ * future non-Blazor UI.
+ *@
+@using System.Security.Claims
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Audit.Database
+@using NickERP.Platform.Identity.Auth
+@inject AuditDbContext Audit
+@inject AuthenticationStateProvider AuthState
+@implements IDisposable
+
+<a href="/notifications" class="nickerp-bell-link" aria-label="Open notifications">
+    <NickERP.Platform.Web.Shared.Components.NotificationBell UnreadCount="_unreadCount" />
+</a>
+
+@code {
+    private int _unreadCount;
+    private System.Threading.Timer? _timer;
+
+    /// <inheritdoc />
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        // 30s poll — cheap (one indexed COUNT) and matches the PLAN spec.
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    await RefreshAsync();
+                    StateHasChanged();
+                });
+            }
+            catch
+            {
+                // Best-effort — a failed poll just keeps the last value.
+            }
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var raw = auth.User.FindFirst(NickErpClaims.Id)?.Value
+                  ?? auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(raw) || !Guid.TryParse(raw, out var userId))
+        {
+            _unreadCount = 0;
+            return;
+        }
+
+        // RLS narrows by tenant; LINQ narrows by UserId.
+        _unreadCount = await Audit.Notifications
+            .AsNoTracking()
+            .Where(n => n.UserId == userId && n.ReadAt == null)
+            .CountAsync();
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}

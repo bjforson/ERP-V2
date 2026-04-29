@@ -11,7 +11,9 @@ the rolling master and at every security review by the user.
 
 ## Entries
 
-_(none — Sprint 5 ships the mechanism; the first caller lands in G2 / NickFinance.)_
+| Caller | File:Line | Why | RLS opt-in clauses needed | Date | Sprint |
+|---|---|---|---|---|---|
+| `AuditNotificationProjector.ProjectOnceAsync` | `platform/NickERP.Platform.Audit.Database/Services/AuditNotificationProjector.cs` (`discoveryScope` block) | Discover the set of tenant ids that have new `audit.events` rows since the projector's checkpoint, before fanning out per-tenant. Reads `audit.events` only — already opted in (Sprint 5). | None new — `audit.events` already opts in (Sprint 5). | 2026-04-29 | Sprint 8 / P3 |
 
 ## Tables that opt in to system context
 
