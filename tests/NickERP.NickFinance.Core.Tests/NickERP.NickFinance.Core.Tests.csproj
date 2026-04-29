@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Core\NickERP.NickFinance.Core.csproj" />
+  </ItemGroup>
+
+</Project>

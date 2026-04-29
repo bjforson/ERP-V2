@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <UseRazorBuildServer>false</UseRazorBuildServer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Web\NickERP.NickFinance.Web.csproj" />
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Database\NickERP.NickFinance.Database.csproj" />
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Core\NickERP.NickFinance.Core.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+  </ItemGroup>
+
+</Project>

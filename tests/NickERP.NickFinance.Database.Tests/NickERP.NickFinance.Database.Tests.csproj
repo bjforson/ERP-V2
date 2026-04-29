@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Core\NickERP.NickFinance.Core.csproj" />
+    <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Database\NickERP.NickFinance.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Postgres-backed RLS smoke tests open real connections to nickerp_nickfinance
+         under nscim_app. Skipped when NICKSCAN_DB_PASSWORD is unset (mirrors
+         NotificationsRlsIsolationTests pattern). -->
+    <PackageReference Include="Npgsql" Version="10.0.2" />
+  </ItemGroup>
+
+</Project>

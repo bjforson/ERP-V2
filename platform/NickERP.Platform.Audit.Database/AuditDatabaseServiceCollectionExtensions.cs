@@ -87,6 +87,14 @@ public static class AuditDatabaseServiceCollectionExtensions
         services.AddScoped<INotificationRule, CaseAssignedRule>();
         services.AddScoped<INotificationRule, CaseVerdictRenderedRule>();
 
+        // G2 — NickFinance pathfinder rules. Wired unconditionally because
+        // they only fire on nickfinance.voucher.* events; if NickFinance
+        // is not deployed for this host, no such events ever land in
+        // audit.events and the rules sit idle.
+        services.AddScoped<INotificationRule, VoucherApprovalRequestedRule>();
+        services.AddScoped<INotificationRule, VoucherApprovedRule>();
+        services.AddScoped<INotificationRule, VoucherDisbursedRule>();
+
         // Sprint 9 / FU-host-status — register the projector as a
         // singleton, then resolve it for both the hosted-service slot
         // AND the IBackgroundServiceProbe slot. Critical invariant: ONE

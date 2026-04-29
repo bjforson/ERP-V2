@@ -26,12 +26,21 @@
     <Project Path="platform/NickERP.Platform.Tenancy/NickERP.Platform.Tenancy.csproj" />
     <Project Path="platform/NickERP.Platform.Web.Shared/NickERP.Platform.Web.Shared.csproj" />
   </Folder>
+  <Folder Name="/modules/nickfinance/" />
+  <Folder Name="/modules/nickfinance/src/">
+    <Project Path="modules/nickfinance/src/NickERP.NickFinance.Core/NickERP.NickFinance.Core.csproj" />
+    <Project Path="modules/nickfinance/src/NickERP.NickFinance.Database/NickERP.NickFinance.Database.csproj" />
+    <Project Path="modules/nickfinance/src/NickERP.NickFinance.Web/NickERP.NickFinance.Web.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/NickERP.Inspection.Authorities.CustomsGh.Tests/NickERP.Inspection.Authorities.CustomsGh.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.E2E.Tests/NickERP.Inspection.E2E.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Scanners.FS6000.Tests/NickERP.Inspection.Scanners.FS6000.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Web.Tests/NickERP.Inspection.Web.Tests.csproj" />
+    <Project Path="tests/NickERP.NickFinance.Core.Tests/NickERP.NickFinance.Core.Tests.csproj" />
+    <Project Path="tests/NickERP.NickFinance.Database.Tests/NickERP.NickFinance.Database.Tests.csproj" />
+    <Project Path="tests/NickERP.NickFinance.Web.Tests/NickERP.NickFinance.Web.Tests.csproj" />
     <Project Path="tests/NickERP.Platform.Tests/NickERP.Platform.Tests.csproj" />
   </Folder>
 </Solution>
