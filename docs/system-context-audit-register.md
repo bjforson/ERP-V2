@@ -1,0 +1,33 @@
+# System-Context Audit Register
+
+Append-only register of every code path that calls
+`ITenantContext.SetSystemContext()`. Reviewed at every sprint boundary by
+the rolling master and at every security review by the user.
+
+## Format
+
+| Caller | File:Line | Why | RLS opt-in clauses needed | Date | Sprint |
+|---|---|---|---|---|---|
+
+## Entries
+
+_(none — Sprint 5 ships the mechanism; the first caller lands in G2 / NickFinance.)_
+
+## Tables that opt in to system context
+
+| Table | Migration | Sprint | Rationale |
+|---|---|---|---|
+| `audit.events` | `20260429061910_AddSystemContextOptInToEvents` | Sprint 5 | Suite-wide events (FX rate, GL chart-of-accounts) need NULL-tenant inserts; G1 #4 dropped NOT NULL but the RLS policy blocked the write. |
+
+## Review checklist
+
+At every sprint boundary, the master coordinator confirms:
+
+- Every entry in "Entries" still corresponds to live code (no dead callers).
+- Every entry in "Tables that opt in" still has its `OR ... = '-1'` clause
+  intact (run `psql -c "\d+ audit.events"` and inspect the policy).
+- No new `SetSystemContext()` callers exist that aren't in this register
+  (`grep -r "SetSystemContext" --include='*.cs'`).
+- No table outside the "Tables that opt in" list has the `'-1'` clause
+  (this would be a silent posture broadening). Run a `pg_policies` audit:
+  `SELECT schemaname, tablename, policyname FROM pg_policies WHERE qual LIKE '%''-1''%' OR with_check LIKE '%''-1''%';`.
