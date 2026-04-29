@@ -1,8 +1,15 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": null,
-  "currentSprintNote": "Rolling-master drainable backlog is EMPTY (second time this run). Eleven sprints shipped end-to-end on 2026-04-29: Sprint 5 (G1-3) → Sprint 6 (FU-2..7) → Sprint 7 (P1) → Sprint 8 (P3) → Sprint 9 (FU-deploy/userid/host-status/icums-signing) → Sprint 10 (G2 NickFinance pathfinder) → Sprint 11 (P2 edge node). Tests at 208/208. Only image-analysis (user-driven) remains out of scope. Awaiting next master spawn or new product calls.",
+  "currentSprint": {
+    "id": "Sprint 12",
+    "name": "Image-analysis integration (parallel-session incorporation)",
+    "phase": "Phase B in flight",
+    "items": [
+      { "id": "Sprint12-PhaseA", "title": "Image-analysis integration plumbing + Inference plugin family + tooling (89 files staged in-place on main + DisposeAsync idempotency fix-forward)", "status": "done", "branch": "(in-place on main)", "commit": "95ca5e4", "fixupCommit": "7b9f056", "agentId": "master-direct (no sub-agent)", "notes": "Phase A integrates the parallel image-analysis session's design + scaffolding output. 89 files / 15,569 insertions covering: design doc IMAGE-ANALYSIS-MODERNIZATION.md (~2,490 lines), 5 R3 entities (Core/Entities), 2 applied migrations (Add_PhaseR3_TablesInferenceModernization + BootstrapScannerThresholdProfilesV0), Application project (Threshold calibration resolver + DI bootstrap), 4 Inference plugin/src csproj families (Abstractions/Mock/OnnxRuntime/OCR.ContainerNumber), IInboundOutcomeAdapter, ThresholdAdminService, smoke tests, Python tooling (venv/data/weight-blobs gitignored), stub ONNX exports (graphs only, weights gitignored), PLAN.md §21. Phase A deviated from handoff §4 split by pulling ThresholdAdminService.cs into Phase A — required for Program.cs DI registration to compile. DisposeAsync fix at 7b9f056 patched a real bug surfaced by the E2E MultiLocationFederationTests (double-dispose via dual DI roots). 208/208 tests, 0 errors, 15 warnings (pre-existing). Smoke verified in detached C:/Shared/erp-v2-verify." }
+    ]
+  },
+  "currentSprintNote": "Sprint 12 — image-analysis integration. Phase A landed at 95ca5e4 + 7b9f056 (208/208 tests). Phase B in flight: §6.5 admin UI (Thresholds.razor), §7.0 contract bumps (DualViewGeometry, ScannerCapabilities + ExternalSystemCapabilities additions, IScannerAdapter additions, contract version 1.1→1.2 on Scanners + ExternalSystems Abstractions), ROADMAP §4.9 + ARCHITECTURE.md. Phase B pulls remaining changes from preserved stash@{0} (the rolling-master handoff's belt-and-braces snapshot — verified to be the source of the §7.0 contract bumps that the image-analysis session never re-landed in working tree).",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
