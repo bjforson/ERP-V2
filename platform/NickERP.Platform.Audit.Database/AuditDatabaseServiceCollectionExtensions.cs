@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using NickERP.Platform.Audit.Database.Services;
 using NickERP.Platform.Audit.Database.Services.NotificationRules;
 using NickERP.Platform.Audit.Events;
+using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 
 namespace NickERP.Platform.Audit.Database;
@@ -85,7 +87,16 @@ public static class AuditDatabaseServiceCollectionExtensions
         services.AddScoped<INotificationRule, CaseAssignedRule>();
         services.AddScoped<INotificationRule, CaseVerdictRenderedRule>();
 
-        services.AddHostedService<AuditNotificationProjector>();
+        // Sprint 9 / FU-host-status — register the projector as a
+        // singleton, then resolve it for both the hosted-service slot
+        // AND the IBackgroundServiceProbe slot. Critical invariant: ONE
+        // projector instance — if AddHostedService<T>() were used alone
+        // the host would create a separate instance and the probe
+        // registration would resolve a different one (always reporting
+        // "never ticked").
+        services.AddSingleton<AuditNotificationProjector>();
+        services.AddHostedService(sp => sp.GetRequiredService<AuditNotificationProjector>());
+        services.AddSingleton<IBackgroundServiceProbe>(sp => sp.GetRequiredService<AuditNotificationProjector>());
         return services;
     }
 }

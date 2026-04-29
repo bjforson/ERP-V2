@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
+using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
 
@@ -30,11 +31,17 @@ namespace NickERP.Inspection.Imaging;
 /// Errors are logged and the artifact gets retried on the next cycle;
 /// no permanent failure marker yet (good first follow-up).
 /// </summary>
-public sealed class PreRenderWorker : BackgroundService
+public sealed class PreRenderWorker : BackgroundService, IBackgroundServiceProbe
 {
     private readonly IServiceProvider _services;
     private readonly IOptions<ImagingOptions> _opts;
     private readonly ILogger<PreRenderWorker> _logger;
+
+    // Sprint 9 / FU-host-status — thread-safe probe scratchpad. The
+    // helper handles Interlocked counters + Volatile-replaced fields so
+    // the /healthz/workers reader and the loop writer can run on
+    // different threads without tearing.
+    private readonly BackgroundServiceProbeState _probe = new();
 
     public PreRenderWorker(
         IServiceProvider services,
@@ -46,22 +53,32 @@ public sealed class PreRenderWorker : BackgroundService
         _logger = logger;
     }
 
+    /// <inheritdoc />
+    public string WorkerName => nameof(PreRenderWorker);
+
+    /// <inheritdoc />
+    public BackgroundServiceState GetState() => _probe.Snapshot();
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         var poll = TimeSpan.FromSeconds(Math.Max(1, _opts.Value.WorkerPollIntervalSeconds));
+        _probe.SetPollInterval(poll);
         _logger.LogInformation("PreRenderWorker started — polling every {Interval}s, batch {Batch}",
             poll.TotalSeconds, _opts.Value.WorkerBatchSize);
 
         while (!ct.IsCancellationRequested)
         {
+            _probe.RecordTickStart();
             try
             {
                 var processed = await DrainOnceAsync(ct);
+                _probe.RecordTickSuccess();
                 if (processed > 0)
                     _logger.LogDebug("PreRenderWorker rendered {Count} derivative(s) this cycle", processed);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                _probe.RecordTickFailure(ex);
                 _logger.LogError(ex, "PreRenderWorker cycle failed; backing off");
             }
 

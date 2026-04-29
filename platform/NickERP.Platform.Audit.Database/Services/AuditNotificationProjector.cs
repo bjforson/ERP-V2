@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NickERP.Platform.Audit.Database.Entities;
+using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 
 namespace NickERP.Platform.Audit.Database.Services;
@@ -46,7 +47,7 @@ namespace NickERP.Platform.Audit.Database.Services;
 /// not bother with LISTEN/NOTIFY until volume warrants.
 /// </para>
 /// </summary>
-public sealed class AuditNotificationProjector : BackgroundService
+public sealed class AuditNotificationProjector : BackgroundService, IBackgroundServiceProbe
 {
     /// <summary>Stable name written to <c>audit.projection_checkpoints.ProjectionName</c>.</summary>
     public const string ProjectorName = "AuditNotificationProjector";
@@ -54,6 +55,10 @@ public sealed class AuditNotificationProjector : BackgroundService
     private readonly IServiceProvider _services;
     private readonly IOptions<AuditNotificationProjectorOptions> _opts;
     private readonly ILogger<AuditNotificationProjector> _logger;
+
+    // Sprint 9 / FU-host-status — probe scratchpad (Interlocked counters
+    // + Volatile-replaced fields, see BackgroundServiceProbeState).
+    private readonly BackgroundServiceProbeState _probe = new();
 
     public AuditNotificationProjector(
         IServiceProvider services,
@@ -66,18 +71,27 @@ public sealed class AuditNotificationProjector : BackgroundService
     }
 
     /// <inheritdoc />
+    public string WorkerName => ProjectorName;
+
+    /// <inheritdoc />
+    public BackgroundServiceState GetState() => _probe.Snapshot();
+
+    /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         var poll = TimeSpan.FromSeconds(Math.Max(1, _opts.Value.PollIntervalSeconds));
+        _probe.SetPollInterval(poll);
         _logger.LogInformation(
             "AuditNotificationProjector started — polling every {Interval}s, batch {Batch}",
             poll.TotalSeconds, _opts.Value.BatchSize);
 
         while (!ct.IsCancellationRequested)
         {
+            _probe.RecordTickStart();
             try
             {
                 var produced = await ProjectOnceAsync(ct);
+                _probe.RecordTickSuccess();
                 if (produced > 0)
                     _logger.LogDebug(
                         "AuditNotificationProjector projected {Count} notification row(s) this cycle",
@@ -85,6 +99,7 @@ public sealed class AuditNotificationProjector : BackgroundService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                _probe.RecordTickFailure(ex);
                 _logger.LogError(ex, "AuditNotificationProjector cycle failed; backing off");
             }
 

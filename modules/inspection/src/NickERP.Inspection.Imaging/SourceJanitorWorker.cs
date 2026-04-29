@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
+using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
 
@@ -44,11 +45,14 @@ namespace NickERP.Inspection.Imaging;
 /// rows whose source has been gone for &gt; 1 year.
 /// </para>
 /// </summary>
-public sealed class SourceJanitorWorker : BackgroundService
+public sealed class SourceJanitorWorker : BackgroundService, IBackgroundServiceProbe
 {
     private readonly IServiceProvider _services;
     private readonly IOptions<ImagingOptions> _opts;
     private readonly ILogger<SourceJanitorWorker> _logger;
+
+    // Sprint 9 / FU-host-status — probe scratchpad (see BackgroundServiceProbeState).
+    private readonly BackgroundServiceProbeState _probe = new();
 
     public SourceJanitorWorker(
         IServiceProvider services,
@@ -60,9 +64,16 @@ public sealed class SourceJanitorWorker : BackgroundService
         _logger = logger;
     }
 
+    /// <inheritdoc />
+    public string WorkerName => nameof(SourceJanitorWorker);
+
+    /// <inheritdoc />
+    public BackgroundServiceState GetState() => _probe.Snapshot();
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         var interval = TimeSpan.FromMinutes(Math.Max(1, _opts.Value.SourceJanitorIntervalMinutes));
+        _probe.SetPollInterval(interval);
         _logger.LogInformation(
             "SourceJanitorWorker started — sweeping every {Interval}m, retention {Days}d.",
             interval.TotalMinutes, _opts.Value.SourceRetentionDays);
@@ -74,9 +85,11 @@ public sealed class SourceJanitorWorker : BackgroundService
 
         while (!ct.IsCancellationRequested)
         {
+            _probe.RecordTickStart();
             try
             {
                 var deleted = await SweepOnceAsync(ct);
+                _probe.RecordTickSuccess();
                 if (deleted > 0)
                 {
                     _logger.LogInformation(
@@ -85,6 +98,7 @@ public sealed class SourceJanitorWorker : BackgroundService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                _probe.RecordTickFailure(ex);
                 _logger.LogError(ex,
                     "SourceJanitorWorker cycle failed; will retry next interval.");
             }

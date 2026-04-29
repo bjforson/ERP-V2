@@ -110,7 +110,18 @@ builder.Services.AddNickErpImaging(builder.Configuration);
 // emitted artifact. Closes the demo loop so dropping a real FS6000
 // triplet into a watch folder produces a case end-to-end without a
 // button click.
-builder.Services.AddHostedService<NickERP.Inspection.Web.Services.ScannerIngestionWorker>();
+//
+// Sprint 9 / FU-host-status — register as a singleton, then resolve it
+// for both the hosted-service slot AND the IBackgroundServiceProbe slot.
+// Critical invariant: ONE instance per worker. If AddHostedService<T>()
+// alone is used, the host creates a separate instance and the probe
+// registration resolves a different one — /healthz/workers would always
+// show this worker as "never ticked".
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.ScannerIngestionWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerIngestionWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerIngestionWorker>());
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -232,6 +243,15 @@ app.MapRazorComponents<App>()
 // Sprint 8 P3 — notifications inbox API. Tenant + user scoping enforced
 // at the endpoint layer (LINQ) and at the DB layer (RLS); auth required.
 app.MapNotificationsEndpoints();
+
+// Sprint 9 / FU-host-status — /healthz/workers aggregator over every
+// registered IBackgroundServiceProbe (PreRenderWorker, SourceJanitor,
+// ScannerIngestion, AuditNotificationProjector). Auth required —
+// runbook 03 calls it for worker-wedge diagnosis instead of
+// log-grepping. Distinct from /healthz/ready (anonymous, kubelet-style)
+// because the body carries last-error messages we don't expose
+// anonymously.
+app.MapWorkersHealthzEndpoint();
 
 // ---------------------------------------------------------------------------
 // Image pipeline endpoint — streams the pre-rendered derivative for a given
