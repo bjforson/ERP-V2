@@ -1,0 +1,276 @@
+@page "/admin/thresholds"
+@page "/admin/thresholds/{ScannerId:guid}"
+@* §6.5 admin UI — list every scanner with its active version + any pending proposed row;
+   detail view side-by-sides current-vs-proposed values + the proposal_rationale jsonb,
+   with Approve and Reject actions. Approve creates a new Status='shadow' row pointing at
+   the proposed values (per §6.5.3); the actual shadow runner is out of this team's scope.
+
+   TODO(team-A): replace `Inspection.Admin` with the dedicated
+   `inspection.threshold_admin` role once it's added to the v2 identity
+   role list. The spec calls for the dedicated role so threshold approval
+   can be delegated without granting full inspection-admin access. Until
+   then, fall back to the most-restrictive existing admin role. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+@inject ThresholdAdminService AdminService
+@inject Microsoft.AspNetCore.Components.NavigationManager Nav
+
+<PageTitle>Threshold calibration — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Threshold calibration</h1>
+        <p class="inspection-page-subtitle">Per-scanner threshold profiles (§6.5). Approve runs a 24 h shadow before the new values take effect.</p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_rows is null)
+{
+    <p>Loading…</p>
+}
+else if (ScannerId is null)
+{
+    @* List view *@
+    <section class="inspection-section">
+        @if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No scanners registered. Register one on the Scanners page first.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Scanner</th>
+                        <th>Plugin</th>
+                        <th>Active version</th>
+                        <th>Pending proposal</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr>
+                            <td>@r.Scanner.DisplayName</td>
+                            <td><code>@r.Scanner.TypeCode</code></td>
+                            <td>
+                                @if (r.Active is not null)
+                                {
+                                    <span>v@(r.Active.Version) (@r.Active.ProposedBy)</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-empty">— none —</span>
+                                }
+                            </td>
+                            <td>
+                                @if (r.Proposed is not null)
+                                {
+                                    <span>v@(r.Proposed.Version) by @(r.Proposed.ProposedBy)</span>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </td>
+                            <td>
+                                <a class="inspection-button" href="/admin/thresholds/@r.Scanner.Id">Open</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+else
+{
+    @* Detail view — side-by-side current vs proposed *@
+    <section class="inspection-section">
+        @if (_detail is null)
+        {
+            <p>Loading scanner detail…</p>
+        }
+        else
+        {
+            <p><a href="/admin/thresholds">&larr; Back to list</a></p>
+            <h2>@_detail.Scanner.DisplayName <small><code>@_detail.Scanner.TypeCode</code></small></h2>
+
+            @if (!string.IsNullOrEmpty(_message))
+            {
+                <p class="inspection-form-message">@_message</p>
+            }
+
+            <div class="inspection-form-row">
+                <div class="inspection-card">
+                    <h3 class="inspection-card-title">Active</h3>
+                    @if (_detail.Active is null)
+                    {
+                        <p class="inspection-empty">No active profile. Hot path falls back to v1 defaults until bootstrap stamps v0.</p>
+                    }
+                    else
+                    {
+                        <p>v@(_detail.Active.Version) — @_detail.Active.ProposedBy — since @(_detail.Active.EffectiveFrom?.ToString("u") ?? "(unset)")</p>
+                        <pre>@FormatJson(_detail.Active.ValuesJson)</pre>
+                    }
+                </div>
+
+                <div class="inspection-card">
+                    <h3 class="inspection-card-title">Proposed</h3>
+                    @if (_detail.Proposed is null)
+                    {
+                        <p class="inspection-empty">No pending proposal.</p>
+                    }
+                    else
+                    {
+                        <p>v@(_detail.Proposed.Version) — @_detail.Proposed.ProposedBy</p>
+                        <pre>@FormatJson(_detail.Proposed.ValuesJson)</pre>
+                        <h4>Rationale</h4>
+                        <pre>@FormatJson(_detail.Proposed.ProposalRationaleJson)</pre>
+                        <div class="inspection-form-actions">
+                            <button type="button" class="inspection-button inspection-button-primary" @onclick="ApproveAsync">Approve (start shadow)</button>
+                            <button type="button" class="inspection-button" @onclick="RejectAsync">Reject</button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid? ScannerId { get; set; }
+
+    private List<ScannerRow>? _rows;
+    private ScannerDetail? _detail;
+    private string _message = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _message = string.Empty;
+        if (!Tenant.IsResolved) return;
+
+        if (ScannerId is null)
+        {
+            await LoadListAsync();
+            _detail = null;
+        }
+        else
+        {
+            await LoadDetailAsync(ScannerId.Value);
+        }
+    }
+
+    private async Task LoadListAsync()
+    {
+        var scanners = await Db.ScannerDeviceInstances.AsNoTracking()
+            .OrderBy(s => s.DisplayName)
+            .ToListAsync();
+        var scannerIds = scanners.Select(s => s.Id).ToList();
+
+        var profiles = await Db.ScannerThresholdProfiles.AsNoTracking()
+            .Where(p => scannerIds.Contains(p.ScannerDeviceInstanceId)
+                        && (p.Status == ScannerThresholdProfileStatus.Active
+                            || p.Status == ScannerThresholdProfileStatus.Proposed))
+            .ToListAsync();
+
+        _rows = scanners.Select(s =>
+        {
+            var pf = profiles.Where(p => p.ScannerDeviceInstanceId == s.Id).ToList();
+            return new ScannerRow(
+                Scanner: s,
+                Active: pf.FirstOrDefault(p => p.Status == ScannerThresholdProfileStatus.Active),
+                Proposed: pf.OrderByDescending(p => p.Version)
+                            .FirstOrDefault(p => p.Status == ScannerThresholdProfileStatus.Proposed));
+        }).ToList();
+    }
+
+    private async Task LoadDetailAsync(Guid scannerId)
+    {
+        var scanner = await Db.ScannerDeviceInstances.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == scannerId);
+        if (scanner is null)
+        {
+            _detail = null;
+            _message = "Scanner not found in this tenant.";
+            return;
+        }
+
+        var active = await Db.ScannerThresholdProfiles.AsNoTracking()
+            .Where(p => p.ScannerDeviceInstanceId == scannerId
+                        && p.Status == ScannerThresholdProfileStatus.Active)
+            .OrderByDescending(p => p.Version)
+            .FirstOrDefaultAsync();
+
+        var proposed = await Db.ScannerThresholdProfiles.AsNoTracking()
+            .Where(p => p.ScannerDeviceInstanceId == scannerId
+                        && p.Status == ScannerThresholdProfileStatus.Proposed)
+            .OrderByDescending(p => p.Version)
+            .FirstOrDefaultAsync();
+
+        _detail = new ScannerDetail(scanner, active, proposed);
+    }
+
+    private async Task ApproveAsync()
+    {
+        if (_detail?.Proposed is null) return;
+        try
+        {
+            await AdminService.ApproveAsync(_detail.Proposed.Id, default);
+            _message = $"Approved v{_detail.Proposed.Version} — shadow run started.";
+            await LoadDetailAsync(_detail.Scanner.Id);
+        }
+        catch (Exception ex)
+        {
+            _message = $"Approve failed: {ex.Message}";
+        }
+    }
+
+    private async Task RejectAsync()
+    {
+        if (_detail?.Proposed is null) return;
+        try
+        {
+            await AdminService.RejectAsync(_detail.Proposed.Id, default);
+            _message = $"Rejected v{_detail.Proposed.Version}.";
+            await LoadDetailAsync(_detail.Scanner.Id);
+        }
+        catch (Exception ex)
+        {
+            _message = $"Reject failed: {ex.Message}";
+        }
+    }
+
+    private static string FormatJson(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return raw; }
+    }
+
+    private sealed record ScannerRow(
+        ScannerDeviceInstance Scanner,
+        ScannerThresholdProfile? Active,
+        ScannerThresholdProfile? Proposed);
+
+    private sealed record ScannerDetail(
+        ScannerDeviceInstance Scanner,
+        ScannerThresholdProfile? Active,
+        ScannerThresholdProfile? Proposed);
+}

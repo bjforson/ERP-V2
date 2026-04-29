@@ -4,6 +4,7 @@
 > **Repo:** `C:\Shared\ERP V2\` — separate git repo from v1.
 > **Parent roadmap:** `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` → Phase 7 (lives in the v1 repo).
 > **Migration companion:** [`MIGRATION-FROM-V1.md`](MIGRATION-FROM-V1.md)
+> **Image-analysis & ML roadmap:** [`IMAGE-ANALYSIS-MODERNIZATION.md`](IMAGE-ANALYSIS-MODERNIZATION.md) — what we run on top of the rendering pipeline (§7.7). Container-split student, `IInferenceRunner` plugin contract, DICOS readiness, eight specced ML/calibration sections (§6.1–6.8).
 > **First written:** 2026-04-24 · **Relocated to standalone repo:** 2026-04-25
 
 ---

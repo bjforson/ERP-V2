@@ -34,11 +34,32 @@ public interface IExternalSystemAdapter
         CancellationToken ct = default);
 }
 
-/// <summary>External-system capabilities surfaced to the admin UI.</summary>
+/// <summary>
+/// External-system capabilities surfaced to the admin UI. New flags appended
+/// at the end with safe defaults so existing outbound-only adapters compile
+/// unchanged (additive-only contract evolution; see IMAGE-ANALYSIS-
+/// MODERNIZATION.md §6.11.2).
+/// </summary>
+/// <param name="SupportedDocumentTypes">e.g. <c>BOE</c>, <c>CMR</c>, <c>IM</c>, <c>Manifest</c>.</param>
+/// <param name="SupportsPushNotifications">Adapter receives push notifications from the authority.</param>
+/// <param name="SupportsBulkFetch">Adapter can fetch multiple cases in one call.</param>
+/// <param name="SupportsOutcomePull">
+/// True iff the adapter implements <see cref="IInboundOutcomeAdapter.FetchOutcomesAsync"/>
+/// — bulk window-fetch of post-hoc authority outcomes (decisions, supersessions).
+/// Drives the orchestrator's pull-mode and hybrid-mode reconciliation pulls.
+/// See §6.11.2.
+/// </param>
+/// <param name="SupportsOutcomePush">
+/// True iff the adapter implements
+/// <see cref="IInboundOutcomeAdapter.ReceiveOutcomeWebhookAsync"/> — accepts
+/// authority-driven webhook deliveries of post-hoc outcomes. See §6.11.2.
+/// </param>
 public sealed record ExternalSystemCapabilities(
     IReadOnlyList<string> SupportedDocumentTypes,
     bool SupportsPushNotifications,
-    bool SupportsBulkFetch);
+    bool SupportsBulkFetch,
+    bool SupportsOutcomePull = false,
+    bool SupportsOutcomePush = false);
 
 /// <summary>
 /// Per-instance config the host passes on every call.
