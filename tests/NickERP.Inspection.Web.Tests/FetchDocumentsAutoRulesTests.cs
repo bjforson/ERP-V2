@@ -186,12 +186,12 @@ public sealed class FetchDocumentsAutoRulesTests : IDisposable
         public Task<ConnectionTestResult> TestAsync(ExternalSystemConfig config, CancellationToken ct = default) =>
             Task.FromResult(new ConnectionTestResult(true, "ok"));
 
-        public Task<IReadOnlyList<NickERP.Inspection.ExternalSystems.Abstractions.AuthorityDocument>> FetchDocumentsAsync(
+        public Task<IReadOnlyList<NickERP.Inspection.ExternalSystems.Abstractions.AuthorityDocumentDto>> FetchDocumentsAsync(
             ExternalSystemConfig config, CaseLookupCriteria lookup, CancellationToken ct = default)
         {
-            IReadOnlyList<NickERP.Inspection.ExternalSystems.Abstractions.AuthorityDocument> docs = new[]
+            IReadOnlyList<NickERP.Inspection.ExternalSystems.Abstractions.AuthorityDocumentDto> docs = new[]
             {
-                new NickERP.Inspection.ExternalSystems.Abstractions.AuthorityDocument(
+                new NickERP.Inspection.ExternalSystems.Abstractions.AuthorityDocumentDto(
                     config.InstanceId,
                     "BOE",
                     "C 999999 99",

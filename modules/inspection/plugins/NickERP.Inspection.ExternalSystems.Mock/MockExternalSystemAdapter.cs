@@ -28,12 +28,12 @@ public sealed class MockExternalSystemAdapter : IExternalSystemAdapter
             Latency: TimeSpan.FromMilliseconds(1)));
     }
 
-    public Task<IReadOnlyList<AuthorityDocument>> FetchDocumentsAsync(
+    public Task<IReadOnlyList<AuthorityDocumentDto>> FetchDocumentsAsync(
         ExternalSystemConfig config,
         CaseLookupCriteria lookup,
         CancellationToken ct = default)
     {
-        var doc = new AuthorityDocument(
+        var doc = new AuthorityDocumentDto(
             InstanceId: config.InstanceId,
             DocumentType: "BOE",
             ReferenceNumber: lookup.AuthorityReferenceNumber ?? lookup.ContainerNumber ?? lookup.VehicleVin ?? Guid.NewGuid().ToString("N")[..12],
@@ -44,7 +44,7 @@ public sealed class MockExternalSystemAdapter : IExternalSystemAdapter
                 lookup,
                 note = "Synthetic BOE — no upstream system was contacted."
             }));
-        return Task.FromResult<IReadOnlyList<AuthorityDocument>>(new[] { doc });
+        return Task.FromResult<IReadOnlyList<AuthorityDocumentDto>>(new[] { doc });
     }
 
     public Task<SubmissionResult> SubmitAsync(

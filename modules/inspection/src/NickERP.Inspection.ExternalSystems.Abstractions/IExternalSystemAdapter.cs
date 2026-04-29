@@ -18,7 +18,7 @@ public interface IExternalSystemAdapter
     Task<ConnectionTestResult> TestAsync(ExternalSystemConfig config, CancellationToken ct = default);
 
     /// <summary>Pull authority documents matching the lookup criteria.</summary>
-    Task<IReadOnlyList<AuthorityDocument>> FetchDocumentsAsync(
+    Task<IReadOnlyList<AuthorityDocumentDto>> FetchDocumentsAsync(
         ExternalSystemConfig config,
         CaseLookupCriteria lookup,
         CancellationToken ct = default);
@@ -59,8 +59,8 @@ public sealed record CaseLookupCriteria(
     string? VehicleVin,
     string? AuthorityReferenceNumber);
 
-/// <summary>One authority document tied to a case.</summary>
-public sealed record AuthorityDocument(
+/// <summary>DTO returned by IExternalSystemAdapter.FetchDocumentsAsync. Renamed from AuthorityDocument in FU-7 to disambiguate from the persistence entity at NickERP.Inspection.Core.Entities.AuthorityDocument.</summary>
+public sealed record AuthorityDocumentDto(
     Guid InstanceId,
     string DocumentType,
     string ReferenceNumber,
