@@ -162,6 +162,31 @@ Right now `audit.events` is queryable but no derived views. Build a notification
 
 Lightweight per-location node that buffers scans during WAN outages and replays the event log on reconnect. Designed-for since the audit-event idempotency-key contract was set; built when Inspection v2 has live traffic.
 
+### 4.9 Image-analysis & ML modernization (B.1.5)
+
+`docs/IMAGE-ANALYSIS-MODERNIZATION.md` (~2,400 lines as of 2026-04-29) is the design of record for the ML / calibration / standards layer that sits on top of the rendering pipeline. **Eleven specs + scaffolded inference plugin family.**
+
+| Sub-track | Status |
+|---|---|
+| §4 `IInferenceRunner` plugin contract — `Inference.Abstractions` + `Inference.OnnxRuntime` + `Inference.Mock` | ✅ scaffolded 2026-04-28; end-to-end smoke test passes 2026-04-29 |
+| §3 Container-split student model (replaces v1's per-scan Anthropic round-trip) | spec locked 2026-04-28; first stub model exported to ONNX 2026-04-29 |
+| §5 DICOS readiness | design-ready, deploy-deferred per fleet adoption |
+| §6.1 OCR replacement (Florence-2 / Donut, retiring Tesseract) | spec locked |
+| §6.2 HS-conditioned anomaly detection (DINOv2 + PatchCore) | spec locked — first published cargo-X-ray application |
+| §6.3 Manifest ↔ X-ray consistency scorer | spec locked |
+| §6.4 Active learning loop (Label Studio + SAM 2 + MLflow on-prem) | spec locked — closes §5's "Post-hoc outcome capture" open question |
+| §6.5 Per-scanner threshold calibration (`ScannerThresholdProfile`) | spec locked; entity + migration landed 2026-04-29 |
+| §6.6 Threat Image Projection synthetic data | spec locked |
+| §6.7 Dual-view registration | design-ready, deploy-deferred per fleet |
+| §6.8 Beam-hardening / metal-streak correction | spec locked |
+| §6.9 In-house threat library capture pipeline | spec locked; entity + migration landed 2026-04-29 |
+| §6.10 HS commodity density reference table | spec locked; entity + migration landed 2026-04-29 |
+| §6.11 Inbound post-hoc outcome adapter | spec locked; entity + migration landed 2026-04-29 |
+
+Phase 7.0 contract additions for the Inspection plugin surface (additive, no breakage): `ScannerCapabilities` gained `RawChannelsAvailable`, `SupportsDualView` + `DualViewGeometry`, `SupportsDicosExport` + `DicosFlavors`, `SupportsCalibrationMode`. `ParsedArtifact` gained `FormatVersion`. `ExternalSystemCapabilities` gained `SupportsOutcomePull` + `SupportsOutcomePush`. New `IInboundOutcomeAdapter` interface + supporting types. Contract versions bumped 1.1 → 1.2 on both Abstractions assemblies.
+
+Operational tooling: `tools/v1-label-export/export_splits.py` (read-only export of v1 splitter labels) and `docs/runbooks/vendor-call-2026-04.md` (one-page vendor-call script for FS6000 + ICUMS information-gathering).
+
 ---
 
 ## 5. Open questions deferred (decide when forced)
@@ -171,7 +196,7 @@ Lightweight per-location node that buffers scans during WAN outages and replays 
 | Conflict resolution on edge-node sync (last-writer vs field-merge) | Before edge node is built (4.8) |
 | Station-to-Device binding rotation policy | When stations rotate scanners mid-day (sooner if multi-shift) |
 | Dual-review enforcement (two analysts on high-value cases) | When compliance demands it |
-| Post-hoc outcome capture (customs seizure feedback for ML labels) | When ML triage assist is on the table |
+| Post-hoc outcome capture (customs seizure feedback for ML labels) | ✅ **Resolved 2026-04-29** — `docs/IMAGE-ANALYSIS-MODERNIZATION.md` §6.4 + §6.11 (inbound `IInboundOutcomeAdapter`, supersession-chain idempotency, manual-entry fallback) |
 | Per-ExternalSystemInstance rate limiting / token-bucket | Before first real external-system call (B.1.2) |
 | Data residency (per-tenant cluster?) | Before second tenant outside Ghana |
 | Operator identity at the scanner (does the scanner know who's using it?) | When multi-operator shifts hit |
@@ -184,7 +209,7 @@ Lightweight per-location node that buffers scans during WAN outages and replays 
 - Rebuilding NickHR or NickComms — adapted via shims later, not rebuilt.
 - Public plugin API (in-house only).
 - Mobile native app (responsive web for v1; revisit when field operators complain).
-- AI-driven analysis assistance (designed to be added later via the ML telemetry capture in `AnalystReview`; not built).
+- ~~AI-driven analysis assistance~~ — **moved into scope** as B.1.5 in §4.9 (2026-04-28). Designed via the ML telemetry capture in `AnalystReview`; specs in `docs/IMAGE-ANALYSIS-MODERNIZATION.md`; first scaffold landed 2026-04-29.
 
 ---
 

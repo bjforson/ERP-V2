@@ -2,65 +2,26 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": {
-    "id": "Sprint 9",
-    "name": "Followup-2 Sweep (sequential)",
-    "goal": "Drain the four-followup queue captured by the 2026-04-29 product calls. Per user call: 'all sequentially' — one agent at a time, in priority order. Specs in docs/product-calls-2026-04-29.md §3.",
+    "id": "Sprint 10",
+    "name": "G2 — NickFinance Petty Cash pathfinder",
+    "goal": "First NickFinance module pathfinder: Petty Cash. Money primitive, voucher state machine, ledger event projection, period locks, FX. Binding spec in docs/product-calls-2026-04-29.md §1.",
     "startedAt": "2026-04-29",
     "items": [
       {
-        "id": "FU-deploy",
-        "title": "Deploy.ps1 for ERP V2 (same-Windows-host target)",
-        "phase": "Production prep",
-        "status": "done",
-        "branch": "plan/fu-deploy-script",
-        "commit": "7f9ec49",
-        "mergeCommit": "4cad430",
-        "agentId": "dispatched 2026-04-29",
-        "dispatchedAt": "2026-04-29",
-        "completedAt": "2026-04-29",
-        "notes": "Deploy.ps1 408 lines, 6-phase, PS 5.1+7 compatible. NickERP_Inspection_Web :5410, NickERP_Portal :5400. v0 same-host build+copy; cross-host Y:\\ variant documented for future."
-      },
-      {
-        "id": "FU-userid",
-        "title": "app.user_id session setting + RLS user-isolation promotion",
-        "phase": "Production prep",
-        "status": "done",
-        "branch": "plan/fu-userid-rls",
-        "commit": "7bd62ae",
-        "mergeCommit": null,
-        "agentId": "dispatched 2026-04-29",
-        "dispatchedAt": "2026-04-29",
-        "completedAt": "2026-04-29",
-        "notes": "TenantConnectionInterceptor + IUserContext + UserResolutionMiddleware. audit.notifications RLS now combines tenant + user filters with system-context OR clause. Tests 60→63."
-      },
-      {
-        "id": "FU-host-status",
-        "title": "BackgroundService liveness endpoint /healthz/workers",
-        "phase": "Production prep",
-        "status": "done",
-        "branch": "plan/fu-host-status-endpoint",
-        "commit": "7b5f0a8",
-        "mergeCommit": null,
-        "agentId": "dispatched 2026-04-29",
-        "dispatchedAt": "2026-04-29",
-        "completedAt": "2026-04-29",
-        "notes": "IBackgroundServiceProbe in NickERP.Platform.Telemetry (cycle-free). 4 workers wired: PreRender / SourceJanitor / ScannerIngestion / AuditNotificationProjector. /healthz/workers endpoint with aggregated verdict. Tests 63→68 (+5)."
-      },
-      {
-        "id": "FU-icums-signing",
-        "title": "IcumsGh envelope signing + key rotation",
-        "phase": "Production prep",
+        "id": "G2",
+        "title": "NickFinance Petty Cash pathfinder (single-agent, ~5–7 days)",
+        "phase": "Generalization",
         "status": "in-progress",
-        "branch": "plan/fu-icums-signing",
+        "branch": "plan/g2-nickfinance-pathfinder",
         "commit": null,
         "agentId": "dispatched 2026-04-29",
         "dispatchedAt": "2026-04-29",
         "completedAt": null,
-        "notes": "HMAC-SHA256 detached signature; SetSystemContext rotation with overlap window. Per §3.4."
+        "notes": "Money value object, per-box currency, Request→Approve→Disburse→Reconcile, per-box approver, single-entry append-only ledger, soft period locks, FX snapshot on every event, daily-manual FX publish (suite-wide). Binding spec: docs/product-calls-2026-04-29.md §1."
       }
     ]
   },
-  "currentSprintNote": "Sprint 9 — Followup-2 sweep, sequential execution per user call.",
+  "currentSprintNote": "Sprint 10 — G2 NickFinance Petty Cash pathfinder. Sprint 9 (Followup-2 sweep) shipped end-to-end at 4c05b5d.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -73,14 +34,27 @@
     }
   ],
   "rollingMasterScope": {
-    "drainable": ["G2", "P2"],
-    "drainableNote": "Sprint 9 (Followup-2 sweep: FU-deploy, FU-userid, FU-host-status, FU-icums-signing) is in-flight as currentSprint. Remaining drainable: G2 NickFinance pathfinder, then P2 edge node. Specs in docs/product-calls-2026-04-29.md.",
+    "drainable": ["P2"],
+    "drainableNote": "Sprint 10 (G2) is in-flight as currentSprint. After G2 lands, P2 (edge node SQLite buffer + replay) is the last drainable. Specs in docs/product-calls-2026-04-29.md.",
     "gated": [],
     "outOfScope": [
-      { "id": "image-analysis-track", "reason": "User-driven; spawns its own master run when ready. Heads-up: untracked IInboundOutcomeAdapter.cs may reference the old AuthorityDocument DTO name — rename to AuthorityDocumentDto (FU-7) when resuming. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source." }
+      { "id": "image-analysis-track", "reason": "User-driven; spawns its own master run when ready. Heads-up: untracked IInboundOutcomeAdapter.cs may reference the old AuthorityDocument DTO name — rename to AuthorityDocumentDto (FU-7) when resuming. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source. Stash@{0} preserved with parallel inference DbSet edits to InspectionDbContext.cs + Modelsnapshot.cs (conflict resolution from FU-icums-signing took main; user reconciles when resuming)." }
     ]
   },
   "history": [
+    {
+      "id": "Sprint 9",
+      "name": "Followup-2 Sweep (sequential)",
+      "shippedAt": "2026-04-29",
+      "mainCommit": "4c05b5d",
+      "itemCount": 4,
+      "items": [
+        { "id": "FU-deploy", "title": "Deploy.ps1 for ERP V2 same-Windows-host target (408 lines, 6-phase, PS 5.1+7 compatible)", "commit": "7f9ec49" },
+        { "id": "FU-userid", "title": "app.user_id session setting + audit.notifications RLS user-isolation (TenantConnectionInterceptor + IUserContext + UserResolutionMiddleware)", "commit": "7bd62ae" },
+        { "id": "FU-host-status", "title": "/healthz/workers endpoint + IBackgroundServiceProbe + 4 worker probe impls", "commit": "7b5f0a8" },
+        { "id": "FU-icums-signing", "title": "HMAC-SHA256 envelope signing + per-tenant key rotation behind IcumsGh:Sign flag", "commit": "b6b04e8" }
+      ]
+    },
     {
       "id": "Sprint 8",
       "name": "Audit Projection + Notifications Inbox (P3)",
@@ -182,19 +156,15 @@
     }
   ],
   "backlog": [
-    { "id": "FU-deploy", "title": "Deploy.ps1 (or successor) for ERP V2 prod", "phase": "Production prep", "estimateDays": "0.5-1", "spec": "docs/product-calls-2026-04-29.md §3.1", "deployTarget": "Same Windows host as v1, new NSSM services on :5410/:5400 + reserved ranges :5420/:5430" },
-    { "id": "FU-userid", "title": "app.user_id session setting + RLS user-isolation promotion", "phase": "Production prep", "estimateDays": "1-1.5", "spec": "docs/product-calls-2026-04-29.md §3.2" },
-    { "id": "FU-host-status", "title": "BackgroundService liveness endpoint /healthz/workers", "phase": "Production prep", "estimateDays": "0.5", "spec": "docs/product-calls-2026-04-29.md §3.3" },
-    { "id": "FU-icums-signing", "title": "IcumsGh envelope signing + key rotation", "phase": "Production prep", "estimateDays": "1", "spec": "docs/product-calls-2026-04-29.md §3.4" },
     { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "spec": "docs/product-calls-2026-04-29.md §1 (all six calls captured; binding)" },
     { "id": "P2", "title": "Edge node — SQLite buffer + replay (server-authoritative)", "phase": "Production prep", "estimateDays": "5-7", "spec": "docs/product-calls-2026-04-29.md §2 (binding)" }
   ],
   "followups": [
-    { "id": "P1-FU-deploy-script", "title": "Author Deploy.ps1 (or successor) for ERP V2 prod", "from": "P1 / Sprint 7", "severity": "medium (operational gap; runbook 01 is the de-facto spec)" },
-    { "id": "P1-FU-icums-signing", "title": "IcumsGhAdapter envelope signing + key rotation", "from": "P1 / Sprint 7", "severity": "medium (deferred until ICUMS asks for signed envelopes)" },
-    { "id": "P1-FU-host-status", "title": "Host status endpoint exposing BackgroundService liveness", "from": "P1 / Sprint 7", "severity": "low (would tighten 03-prerender-stalled.md detection)" },
     { "id": "P1-FU-external-systems-enable-col", "title": "Confirm external_system_instances enable-column name (IsEnabled vs IsActive)", "from": "P1 / Sprint 7", "severity": "low (doc clarity)" },
-    { "id": "P3-FU-app-user-id", "title": "Plumb app.user_id session setting + IdentityTenancyInterceptor extension", "from": "P3 / Sprint 8", "severity": "medium (lets notifications user-isolation move from LINQ to RLS)" },
-    { "id": "P3-FU-plan-md-services-path", "title": "PLAN.md §19.2 references Audit/Services/ but correct layer is Audit.Database/Services/", "from": "P3 / Sprint 8", "severity": "low (doc sync)" }
+    { "id": "P3-FU-plan-md-services-path", "title": "PLAN.md §19.2 references Audit/Services/ but correct layer is Audit.Database/Services/", "from": "P3 / Sprint 8", "severity": "low (doc sync)" },
+    { "id": "FU-icums-strict-mode", "title": "Add ?strict=true query to /healthz/workers returning 503 when any worker Unhealthy (LB integration)", "from": "FU-host-status / Sprint 9", "severity": "low (LB ergonomics)" },
+    { "id": "FU-icums-cluster-key-ring", "title": "Data-protection key ring needs PersistKeysToFileSystem(shared) or Azure Blob for clustered prod", "from": "FU-icums-signing / Sprint 9", "severity": "medium (single-host prod fine; clustered breaks)" },
+    { "id": "FU-icums-cross-tenant-rotation", "title": "Cross-tenant 'rotate all tenants' admin action via SetSystemContext", "from": "FU-icums-signing / Sprint 9", "severity": "low (per-tenant flow shipped)" },
+    { "id": "FU-plugin-authoring-scoped-services", "title": "Document IServiceScopeFactory pattern for singleton plugins needing scoped DbContext (PLUGIN-AUTHORING.md)", "from": "FU-icums-signing / Sprint 9", "severity": "low (DI gotcha for future plugins)" }
   ]
 }
