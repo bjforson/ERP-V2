@@ -1,26 +1,8 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": {
-    "id": "Sprint 8",
-    "name": "Audit Projection + Notifications Inbox (P3)",
-    "goal": "Ship audit.notifications projection + notifications inbox UI. After this lands, the rolling-master drainable backlog is empty. Per PLAN.md §19.",
-    "startedAt": "2026-04-29",
-    "items": [
-      {
-        "id": "P3",
-        "title": "Audit projection + notifications inbox (Phase A projection + Phase B UI)",
-        "phase": "Production prep",
-        "status": "in-progress",
-        "branch": "plan/p3-audit-projection-notifications",
-        "commit": null,
-        "agentId": "dispatched 2026-04-29",
-        "dispatchedAt": "2026-04-29",
-        "completedAt": null,
-        "notes": "Phase A: audit.notifications table + AuditNotificationProjector worker + 3 hardcoded INotificationRules. Phase B: NotificationsBell.razor (top-nav) + Notifications.razor (/notifications page) + 3 endpoints + 2 test files. Per PLAN.md §19.2."
-      }
-    ]
-  },
+  "currentSprint": null,
+  "currentSprintNote": "Rolling-master drainable backlog is EMPTY as of 2026-04-29. Sprints 5–8 all shipped. Remaining items (G2 NickFinance, P2 edge node, image-analysis track) are gated on user input and require explicit unblocking.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -33,7 +15,8 @@
     }
   ],
   "rollingMasterScope": {
-    "drainable": ["P3"],
+    "drainable": [],
+    "drainableNote": "Empty as of 2026-04-29 (Sprints 5–8 shipped end-to-end).",
     "gated": [
       { "id": "G2", "reason": "domain shape — Petty Cash voucher / custodian / ledger / approval / currency. User delivers ~6 product calls before it ships." },
       { "id": "P2", "reason": "edge-node conflict-resolution semantics likely needs a design call mid-sprint; rolling master may halt on it." }
@@ -43,6 +26,16 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 8",
+      "name": "Audit Projection + Notifications Inbox (P3)",
+      "shippedAt": "2026-04-29",
+      "mainCommit": "f9a595d",
+      "itemCount": 1,
+      "items": [
+        { "id": "P3", "title": "audit.notifications projection (table + RLS + projector + 3 rules) + inbox UI (bell + page + 3 endpoints) + 9 new tests (60 total)", "commit": "7549c6e" }
+      ]
+    },
     {
       "id": "Sprint 7",
       "name": "Operations Runbooks (P1)",
@@ -135,9 +128,14 @@
   ],
   "backlog": [
     { "id": "G2", "title": "NickFinance Petty Cash pathfinder", "phase": "Generalization", "estimateDays": "5-7", "blockedBy": "domain shape — user delivers ~6 product calls before it ships" },
-    { "id": "P1", "title": "Standalone operations runbooks", "phase": "Production prep", "estimateDays": "1" },
-    { "id": "P2", "title": "Edge node — SQLite buffer + replay", "phase": "Production prep", "estimateDays": "5-7" },
-    { "id": "P3", "title": "Audit projection + notifications", "phase": "Production prep", "estimateDays": "2-3" }
+    { "id": "P2", "title": "Edge node — SQLite buffer + replay", "phase": "Production prep", "estimateDays": "5-7", "blockedBy": "edge-node conflict-resolution semantics design call" }
   ],
-  "followups": []
+  "followups": [
+    { "id": "P1-FU-deploy-script", "title": "Author Deploy.ps1 (or successor) for ERP V2 prod", "from": "P1 / Sprint 7", "severity": "medium (operational gap; runbook 01 is the de-facto spec)" },
+    { "id": "P1-FU-icums-signing", "title": "IcumsGhAdapter envelope signing + key rotation", "from": "P1 / Sprint 7", "severity": "medium (deferred until ICUMS asks for signed envelopes)" },
+    { "id": "P1-FU-host-status", "title": "Host status endpoint exposing BackgroundService liveness", "from": "P1 / Sprint 7", "severity": "low (would tighten 03-prerender-stalled.md detection)" },
+    { "id": "P1-FU-external-systems-enable-col", "title": "Confirm external_system_instances enable-column name (IsEnabled vs IsActive)", "from": "P1 / Sprint 7", "severity": "low (doc clarity)" },
+    { "id": "P3-FU-app-user-id", "title": "Plumb app.user_id session setting + IdentityTenancyInterceptor extension", "from": "P3 / Sprint 8", "severity": "medium (lets notifications user-isolation move from LINQ to RLS)" },
+    { "id": "P3-FU-plan-md-services-path", "title": "PLAN.md §19.2 references Audit/Services/ but correct layer is Audit.Database/Services/", "from": "P3 / Sprint 8", "severity": "low (doc sync)" }
+  ]
 }
