@@ -79,19 +79,19 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
             Latency: TimeSpan.FromMilliseconds(1)));
     }
 
-    public Task<IReadOnlyList<AuthorityDocument>> FetchDocumentsAsync(
+    public Task<IReadOnlyList<AuthorityDocumentDto>> FetchDocumentsAsync(
         ExternalSystemConfig config,
         CaseLookupCriteria lookup,
         CancellationToken ct = default)
     {
         var cfg = ParseConfig(config);
         if (string.IsNullOrWhiteSpace(cfg.BatchDropPath))
-            return Task.FromResult<IReadOnlyList<AuthorityDocument>>(Array.Empty<AuthorityDocument>());
+            return Task.FromResult<IReadOnlyList<AuthorityDocumentDto>>(Array.Empty<AuthorityDocumentDto>());
 
         var index = GetOrCreateIndex(config.TenantId, config.InstanceId, cfg);
         index.RefreshIfStale();
 
-        var matches = new List<AuthorityDocument>();
+        var matches = new List<AuthorityDocumentDto>();
 
         // ICUMS keys everything off ContainerNumber — that's the primary
         // path. Vehicle VIN and AuthorityReferenceNumber land here too:
@@ -125,7 +125,7 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
             }
         }
 
-        return Task.FromResult<IReadOnlyList<AuthorityDocument>>(matches);
+        return Task.FromResult<IReadOnlyList<AuthorityDocumentDto>>(matches);
     }
 
     public async Task<SubmissionResult> SubmitAsync(
@@ -218,11 +218,11 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
     }
 
     /// <summary>
-    /// Project a single index entry into the v2 contract's AuthorityDocument.
+    /// Project a single index entry into the v2 contract's AuthorityDocumentDto.
     /// DocumentType is inferred from the regime code (Ghana Customs uses
     /// regime 80 for transit / CMR and other codes for direct imports / IM).
     /// </summary>
-    private static AuthorityDocument ToAuthorityDocument(Guid instanceId, IcumBatchIndex.DocumentEntry entry)
+    private static AuthorityDocumentDto ToAuthorityDocument(Guid instanceId, IcumBatchIndex.DocumentEntry entry)
     {
         // Reference precedence: declaration number → house BL → container.
         string referenceNumber = !string.IsNullOrEmpty(entry.DeclarationNumber)
@@ -242,7 +242,7 @@ public sealed class IcumsGhAdapter : IExternalSystemAdapter
 
         var receivedAt = SafeFileMtime(entry.SourceFilePath);
 
-        return new AuthorityDocument(
+        return new AuthorityDocumentDto(
             InstanceId: instanceId,
             DocumentType: documentType,
             ReferenceNumber: referenceNumber,
