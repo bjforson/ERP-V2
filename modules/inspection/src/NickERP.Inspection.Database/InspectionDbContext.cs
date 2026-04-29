@@ -32,6 +32,7 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<Verdict> Verdicts => Set<Verdict>();
     public DbSet<OutboundSubmission> OutboundSubmissions => Set<OutboundSubmission>();
     public DbSet<RuleEvaluation> RuleEvaluations => Set<RuleEvaluation>();
+    public DbSet<IcumsSigningKey> IcumsSigningKeys => Set<IcumsSigningKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -406,6 +407,35 @@ public sealed class InspectionDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.CaseId, x.AuthorityCode })
                 .IsUnique()
                 .HasDatabaseName("ux_rule_eval_tenant_case_authority");
+        });
+
+        // ----- IcumsSigningKey (Sprint 9 / FU-icums-signing) ------------------------
+        // Per-tenant HMAC-SHA256 signing key for the IcumsGh adapter's
+        // pre-emptive envelope-signing flow. Key material is wrapped via
+        // ASP.NET Core data protection at the service layer; the column
+        // here only ever holds ciphertext.
+        modelBuilder.Entity<IcumsSigningKey>(e =>
+        {
+            e.ToTable("icums_signing_keys");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.KeyId).IsRequired().HasMaxLength(32);
+            e.Property(x => x.KeyMaterialEncrypted).IsRequired().HasColumnType("bytea");
+            e.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.ActivatedAt);
+            e.Property(x => x.RetiredAt);
+            e.Property(x => x.VerificationOnlyUntil);
+
+            // Per-tenant key id is unique — allows the signature header to
+            // carry just the short key id without ambiguity.
+            e.HasIndex(x => new { x.TenantId, x.KeyId })
+                .IsUnique()
+                .HasDatabaseName("ux_icums_signing_keys_tenant_keyid");
+
+            // Hot-path lookup: find the active-for-signing key for a tenant.
+            e.HasIndex(x => new { x.TenantId, x.ActivatedAt, x.RetiredAt })
+                .HasDatabaseName("ix_icums_signing_keys_tenant_active");
         });
     }
 }
