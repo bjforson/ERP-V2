@@ -22,17 +22,24 @@ namespace NickERP.Inspection.Web.Tests;
 ///         401 (the host-level <c>RequireAuthorization()</c> would block
 ///         it before the handler runs in production; the handler still
 ///         double-checks).</description></item>
-///   <item><description>A user from tenant A never sees notifications
-///         belonging to tenant B / user B (LINQ-based user-isolation;
-///         RLS would also filter at the DB layer in prod, but the
-///         in-memory provider doesn't run RLS so this is the inner
-///         ring's regression test).</description></item>
 ///   <item><description><c>unreadOnly=true</c> filter excludes already-read
 ///         rows.</description></item>
 ///   <item><description><c>POST /{id}/read</c> stamps <c>ReadAt</c>;
 ///         a second call is a no-op.</description></item>
-///   <item><description><c>POST /read-all</c> stamps every unread row.</description></item>
+///   <item><description><c>POST /read-all</c> stamps every unread row
+///         the caller can see.</description></item>
 /// </list>
+///
+/// <para>
+/// Sprint 9 / FU-userid — user-isolation moved from the LINQ layer to
+/// the DB-level RLS policy <c>tenant_user_isolation_notifications</c>.
+/// The in-memory provider does not run RLS, so these unit tests no
+/// longer assert user-isolation; that's covered by the Postgres-backed
+/// <see cref="NickERP.Platform.Tests.NotificationsRlsIsolationTests"/>
+/// against a real cluster. The unit tests still assert paging,
+/// mark-as-read idempotency, and unreadOnly filtering — the parts of
+/// the endpoint logic that survive the LINQ-filter removal.
+/// </para>
 /// </summary>
 public sealed class NotificationsEndpointsTests
 {
@@ -50,16 +57,22 @@ public sealed class NotificationsEndpointsTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task GetList_filters_to_caller_user_only()
+    public async Task GetList_returns_paged_notifications_for_authenticated_caller()
     {
+        // FU-userid — the LINQ-level user filter has moved to the RLS
+        // policy `tenant_user_isolation_notifications`. The in-memory
+        // provider doesn't enforce RLS, so this unit test no longer
+        // asserts user-isolation (covered by the Postgres-backed
+        // NotificationsRlsIsolationTests). It does assert that the
+        // endpoint accepts the auth claim, exposes a NotificationsPageDto,
+        // and counts what the DB returns — the parts of the handler that
+        // don't depend on user-isolation enforcement.
         var alice = Guid.NewGuid();
-        var bob = Guid.NewGuid();
 
-        await using var db = BuildDb("notif-iso-" + Guid.NewGuid());
+        await using var db = BuildDb("notif-page-" + Guid.NewGuid());
         db.Notifications.AddRange(
             NewNotification(alice, "Hello Alice", tenantId: 1),
-            NewNotification(bob, "Hello Bob", tenantId: 1),
-            NewNotification(bob, "Bob Two", tenantId: 1));
+            NewNotification(alice, "Another", tenantId: 1));
         await db.SaveChangesAsync();
 
         var http = new DefaultHttpContext { User = PrincipalFor(alice) };
@@ -69,10 +82,9 @@ public sealed class NotificationsEndpointsTests
         // assertion-friendly without coupling to the IResult internal type.
         var page = ExtractValue<NotificationsPageDto>(result);
         page.Should().NotBeNull();
-        page!.Items.Should().HaveCount(1);
-        page.Items[0].Title.Should().Be("Hello Alice");
-        page.UnreadCount.Should().Be(1);
-        page.TotalCount.Should().Be(1);
+        page!.Items.Should().HaveCount(2);
+        page.UnreadCount.Should().Be(2);
+        page.TotalCount.Should().Be(2);
     }
 
     [Fact]
@@ -132,53 +144,49 @@ public sealed class NotificationsEndpointsTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task MarkRead_returns_NotFound_for_other_users_row()
+    public async Task MarkRead_returns_NotFound_for_unknown_id()
     {
+        // FU-userid — the LINQ-level "not the caller's row" filter is gone;
+        // user-isolation lives at the RLS layer. Under the in-memory
+        // provider (no RLS), the only way to get a 404 is for the row to
+        // not exist at all. Cross-user 404 behaviour is covered by the
+        // Postgres-backed NotificationsRlsIsolationTests.
         var alice = Guid.NewGuid();
-        var bob = Guid.NewGuid();
+        var unknownId = Guid.NewGuid();
 
-        await using var db = BuildDb("notif-iso-mark-" + Guid.NewGuid());
-        var bobsRow = NewNotification(bob, "Private to Bob", tenantId: 1);
-        db.Notifications.Add(bobsRow);
-        await db.SaveChangesAsync();
+        await using var db = BuildDb("notif-notfound-" + Guid.NewGuid());
 
         var http = new DefaultHttpContext { User = PrincipalFor(alice) };
-        var result = await NotificationsEndpoints.MarkReadAsync(bobsRow.Id, http, db);
+        var result = await NotificationsEndpoints.MarkReadAsync(unknownId, http, db);
 
         result.GetType().Name.Should().Be("NotFound");
-
-        // Bob's row remains unread — Alice didn't touch it.
-        var stored = await db.Notifications.AsNoTracking().FirstAsync(x => x.Id == bobsRow.Id);
-        stored.ReadAt.Should().BeNull();
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task MarkAllRead_stamps_only_callers_unread_rows()
+    public async Task MarkAllRead_stamps_unread_rows_visible_to_caller()
     {
+        // FU-userid — under the in-memory provider every row is visible
+        // (no RLS). The handler now stamps every unread row it sees.
+        // In production, RLS narrows visibility to the caller's
+        // (tenant, user) before this code path runs; that narrowing is
+        // tested by the Postgres-backed NotificationsRlsIsolationTests.
         var alice = Guid.NewGuid();
-        var bob = Guid.NewGuid();
 
         await using var db = BuildDb("notif-all-" + Guid.NewGuid());
-        var aliceUnread1 = NewNotification(alice, "A1", tenantId: 1);
-        var aliceUnread2 = NewNotification(alice, "A2", tenantId: 1);
-        var aliceRead = NewNotification(alice, "A3", tenantId: 1);
-        aliceRead.ReadAt = DateTimeOffset.UtcNow.AddHours(-1);
-        var bobUnread = NewNotification(bob, "B1", tenantId: 1);
-        db.Notifications.AddRange(aliceUnread1, aliceUnread2, aliceRead, bobUnread);
+        var unread1 = NewNotification(alice, "A1", tenantId: 1);
+        var unread2 = NewNotification(alice, "A2", tenantId: 1);
+        var alreadyRead = NewNotification(alice, "A3", tenantId: 1);
+        alreadyRead.ReadAt = DateTimeOffset.UtcNow.AddHours(-1);
+        db.Notifications.AddRange(unread1, unread2, alreadyRead);
         await db.SaveChangesAsync();
 
         var http = new DefaultHttpContext { User = PrincipalFor(alice) };
         var result = await NotificationsEndpoints.MarkAllReadAsync(http, db);
         result.GetType().Name.Should().Contain("Ok");
 
-        var aliceRows = await db.Notifications.AsNoTracking()
-            .Where(n => n.UserId == alice).ToListAsync();
-        aliceRows.Should().HaveCount(3).And.OnlyContain(n => n.ReadAt != null);
-
-        var bobRow = await db.Notifications.AsNoTracking()
-            .FirstAsync(n => n.UserId == bob);
-        bobRow.ReadAt.Should().BeNull("Alice's mark-all must not touch Bob's notifications");
+        var rows = await db.Notifications.AsNoTracking().ToListAsync();
+        rows.Should().HaveCount(3).And.OnlyContain(n => n.ReadAt != null);
     }
 
     // -- helpers --------------------------------------------------------

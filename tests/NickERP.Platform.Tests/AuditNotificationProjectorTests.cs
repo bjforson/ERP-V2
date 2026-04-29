@@ -130,6 +130,58 @@ public sealed class AuditNotificationProjectorTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task ProjectOnce_runs_under_SystemContext_and_lands_a_row()
+    {
+        // Sprint 9 / FU-userid — sanity check that the per-tenant insert
+        // path now flips the ITenantContext into SetSystemContext mode.
+        // The in-memory provider doesn't actually run RLS so this test
+        // can't observe the OR clause directly — but it proves the
+        // projector reaches SaveChangesAsync without raising, the row
+        // lands in audit.notifications, and the shared TenantContext
+        // ends in IsSystem == true (the state the projector leaves it
+        // in). The Postgres-backed NotificationsRlsIsolationTests cover
+        // the OR-clause behaviour against real RLS.
+        var dbName = "audit-notifications-system-" + Guid.NewGuid();
+        var sp = BuildServices(dbName);
+
+        var openerUserId = Guid.NewGuid();
+        var caseId = Guid.NewGuid();
+
+        using (var scope = sp.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+            db.Events.Add(new DomainEventRow
+            {
+                EventId = Guid.NewGuid(),
+                TenantId = 7,
+                ActorUserId = openerUserId,
+                EventType = "nickerp.inspection.case_opened",
+                EntityType = "InspectionCase",
+                EntityId = caseId.ToString(),
+                Payload = JsonDocument.Parse("{}"),
+                OccurredAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                IngestedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                IdempotencyKey = "ipk-" + Guid.NewGuid()
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var projector = sp.GetRequiredService<AuditNotificationProjector>();
+        var inserted = await projector.ProjectOnceAsync(CancellationToken.None);
+        inserted.Should().Be(1);
+
+        using var verifyScope = sp.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var rows = await verifyDb.Notifications.AsNoTracking().ToListAsync();
+        rows.Should().HaveCount(1);
+        rows[0].TenantId.Should().Be(7L,
+            "the per-tenant fan-out narrows audit.events by tenantId in LINQ "
+            + "even though RLS is permissive under system context");
+        rows[0].UserId.Should().Be(openerUserId);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task ProjectOnce_reads_AnalystUserId_from_payload_for_case_assigned()
     {
         var dbName = "audit-notifications-assigned-" + Guid.NewGuid();

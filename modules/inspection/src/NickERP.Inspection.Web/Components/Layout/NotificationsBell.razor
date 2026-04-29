@@ -58,10 +58,15 @@
             return;
         }
 
-        // RLS narrows by tenant; LINQ narrows by UserId.
+        // RLS narrows by tenant + user (FU-userid). The `n.UserId == userId`
+        // clause stays as a defence-in-depth guard you can re-enable if RLS
+        // ever regresses — comment it back in to make a regression loud
+        // rather than silent.
+        // User filter now enforced at RLS layer (FU-userid). The line stays
+        // as a defence-in-depth guard you can re-enable if RLS ever regresses.
         _unreadCount = await Audit.Notifications
             .AsNoTracking()
-            .Where(n => n.UserId == userId && n.ReadAt == null)
+            .Where(n => /* n.UserId == userId && */ n.ReadAt == null)
             .CountAsync();
     }
 
