@@ -1,27 +1,8 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": {
-    "id": "Sprint 11",
-    "name": "P2 — Edge node SQLite buffer + replay (server-authoritative)",
-    "goal": "Last drainable item. Edge nodes buffer events offline in SQLite and replay to server on reconnect as fresh appends. Server-authoritative; nothing in core schema is mutable from edge side. Binding spec in docs/product-calls-2026-04-29.md §2.",
-    "startedAt": "2026-04-29",
-    "items": [
-      {
-        "id": "P2",
-        "title": "Edge node SQLite buffer + replay (single-agent, ~5–7 days)",
-        "phase": "Production prep",
-        "status": "in-progress",
-        "branch": "plan/p2-edge-node-buffer",
-        "commit": null,
-        "agentId": "dispatched 2026-04-29",
-        "dispatchedAt": "2026-04-29",
-        "completedAt": null,
-        "notes": "edge_outbox SQLite table; per-edge FIFO replay; edge_timestamp preserved as canonical posted_at; reads only of cached reference data; no edge mutations or deletes. Binding spec: docs/product-calls-2026-04-29.md §2."
-      }
-    ]
-  },
-  "currentSprintNote": "Sprint 11 — P2 edge node, the last drainable in the post-Sprint-8 product-call queue. After this lands the rolling-master backlog is empty.",
+  "currentSprint": null,
+  "currentSprintNote": "Rolling-master drainable backlog is EMPTY (second time this run). Eleven sprints shipped end-to-end on 2026-04-29: Sprint 5 (G1-3) → Sprint 6 (FU-2..7) → Sprint 7 (P1) → Sprint 8 (P3) → Sprint 9 (FU-deploy/userid/host-status/icums-signing) → Sprint 10 (G2 NickFinance pathfinder) → Sprint 11 (P2 edge node). Tests at 208/208. Only image-analysis (user-driven) remains out of scope. Awaiting next master spawn or new product calls.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -35,13 +16,23 @@
   ],
   "rollingMasterScope": {
     "drainable": [],
-    "drainableNote": "Sprint 11 (P2 edge node) is the last in-flight sprint. After it lands the drainable backlog is empty for the second time in this run.",
+    "drainableNote": "Empty as of 2026-04-29 (P2 edge node merged at c3274c5). Eleven sprints shipped this run, 208/208 tests, NickFinance now live as the second module on the platform.",
     "gated": [],
     "outOfScope": [
       { "id": "image-analysis-track", "reason": "User-driven; spawns its own master run when ready. Heads-up: untracked IInboundOutcomeAdapter.cs may reference the old AuthorityDocument DTO name — rename to AuthorityDocumentDto (FU-7) when resuming. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source. Stash@{0} preserved with parallel inference DbSet edits to InspectionDbContext.cs + Modelsnapshot.cs (conflict resolution from FU-icums-signing took main; user reconciles when resuming)." }
     ]
   },
   "history": [
+    {
+      "id": "Sprint 11",
+      "name": "P2 — Edge node SQLite buffer + replay",
+      "shippedAt": "2026-04-29",
+      "mainCommit": "c3274c5",
+      "itemCount": 1,
+      "items": [
+        { "id": "P2", "title": "Edge node SQLite buffer + replay (apps/edge-node + /api/edge/replay endpoint + edge_node_authorizations + edge_node_replay_log + 23 new tests; 208 total)", "commit": "6108f6d" }
+      ]
+    },
     {
       "id": "Sprint 10",
       "name": "G2 — NickFinance Petty Cash pathfinder",
@@ -165,9 +156,7 @@
       ]
     }
   ],
-  "backlog": [
-    { "id": "P2", "title": "Edge node — SQLite buffer + replay (server-authoritative)", "phase": "Production prep", "estimateDays": "5-7", "spec": "docs/product-calls-2026-04-29.md §2 (binding)" }
-  ],
+  "backlog": [],
   "followups": [
     { "id": "P1-FU-external-systems-enable-col", "title": "Confirm external_system_instances enable-column name (IsEnabled vs IsActive)", "from": "P1 / Sprint 7", "severity": "low (doc clarity)" },
     { "id": "P3-FU-plan-md-services-path", "title": "PLAN.md §19.2 references Audit/Services/ but correct layer is Audit.Database/Services/", "from": "P3 / Sprint 8", "severity": "low (doc sync)" },
@@ -183,6 +172,9 @@
     { "id": "G2-FU-external-fx-feed", "title": "Bank-of-Ghana / ECB FX rate publisher worker (deferred per §1.10)", "from": "G2 / Sprint 10", "severity": "low (operational ergonomics)" },
     { "id": "G2-FU-e2e-tests", "title": "NickFinance E2E test suite running against a live host", "from": "G2 / Sprint 10", "severity": "low (Core/DB/Web unit tests in place)" },
     { "id": "G2-FU-bl0008-sweep", "title": "Refactor [SupplyParameterFromForm] initializer pattern (4+5 BL0008 warnings)", "from": "G2 / Sprint 10", "severity": "low (cosmetic)" },
-    { "id": "G2-FU-sequence-promotion", "title": "Promote per-box voucher sequence_number from MAX+1 to a real Postgres sequence under multi-writer load", "from": "G2 / Sprint 10", "severity": "low (single-writer path safe today)" }
+    { "id": "G2-FU-sequence-promotion", "title": "Promote per-box voucher sequence_number from MAX+1 to a real Postgres sequence under multi-writer load", "from": "G2 / Sprint 10", "severity": "low (single-writer path safe today)" },
+    { "id": "P2-FU-multi-event-types", "title": "Edge replay multi-handler fan-out (scan-captured / voucher-disbursed / etc.) beyond v0's audit.event.replay only", "from": "P2 / Sprint 11", "severity": "medium (gates real edge use-cases)" },
+    { "id": "P2-FU-edge-auth", "title": "Promote edge auth from shared X-Edge-Token secret to per-edge-node API keys + rotation flow", "from": "P2 / Sprint 11", "severity": "medium (production-grade edge auth)" },
+    { "id": "P2-FU-sqlite-migrations-script", "title": "dotnet ef migrations script --idempotent doesn't yet support SQLite in 10.0.7 — manually maintained DDL in tools/edge-sqlite/ until upstream lands", "from": "P2 / Sprint 11", "severity": "low (cosmetic; works today via manual file)" }
   ]
 }
