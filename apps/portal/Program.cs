@@ -10,6 +10,10 @@ using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
 using NickERP.Portal.Components;
+// G2 — NickFinance optional registration.
+using NickERP.NickFinance.Database;
+using NickERP.NickFinance.Web;
+using NickERP.NickFinance.Web.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,6 +35,18 @@ builder.Services.AddNickErpIdentityCore(platformConn);
 builder.Services.AddNickErpTenancy();
 builder.Services.AddNickErpTenancyCore(platformConn);
 builder.Services.AddNickErpAuditCore(platformConn);
+
+// ---------------------------------------------------------------------------
+// G2 — NickFinance Petty Cash pathfinder. Optional: AddNickErpNickFinanceWeb
+// returns the resolved connection string (or empty string if
+// ConnectionStrings:NickFinance is unset). When empty, the module simply
+// isn't registered and the sidenav link below is hidden — see G2 §11.
+// ---------------------------------------------------------------------------
+var nickFinanceConn = builder.Services.AddNickErpNickFinanceWeb(builder.Configuration);
+var nickFinanceEnabled = !string.IsNullOrWhiteSpace(nickFinanceConn);
+// Exposed to Razor pages (sidenav) so a deployment without NickFinance
+// can hide the link.
+builder.Services.AddSingleton(new NickERP.Portal.Services.NickFinanceFeatureFlag(nickFinanceEnabled));
 
 // Default authorization policy: every endpoint or component requires auth.
 builder.Services.AddAuthorization(opts =>
@@ -92,7 +108,17 @@ var app = builder.Build();
             sp.GetRequiredService<IdentityDbContext>().Database.Migrate();
             sp.GetRequiredService<TenancyDbContext>().Database.Migrate();
             sp.GetRequiredService<AuditDbContext>().Database.Migrate();
-            migrateLogger.LogInformation("Migrations applied for Identity, Tenancy, Audit.");
+            // G2 — apply NickFinance migrations only when the module is
+            // wired (connection string present). Skips silently otherwise.
+            if (nickFinanceEnabled)
+            {
+                sp.GetRequiredService<NickFinanceDbContext>().Database.Migrate();
+                migrateLogger.LogInformation("Migrations applied for Identity, Tenancy, Audit, NickFinance.");
+            }
+            else
+            {
+                migrateLogger.LogInformation("Migrations applied for Identity, Tenancy, Audit. NickFinance not configured.");
+            }
         }
         catch (Exception ex)
         {
@@ -125,7 +151,19 @@ app.UseNickErpTenancy(); // resolves nickerp:tenant_id claim into ITenantContext
 app.UseAntiforgery();
 
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode()
+    // G2 — register NickFinance Razor pages by their assembly so the
+    // Router in Components/Routes.razor can pick up the @page routes.
+    // The pages live in modules/nickfinance/.../Components/Pages and
+    // are referenced via the NickERP.NickFinance.Web project.
+    .AddAdditionalAssemblies(typeof(NickERP.NickFinance.Web.NickFinanceWebServiceCollectionExtensions).Assembly);
+
+// G2 — petty-cash / fx-rates / periods minimal-API endpoints. Only
+// mapped when the module is configured for this host.
+if (nickFinanceEnabled)
+{
+    app.MapPettyCashEndpoints();
+}
 
 // ---------------------------------------------------------------------------
 // Phase F5 — health endpoints. Anonymous (probe traffic shouldn't carry

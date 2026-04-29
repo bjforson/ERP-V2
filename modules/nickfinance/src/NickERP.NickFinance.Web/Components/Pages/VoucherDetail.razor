@@ -1,0 +1,126 @@
+@page "/finance/petty-cash/vouchers/{VoucherId:guid}"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@inject NickFinanceDbContext Db
+@inject VoucherWorkflowService Workflow
+@inject NavigationManager Nav
+
+<PageTitle>Voucher detail — NickFinance</PageTitle>
+
+@if (_voucher is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <header class="portal-page-header">
+        <div>
+            <h1>Voucher #@_voucher.SequenceNumber</h1>
+            <p class="portal-page-subtitle">
+                State <strong>@_voucher.State</strong>;
+                requested by <code>@_voucher.RequestedByUserId</code>;
+                @_voucher.RequestedAmount.ToString("F2") @_voucher.RequestedCurrency
+                (@_voucher.RequestedAmountBase.ToString("F2") @_voucher.RequestedCurrencyBase base).
+            </p>
+        </div>
+    </header>
+
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Purpose</h2>
+            <p>@_voucher.Purpose</p>
+
+            @if (_voucher.RejectedReason is not null)
+            {
+                <p><strong>Rejected:</strong> @_voucher.RejectedReason</p>
+            }
+            @if (_voucher.DisbursedAt.HasValue)
+            {
+                <p>
+                    Disbursed @_voucher.DisbursedAt.Value.ToString("u") —
+                    @_voucher.DisbursedAmount?.ToString("F2") @_voucher.DisbursedCurrency
+                    (@_voucher.DisbursedAmountBase?.ToString("F2") @_voucher.DisbursedCurrencyBase base).
+                </p>
+            }
+            @if (_voucher.ReconciledAt.HasValue)
+            {
+                <p>Reconciled @_voucher.ReconciledAt.Value.ToString("u").</p>
+            }
+        </div>
+
+        <div class="portal-card">
+            <h2 class="portal-card-title">Actions</h2>
+
+            @if (_voucher.State == VoucherState.Request)
+            {
+                <button class="portal-button portal-button-primary" @onclick="ApproveAsync">Approve</button>
+                <button class="portal-button" @onclick="RejectAsync">Reject</button>
+                <button class="portal-button" @onclick="CancelAsync">Cancel</button>
+                <p style="margin-top:.5rem"><label>Reject reason: <InputText class="portal-input" @bind-Value="_rejectReason" /></label></p>
+            }
+            else if (_voucher.State == VoucherState.Approve)
+            {
+                <button class="portal-button portal-button-primary" @onclick="DisburseAsync">Disburse</button>
+                <button class="portal-button" @onclick="CancelAsync">Cancel</button>
+            }
+            else if (_voucher.State == VoucherState.Disburse)
+            {
+                <p>
+                    <label>Receipt total (@_voucher.DisbursedCurrency):
+                        <InputNumber class="portal-input" @bind-Value="_receiptTotal" />
+                    </label>
+                </p>
+                <button class="portal-button portal-button-primary" @onclick="ReconcileAsync">Reconcile</button>
+            }
+            else
+            {
+                <p>This voucher is in a terminal state — no further actions.</p>
+            }
+
+            @if (!string.IsNullOrEmpty(_message))
+            {
+                <p class="portal-form-message">@_message</p>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid VoucherId { get; set; }
+
+    private Voucher? _voucher;
+    private string _rejectReason = string.Empty;
+    private decimal _receiptTotal;
+    private string _message = string.Empty;
+
+    protected override async Task OnParametersSetAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _voucher = await Db.Vouchers.AsNoTracking().FirstOrDefaultAsync(v => v.Id == VoucherId);
+        if (_voucher?.DisbursedAmount is not null)
+        {
+            _receiptTotal = _voucher.DisbursedAmount.Value;
+        }
+    }
+
+    private async Task ApproveAsync() => await Run(() => Workflow.ApproveAsync(VoucherId));
+    private async Task RejectAsync() => await Run(() => Workflow.RejectAsync(VoucherId, _rejectReason));
+    private async Task CancelAsync() => await Run(() => Workflow.CancelAsync(VoucherId));
+    private async Task DisburseAsync() => await Run(() => Workflow.DisburseAsync(VoucherId));
+    private async Task ReconcileAsync() => await Run(() => Workflow.ReconcileAsync(VoucherId, _receiptTotal));
+
+    private async Task Run(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            _message = string.Empty;
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+}

@@ -1,0 +1,134 @@
+@page "/finance/petty-cash/boxes"
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@inject NickFinanceDbContext Db
+@inject VoucherWorkflowService Workflow
+@inject NavigationManager Nav
+
+<PageTitle>Petty Cash Boxes — NickFinance</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Petty Cash Boxes</h1>
+        <p class="portal-page-subtitle">One row per box. Each box has a custodian (cash) and an approver (sign-off).</p>
+    </div>
+</header>
+
+<section class="portal-section">
+    <div class="portal-card">
+        <h2 class="portal-card-title">Open a new box</h2>
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="open-box" class="portal-form">
+            <div class="portal-form-row">
+                <label><span>Code</span><InputText class="portal-input" @bind-Value="_form.Code" placeholder="hq-ops" /></label>
+                <label><span>Name</span><InputText class="portal-input" @bind-Value="_form.Name" placeholder="HQ Operations" /></label>
+                <label><span>Currency</span><InputText class="portal-input" @bind-Value="_form.Currency" placeholder="GHS" /></label>
+            </div>
+            <div class="portal-form-row">
+                <label><span>Custodian user id (Guid)</span><InputText class="portal-input" @bind-Value="_form.CustodianUserId" /></label>
+                <label><span>Approver user id (Guid)</span><InputText class="portal-input" @bind-Value="_form.ApproverUserId" /></label>
+                <label><span>Opening balance</span><InputNumber class="portal-input" @bind-Value="_form.OpeningBalance" /></label>
+            </div>
+            <div class="portal-form-actions">
+                <button type="submit" class="portal-button portal-button-primary">Create</button>
+                @if (!string.IsNullOrEmpty(_message))
+                {
+                    <span class="portal-form-message">@_message</span>
+                }
+            </div>
+        </EditForm>
+    </div>
+
+    @if (_boxes is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_boxes.Count == 0)
+    {
+        <p>No boxes yet — open one above.</p>
+    }
+    else
+    {
+        <table class="portal-table">
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Currency</th>
+                    <th>Custodian</th>
+                    <th>Approver</th>
+                    <th>Opening</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var b in _boxes)
+                {
+                    <tr>
+                        <td><code>@b.Code</code></td>
+                        <td>@b.Name</td>
+                        <td>@b.CurrencyCode</td>
+                        <td><code>@b.CustodianUserId</code></td>
+                        <td><code>@b.ApproverUserId</code></td>
+                        <td>@b.OpeningBalanceAmount.ToString("F2") @b.CurrencyCode</td>
+                        <td>@(b.ArchivedAt.HasValue ? "archived" : "active")</td>
+                        <td><a class="portal-link" href="@($"/finance/petty-cash/boxes/{b.Id}")">Open</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private List<PettyCashBox>? _boxes;
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm]
+    private BoxForm _form { get; set; } = new();
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _boxes = await Db.Boxes.AsNoTracking().OrderBy(b => b.Code).ToListAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        try
+        {
+            if (!Guid.TryParse(_form.CustodianUserId, out var custodian))
+            {
+                _message = "Custodian user id must be a Guid.";
+                return;
+            }
+            if (!Guid.TryParse(_form.ApproverUserId, out var approver))
+            {
+                _message = "Approver user id must be a Guid.";
+                return;
+            }
+
+            var box = await Workflow.CreateBoxAsync(
+                _form.Code, _form.Name, _form.Currency,
+                custodian, approver, _form.OpeningBalance);
+            _form = new BoxForm();
+            _message = $"Opened {box.Code}.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    public sealed class BoxForm
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Currency { get; set; } = "GHS";
+        public string CustodianUserId { get; set; } = string.Empty;
+        public string ApproverUserId { get; set; } = string.Empty;
+        public decimal OpeningBalance { get; set; } = 0m;
+    }
+}

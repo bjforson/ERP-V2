@@ -7,6 +7,7 @@
 @inject IdentityDbContext Identity
 @inject TenancyDbContext Tenancy
 @inject AuditDbContext Audit
+@inject NickERP.Portal.Services.NickFinanceFeatureFlag NickFinance
 
 <PageTitle>NickERP Portal</PageTitle>
 
@@ -28,7 +29,14 @@
     <h2>v2 modules</h2>
     <div class="portal-app-grid">
         <AppCard Title="Inspection v2" Description="Federated inspection — admin skeleton live" Href="http://localhost:5410" Color="#0ea5e9" Initial="I" />
-        <AppCard Title="Petty Cash" Description="NickFinance pathfinder (B.3.1)" Href="#" Color="#16a34a" Initial="F" Disabled="true" />
+        @if (NickFinance.Enabled)
+        {
+            <AppCard Title="Petty Cash" Description="NickFinance pathfinder (G2)" Href="/finance/petty-cash/boxes" Color="#16a34a" Initial="F" />
+        }
+        else
+        {
+            <AppCard Title="Petty Cash" Description="NickFinance pathfinder (G2) — not configured for this host" Href="#" Color="#16a34a" Initial="F" Disabled="true" />
+        }
         <AppCard Title="HR v2" Description="Adapted from v1, not rebuilt — link lands when adapter shim ships" Href="#" Color="#7c3aed" Initial="H" Disabled="true" />
         <AppCard Title="Comms v2" Description="Adapted from v1, not rebuilt" Href="#" Color="#06b6d4" Initial="C" Disabled="true" />
     </div>
