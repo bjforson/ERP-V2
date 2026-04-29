@@ -1,15 +1,8 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": {
-    "id": "Sprint 12",
-    "name": "Image-analysis integration (parallel-session incorporation)",
-    "phase": "Phase B in flight",
-    "items": [
-      { "id": "Sprint12-PhaseA", "title": "Image-analysis integration plumbing + Inference plugin family + tooling (89 files staged in-place on main + DisposeAsync idempotency fix-forward)", "status": "done", "branch": "(in-place on main)", "commit": "95ca5e4", "fixupCommit": "7b9f056", "agentId": "master-direct (no sub-agent)", "notes": "Phase A integrates the parallel image-analysis session's design + scaffolding output. 89 files / 15,569 insertions covering: design doc IMAGE-ANALYSIS-MODERNIZATION.md (~2,490 lines), 5 R3 entities (Core/Entities), 2 applied migrations (Add_PhaseR3_TablesInferenceModernization + BootstrapScannerThresholdProfilesV0), Application project (Threshold calibration resolver + DI bootstrap), 4 Inference plugin/src csproj families (Abstractions/Mock/OnnxRuntime/OCR.ContainerNumber), IInboundOutcomeAdapter, ThresholdAdminService, smoke tests, Python tooling (venv/data/weight-blobs gitignored), stub ONNX exports (graphs only, weights gitignored), PLAN.md §21. Phase A deviated from handoff §4 split by pulling ThresholdAdminService.cs into Phase A — required for Program.cs DI registration to compile. DisposeAsync fix at 7b9f056 patched a real bug surfaced by the E2E MultiLocationFederationTests (double-dispose via dual DI roots). 208/208 tests, 0 errors, 15 warnings (pre-existing). Smoke verified in detached C:/Shared/erp-v2-verify." }
-    ]
-  },
-  "currentSprintNote": "Sprint 12 — image-analysis integration. Phase A landed at 95ca5e4 + 7b9f056 (208/208 tests). Phase B in flight: §6.5 admin UI (Thresholds.razor), §7.0 contract bumps (DualViewGeometry, ScannerCapabilities + ExternalSystemCapabilities additions, IScannerAdapter additions, contract version 1.1→1.2 on Scanners + ExternalSystems Abstractions), ROADMAP §4.9 + ARCHITECTURE.md. Phase B pulls remaining changes from preserved stash@{0} (the rolling-master handoff's belt-and-braces snapshot — verified to be the source of the §7.0 contract bumps that the image-analysis session never re-landed in working tree).",
+  "currentSprint": null,
+  "currentSprintNote": "Sprint 12 (image-analysis integration) shipped end-to-end on 2026-04-29. Phase A at 95ca5e4 + 7b9f056 (89 files / 15,569 insertions; DisposeAsync idempotency fix-forward), Phase B at ce38f25 (8 files / 451 insertions; admin UI + §7.0 contract bumps). 208/208 tests across both phases. Stash@{0} drained (its content fully landed via Phase A's working-tree files + Phase B's stash patch application; verified before drop). Drainable backlog returns to empty. Sprint 13 candidates: live-deploy migration backlog (platform/audit/nickfinance never applied to a live DB; inspection DB is one step ahead from this sprint), Phase C medium-FU pick from FU-icums-cluster-key-ring / G2-FU-role-resolver / P2-FU-multi-event-types / P2-FU-edge-auth.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -23,13 +16,30 @@
   ],
   "rollingMasterScope": {
     "drainable": [],
-    "drainableNote": "Empty as of 2026-04-29 (P2 edge node merged at c3274c5). Eleven sprints shipped this run, 208/208 tests, NickFinance now live as the second module on the platform.",
+    "drainableNote": "Empty as of 2026-04-29 (Sprint 12 image-analysis integration shipped at ce38f25). Twelve sprints shipped this run, 208/208 tests. Sprint 13 candidates surfaced: live-deploy migration backlog (platform/audit/nickfinance migrations from Sprints 5-11 never applied to a live DB; inspection DB ahead by 5 migrations), and Phase C medium-FU pick from FU-icums-cluster-key-ring / G2-FU-role-resolver / P2-FU-multi-event-types / P2-FU-edge-auth.",
     "gated": [],
     "outOfScope": [
-      { "id": "image-analysis-track", "reason": "User-driven; spawns its own master run when ready. Heads-up: untracked IInboundOutcomeAdapter.cs may reference the old AuthorityDocument DTO name — rename to AuthorityDocumentDto (FU-7) when resuming. docs/IMAGE-ANALYSIS-MODERNIZATION.md is the design source. Stash@{0} preserved with parallel inference DbSet edits to InspectionDbContext.cs + Modelsnapshot.cs (conflict resolution from FU-icums-signing took main; user reconciles when resuming)." }
+      { "id": "image-analysis-real-training", "reason": "GPU-time training runs for the container-split student, OCR Florence-2 fine-tune, and §6.2 anomaly-detection PatchCore fitting are out-of-band of any chat session. Scaffolds + label exports + 1-epoch smoke runs landed in Sprint 12; real training is the user's responsibility on a GPU box." }
     ]
   },
   "history": [
+    {
+      "id": "Sprint 12",
+      "name": "Image-analysis integration (parallel-session incorporation)",
+      "shippedAt": "2026-04-29",
+      "mainCommit": "ce38f25",
+      "itemCount": 2,
+      "items": [
+        { "id": "Sprint12-PhaseA", "title": "Plumbing + Inference plugin family + tooling (89 files / 15,569 insertions: design doc, 5 R3 entities, 2 applied migrations, Application project, 4 Inference csprojs, IInboundOutcomeAdapter, ThresholdAdminService, smoke tests, Python tooling, stub ONNX exports, PLAN.md §21). 208/208 tests after fix-forward.", "commit": "95ca5e4", "fixupCommit": "7b9f056", "fixupNote": "ScannerThresholdResolver.DisposeAsync idempotency — surfaced by E2E MultiLocationFederationTests (double-dispose via dual DI roots: IScannerThresholdResolver + IHostedService)." },
+        { "id": "Sprint12-PhaseB", "title": "§6.5 admin UI + §7.0 contract bumps (8 files / 451 insertions: Thresholds.razor, DualViewGeometry.cs, ScannerCapabilities additions [RawChannelsAvailable / SupportsDualView / SupportsDicosExport / SupportsCalibrationMode], ExternalSystemCapabilities additions [SupportsOutcomePull / SupportsOutcomePush], ParsedArtifact.FormatVersion, ContractVersion 1.1→1.2 on Scanners + ExternalSystems Abstractions, ROADMAP §4.9, ARCHITECTURE cross-link). All additions appended with safe defaults — no caller breakage. 208/208 tests.", "commit": "ce38f25" }
+      ],
+      "ratifications": [
+        { "id": "a", "title": "Add_PhaseR3_TablesInferenceModernization schema kept as-is (already applied to nickerp_inspection)" },
+        { "id": "b", "title": "Single NickERP.Inspection.Application project kept (not split per concern)" },
+        { "id": "c", "title": "Thresholds.razor location in Inspection.Web/Components/Pages/ kept (not moved to apps/portal)" },
+        { "id": "d", "title": "ConfigJson merge pattern in ScannerIngestionWorker.MergeThresholdDefaults kept (no IScannerAdapter contract change for typed thresholds)" }
+      ]
+    },
     {
       "id": "Sprint 11",
       "name": "P2 — Edge node SQLite buffer + replay",
