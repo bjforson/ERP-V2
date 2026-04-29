@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Inference.Mock</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Inference.Mock</AssemblyName>
+    <Description>NickERP Inspection v2 — Mock IInferenceRunner. Returns deterministic noise tensors matching the requested model metadata's output descriptors (seeded by the input bytes' hash, so identical inputs reproduce identical outputs). Optional per-model fixture map for pinning specific inputs to specific outputs in tests.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Inference.Abstractions\NickERP.Inspection.Inference.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

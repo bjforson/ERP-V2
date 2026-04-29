@@ -1,0 +1,17 @@
+{
+  "typeCode": "mock",
+  "displayName": "Mock Inference (synthetic)",
+  "version": "0.1.0",
+  "description": "Synthetic inference runner — emits deterministic noise tensors matching the model metadata's output descriptors (seeded by hash of input bytes). Used to validate the inference plugin pipeline without real ONNX artifacts.",
+  "contracts": [
+    "NickERP.Inspection.Inference.Abstractions.IInferenceRunner"
+  ],
+  "minHostContractVersion": "1.0",
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "PreferredExecutionProvider": { "type": "string", "default": "Mock" }
+    }
+  }
+}

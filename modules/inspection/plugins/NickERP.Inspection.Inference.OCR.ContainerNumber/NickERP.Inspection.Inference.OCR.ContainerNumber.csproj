@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Inference.OCR.ContainerNumber</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Inference.OCR.ContainerNumber</AssemblyName>
+    <Description>NickERP Inspection v2 — Florence-2 container-number OCR plugin (§6.1). CONSUMER of IInferenceRunner: wraps a fine-tuned Florence-2 ONNX export, exposes IContainerNumberRecognizer, runs constrained beam-search decoding restricted to the ISO 6346 grammar [A-Z]{4}[0-9]{7} and a &lt;unreadable&gt; sentinel, and gates results with the ISO 6346 mod-11 check digit. Returns a ContainerNumberRecognition record with predicted, confidence, check_digit_passed, decode_path. Falls back to manual_queue_required when the gate fails or confidence &lt; 0.85.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!--
+      Class libraries don't copy NuGet PackageReference DLLs to output by default,
+      but plugins are loaded from a sibling directory at runtime, not from the
+      host's resolved deps. Force NuGet deps next to the plugin DLL so the
+      plugin loader can resolve them via AssemblyLoadContext.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Inference.Abstractions\NickERP.Inspection.Inference.Abstractions.csproj" />
+    <!--
+      Sibling-plugin reference. Today's only IInferenceRunner is the
+      OnnxRuntime runner, which rejects ITensor inputs that aren't its
+      own concrete OnnxTensor / OrtValue (see OnnxLoadedModel.RunSync).
+      The OCR recogniser therefore builds OnnxTensor inputs directly.
+      When OpenVINO ships (§6.1.3 Q-D5), the recogniser will need a
+      tensor-factory abstraction so it can run against either runner —
+      logged as a deferred contract change, not a blocker for first ship.
+    -->
+    <ProjectReference Include="..\NickERP.Inspection.Inference.OnnxRuntime\NickERP.Inspection.Inference.OnnxRuntime.csproj" />
+  </ItemGroup>
+
+</Project>

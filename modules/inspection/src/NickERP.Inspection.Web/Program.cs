@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Web.Components;
@@ -119,6 +120,11 @@ builder.Services.AddCascadingAuthenticationState();
 // DbContext directly for workflow operations.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.CaseWorkflowService>();
 
+// §6.5 admin actions — Approve / Reject for ScannerThresholdProfile.
+// Mirrors CaseWorkflowService — pages call this so the audit emission
+// + state-transition rules live in one place.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.ThresholdAdminService>();
+
 // Sprint A2 — in-process MeterListener powering the /perf admin page.
 // Singleton so the listener spans the host's lifetime; instruments are
 // auto-discovered via NickErpActivity.Meter (the OTel pipeline picks
@@ -129,6 +135,13 @@ builder.Services.AddSingleton<NickERP.Inspection.Web.Services.MeterSnapshotServi
 // IImageStore + the PreRenderWorker background service. The render
 // endpoint is mapped below after app.Build().
 builder.Services.AddNickErpImaging(builder.Configuration);
+
+// Per-scanner threshold calibration (§6.5). Registers the resolver
+// (IScannerThresholdResolver hot-path), the LISTEN/NOTIFY hosted
+// service, and a degraded-on-disconnect health check. The threshold
+// resolver is shared infrastructure — same instance services every
+// request and every per-scan call.
+builder.Services.AddScannerThresholdCalibration(builder.Configuration);
 
 // D2 — ScannerIngestionWorker: drives every active ScannerDeviceInstance
 // through IScannerAdapter.StreamAsync and creates/reuses a case for each

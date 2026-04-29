@@ -1,0 +1,13 @@
+{
+  "model_id": "container-split",
+  "version": "v1.0.0-stub",
+  "sha256": "4e9a8f26d291a6080ae43a591229efb0b0ee4860829cb1d2ba3477db9dcd5416",
+  "onnx_opset": "18",
+  "exported_at": "2026-04-29T06:27:07Z",
+  "exported_by": "stub-trainer-bringup",
+  "git_commit": null,
+  "training_set_hash": null,
+  "eval_metrics": null,
+  "base_model": "resnet18-unet-stub",
+  "notes": "Random-init stub for v2 inference scaffold bring-up. Not for production. See \u00a73 of docs/IMAGE-ANALYSIS-MODERNIZATION.md."
+}

@@ -73,3 +73,20 @@ modules/inspection/src/NickERP.Inspection.Web/plugins/
 
 # Local-machine pre-render store (sources + rendered thumbnails/previews) — populated at runtime, not source-tracked.
 .imaging-store/
+
+# Python tooling under tools/ — Sprint 12 image-analysis scaffolds.
+# Source-track .py / .md / requirements.txt / configs; ignore venvs,
+# bytecode, harvested training data, and ONNX weight blobs.
+tools/**/.venv/
+tools/**/__pycache__/
+*.pyc
+tools/inference-training/container-split/data/
+tools/inference-training/container-ocr/data/
+tools/inference-training/**/runs/
+tools/inference-training/**/checkpoints/
+
+# storage/ holds stub ONNX exports landed by Sprint 12 as design
+# artifacts. The .onnx graph files (small, document input/output
+# shape) are source-tracked; the .onnx.data weight blobs (~55MB each,
+# regenerable from a 1-epoch training run on 88 samples) are not.
+storage/**/*.onnx.data

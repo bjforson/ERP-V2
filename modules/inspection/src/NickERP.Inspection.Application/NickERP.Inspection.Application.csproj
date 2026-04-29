@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Application</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Application</AssemblyName>
+    <Description>NickERP Inspection v2 — application services. Hosts the per-scanner ScannerThresholdResolver (§6.5) — in-process cache fronted by a long-lived Postgres LISTEN/NOTIFY subscription on threshold_profile_updated, with a 1-hour belt-and-braces TTL fallback. New top-level services orthogonal to the inspection critical path land here rather than in Web.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.7" />
+    <PackageReference Include="Npgsql" Version="10.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+  </ItemGroup>
+
+</Project>

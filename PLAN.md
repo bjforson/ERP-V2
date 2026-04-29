@@ -2136,3 +2136,66 @@ explicit unblocking calls.
 ## 20. Product Calls 2026-04-29
 
 Deferred to docs/product-calls-2026-04-29.md, which captures the post-Sprint-8 drain answers covering G2 (NickFinance Petty Cash domain shape, all six calls), P2 (edge-node conflict resolution), the four-followup priority queue, the image-analysis track being explicitly user-driven, and the deploy target call. With these answers G2 and P2 are unblocked and the rolling-master drainable backlog refills as documented in that file.
+
+---
+
+## 21. Sprint 12 — Image-Analysis Integration
+
+> **Status:** active 2026-04-29. Integration sprint, NOT greenfield. Both phases land in-place on `main` (work was already in `main`'s working tree from a parallel image-analysis session — see `docs/runbooks/handoff-2026-04-29-image-analysis-session.md` §4).
+>
+> **Source-of-record:** `docs/IMAGE-ANALYSIS-MODERNIZATION.md` (~2,490-line design doc, 11 spec sections). This sprint adopts that doc as planning input and lands the corresponding plumbing/scaffolds.
+
+### 21.1 Architectural decisions ratified
+
+The image-analysis session made four opinionated calls; the user has explicitly directed they be KEPT (not refactored, not reverted):
+
+- **(a) `Add_PhaseR3_TablesInferenceModernization` schema** — the 5 R3 tables (`scanner_threshold_profiles`, `threat_library_provenance`, `hs_commodity_reference`, `outcome_pull_cursors`, `posthoc_rollout_phase`) keep their schema as-shipped. Already applied to `nickerp_inspection`.
+- **(b) Single `NickERP.Inspection.Application` project** — first Application-tier project in v2; keep as one project rather than splitting per concern (`.Calibration`, `.Imaging`, etc.).
+- **(c) `Thresholds.razor` location** — keep in `modules/inspection/src/NickERP.Inspection.Web/Components/Pages/`, not `apps/portal`.
+- **(d) `ConfigJson` merge pattern** in `ScannerIngestionWorker.MergeThresholdDefaults` — keep the host-side merge into `ConfigJson` rather than adding a typed thresholds field to `IScannerAdapter`.
+
+### 21.2 Phase A — plumbing + Inference plugin family + tools
+
+Lands everything required for `dotnet build` clean:
+
+- `.gitignore` — exclude Python venv / pyc / training data / ONNX weight blobs
+- 6 modified files: `NickERP.Tests.slnx`, `InspectionDbContext.cs`, `InspectionDbContextModelSnapshot.cs`, `NickERP.Inspection.Web.csproj`, `Program.cs`, `ScannerIngestionWorker.cs`
+- 5 new entity files under `modules/inspection/src/NickERP.Inspection.Core/Entities/`
+- New `NickERP.Inspection.Application` project (Threshold calibration resolver + DI bootstrap)
+- 4 new plugin/src csproj families: `Inference.Abstractions` (src), `Inference.Mock` / `Inference.OnnxRuntime` / `Inference.OCR.ContainerNumber` (plugins)
+- 2 new R3 migrations + their Designer files
+- `IInboundOutcomeAdapter.cs` (already aligned with FU-7 `AuthorityDocumentDto` rename)
+- `ThresholdAdminService.cs` (referenced by Program.cs DI, deviation from handoff §4 split: pulled into Phase A so the build is clean)
+- `InferenceSmokeTest` + `OcrSmokeTest` console exes under `modules/inspection/tools/`
+- Python tooling under `tools/inference-bringup/` + `tools/inference-training/` + `tools/v1-label-export/`
+- Stub ONNX exports under `storage/models/container-{ocr,split}/v{1,2}/` (graph + metadata only; weight blobs ignored by `.gitignore`)
+- Design doc `docs/IMAGE-ANALYSIS-MODERNIZATION.md` + `docs/runbooks/vendor-call-2026-04*.md` runbooks + `handoff-2026-04-29-image-analysis-session.md`
+
+### 21.3 Phase B — §6.5 admin UI + §7.0 contract bumps
+
+Additive contract evolution — `1.1 → 1.2` on Scanners.Abstractions / ExternalSystems.Abstractions:
+
+- `Thresholds.razor` admin page (lives in `Inspection.Web/Components/Pages/` per ratification 21.1c)
+- `ScannerCapabilities` additions: `RawChannelsAvailable`, `SupportsDualView` + `DualViewGeometry`, `SupportsDicosExport` + `DicosFlavors`, `SupportsCalibrationMode`
+- `ExternalSystemCapabilities` additions: `SupportsOutcomePull`, `SupportsOutcomePush`
+- `DualViewGeometry.cs` standalone type
+- `IScannerAdapter` / parsed-artifact additions per §7.0
+- `Scanners.Abstractions.csproj` + `ExternalSystems.Abstractions.csproj` — `ContractVersionAttribute` bumped to `1.2`
+- `ROADMAP.md` §4.9 (Image-analysis & ML modernization) + `docs/ARCHITECTURE.md` cross-link
+
+These were preserved in `stash@{0}` from a prior FU-icums-signing merge window — Phase B applies the stash patch for the docs + contract edits, then drops the stash. The DbContext / ModelSnapshot portions of the stash are superseded by Phase A's working-tree modifications.
+
+### 21.4 Out of scope this sprint
+
+- **Phase C (medium-FU pick)** — deferred. After Phase B merges, surface Sprint 13 candidate among `FU-icums-cluster-key-ring`, `G2-FU-role-resolver`, `P2-FU-multi-event-types`, `P2-FU-edge-auth`.
+- **Live-deploy migration backlog** — platform / audit / nickfinance migrations from Sprints 5-11 were never applied to a live DB; the inspection DB is one step ahead. Sprint 13 candidate.
+- **Real model training** — the ONNX exports landed are stubs. Real GPU-time training runs are out-of-band of any chat session.
+
+### 21.5 Hard rules carried forward
+
+- v1 read-only.
+- Stage explicit paths only (no `git add .` / `-A` / `-u`).
+- No `dotnet ef database update` — R3 + V0 migrations were applied by the parallel image-analysis session already; do not re-apply, do not roll back.
+- No force-push to main.
+- `SetSystemContext` register-and-opt-in still applies (no new callers expected this sprint).
+- Plugin singletons + scoped DbContext via `IServiceScopeFactory` (FU-icums-signing pattern).

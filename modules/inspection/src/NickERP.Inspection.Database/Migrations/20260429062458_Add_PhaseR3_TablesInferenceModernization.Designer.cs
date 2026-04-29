@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NickERP.Inspection.Database;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NickERP.Inspection.Database.Migrations
 {
     [DbContext(typeof(InspectionDbContext))]
-    partial class InspectionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260429062458_Add_PhaseR3_TablesInferenceModernization")]
+    partial class Add_PhaseR3_TablesInferenceModernization
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -262,47 +265,88 @@ namespace NickERP.Inspection.Database.Migrations
                     b.ToTable("findings", "inspection");
                 });
 
-            modelBuilder.Entity("NickERP.Inspection.Core.Entities.IcumsSigningKey", b =>
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.HsCommodityReference", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
 
-                    b.Property<DateTimeOffset?>("ActivatedAt")
+                    b.Property<string>("Hs6")
+                        .HasMaxLength(6)
+                        .HasColumnType("character(6)")
+                        .IsFixedLength();
+
+                    b.Property<int>("Confidence")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DensityWindowKgPerM3")
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("ExpectedDensityKgPerM3")
+                        .HasPrecision(8, 2)
+                        .HasColumnType("numeric(8,2)");
+
+                    b.Property<DateTimeOffset>("LastValidatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                    b.Property<DateTimeOffset>("NextReviewDueAt")
+                        .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("KeyId")
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int>("SampleCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("ScannerCalibrationVersionAtFitJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("SourcesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.PrimitiveCollection<string[]>("TypicalPackaging")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasDefaultValueSql("'{}'::text[]");
+
+                    b.Property<Guid?>("ValidatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ZEffMax")
+                        .HasPrecision(4, 2)
+                        .HasColumnType("numeric(4,2)");
+
+                    b.Property<decimal>("ZEffMedian")
+                        .HasPrecision(4, 2)
+                        .HasColumnType("numeric(4,2)");
+
+                    b.Property<decimal>("ZEffMin")
+                        .HasPrecision(4, 2)
+                        .HasColumnType("numeric(4,2)");
+
+                    b.Property<string>("ZEffWindowMethod")
                         .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
-                    b.Property<byte[]>("KeyMaterialEncrypted")
-                        .IsRequired()
-                        .HasColumnType("bytea");
+                    b.HasKey("TenantId", "Hs6");
 
-                    b.Property<DateTimeOffset?>("RetiredAt")
-                        .HasColumnType("timestamp with time zone");
+                    b.HasIndex("SourcesJson")
+                        .HasDatabaseName("ix_hs_commodity_sources_gin");
 
-                    b.Property<long>("TenantId")
-                        .HasColumnType("bigint");
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("SourcesJson"), "gin");
 
-                    b.Property<DateTimeOffset?>("VerificationOnlyUntil")
-                        .HasColumnType("timestamp with time zone");
+                    b.HasIndex("TenantId", "Confidence")
+                        .HasDatabaseName("ix_hs_commodity_tenant_inferred")
+                        .HasFilter("\"Confidence\" = 20");
 
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "KeyId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_icums_signing_keys_tenant_keyid");
-
-                    b.HasIndex("TenantId", "ActivatedAt", "RetiredAt")
-                        .HasDatabaseName("ix_icums_signing_keys_tenant_active");
-
-                    b.ToTable("icums_signing_keys", "inspection");
+                    b.ToTable("hs_commodity_reference", "inspection");
                 });
 
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.InspectionCase", b =>
@@ -543,6 +587,80 @@ namespace NickERP.Inspection.Database.Migrations
                         .HasDatabaseName("ix_outbound_tenant_status");
 
                     b.ToTable("outbound_submissions", "inspection");
+                });
+
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.OutcomePullCursor", b =>
+                {
+                    b.Property<Guid>("ExternalSystemInstanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTimeOffset>("LastPullWindowUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("LastSuccessfulPullAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ExternalSystemInstanceId");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("ix_outcome_pull_cursors_tenant");
+
+                    b.ToTable("outcome_pull_cursors", "inspection");
+                });
+
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.PostHocRolloutPhase", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("CurrentPhase")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ExternalSystemInstanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("GateNotesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
+                    b.Property<DateTimeOffset>("PhaseEnteredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PromotedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExternalSystemInstanceId");
+
+                    b.HasIndex("TenantId", "ExternalSystemInstanceId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_posthoc_rollout_tenant_instance");
+
+                    b.ToTable("posthoc_rollout_phase", "inspection");
                 });
 
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.ReviewSession", b =>
@@ -1045,6 +1163,133 @@ namespace NickERP.Inspection.Database.Migrations
                     b.ToTable("stations", "inspection");
                 });
 
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.ThreatLibraryEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AlphaMaskPath")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("CaptureCaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CapturedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CapturedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("HePath")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("LePath")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("LegalHoldStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("LocationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("MaterialZeffPath")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("PoseCanonicalJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
+                    b.Property<string>("RedactionFlagsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
+                    b.Property<string>("Sam2ModelVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<decimal?>("SegmentationQualityScore")
+                        .HasPrecision(4, 3)
+                        .HasColumnType("numeric(4,3)");
+
+                    b.Property<Guid>("SourceScannerInstanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceScannerTypeCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("SourceSeizureCaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SourceVerdictId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TagsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ThreatClass")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ThreatSubclass")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LegalHoldStatus")
+                        .HasDatabaseName("ix_threat_library_legal_hold")
+                        .HasFilter("\"LegalHoldStatus\" = 10");
+
+                    b.HasIndex("LocationId");
+
+                    b.HasIndex("SourceScannerInstanceId");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("ix_threat_library_tenant");
+
+                    b.HasIndex("TenantId", "Status")
+                        .HasDatabaseName("ix_threat_library_active")
+                        .HasFilter("\"Status\" = 10");
+
+                    b.HasIndex("TenantId", "ThreatClass", "SourceScannerTypeCode")
+                        .HasDatabaseName("ix_threat_library_tenant_class_scanner_type");
+
+                    b.ToTable("threat_library_provenance", "inspection");
+                });
+
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.Verdict", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1195,6 +1440,28 @@ namespace NickERP.Inspection.Database.Migrations
                     b.Navigation("ExternalSystemInstance");
                 });
 
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.OutcomePullCursor", b =>
+                {
+                    b.HasOne("NickERP.Inspection.Core.Entities.ExternalSystemInstance", "ExternalSystemInstance")
+                        .WithMany()
+                        .HasForeignKey("ExternalSystemInstanceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ExternalSystemInstance");
+                });
+
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.PostHocRolloutPhase", b =>
+                {
+                    b.HasOne("NickERP.Inspection.Core.Entities.ExternalSystemInstance", "ExternalSystemInstance")
+                        .WithMany()
+                        .HasForeignKey("ExternalSystemInstanceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ExternalSystemInstance");
+                });
+
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.ReviewSession", b =>
                 {
                     b.HasOne("NickERP.Inspection.Core.Entities.InspectionCase", "Case")
@@ -1285,6 +1552,25 @@ namespace NickERP.Inspection.Database.Migrations
                         .IsRequired();
 
                     b.Navigation("Location");
+                });
+
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.ThreatLibraryEntry", b =>
+                {
+                    b.HasOne("NickERP.Inspection.Core.Entities.Location", "Location")
+                        .WithMany()
+                        .HasForeignKey("LocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("NickERP.Inspection.Core.Entities.ScannerDeviceInstance", "SourceScannerInstance")
+                        .WithMany()
+                        .HasForeignKey("SourceScannerInstanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Location");
+
+                    b.Navigation("SourceScannerInstance");
                 });
 
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.Verdict", b =>

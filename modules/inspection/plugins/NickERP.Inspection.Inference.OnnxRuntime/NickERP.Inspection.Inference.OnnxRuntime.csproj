@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Inference.OnnxRuntime</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Inference.OnnxRuntime</AssemblyName>
+    <Description>NickERP Inspection v2 — Default IInferenceRunner. Wraps Microsoft.ML.OnnxRuntime with the CPU + DirectML EPs. Verifies the artifact sha256 before opening the session, runs a metadata-derived warmup if requested, and exposes OrtValues behind the runtime-agnostic ITensor surface so postprocess code stays free of ONNX types.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!--
+      Class libraries don't copy NuGet PackageReference DLLs to output by default,
+      but plugins are loaded from a sibling directory at runtime, not from the
+      host's resolved deps. Force NuGet deps next to the plugin DLL so the
+      plugin loader can resolve them via AssemblyLoadContext.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Inference.Abstractions\NickERP.Inspection.Inference.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Inference.Abstractions</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Inference.Abstractions</AssemblyName>
+    <Description>NickERP Inspection v2 — IInferenceRunner contract. Concrete inference runners (OnnxRuntime CPU/DirectML, OnnxRuntime.Cuda, OnnxRuntime.TensorRT, Mock) reference this + NickERP.Platform.Plugins. Runtime-agnostic surface so non-ONNX backends (OpenVINO, TFLite, managed) can plug in without leaking vendor types.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+  </ItemGroup>
+
+  <!--
+    Stamp this Abstractions assembly with a [ContractVersion]. The plugin
+    loader compares each plugin's declared minHostContractVersion against
+    this value and rejects plugins compiled against an older contract.
+    Bump major on breaking changes (record arity, removed/renamed members);
+    bump minor on additive changes (new optional members).
+  -->
+  <ItemGroup>
+    <AssemblyAttribute Include="NickERP.Platform.Plugins.ContractVersionAttribute">
+      <_Parameter1>1.0</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

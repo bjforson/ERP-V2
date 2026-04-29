@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    InferenceSmokeTest — proves the §3 / §4 inference contract chain end-to-end
+    against the random-init container-split stub artifact produced by
+    tools/inference-bringup/train_stub_split.py. Loads model.onnx via the
+    OnnxRuntime runner (sha256 fail-fast included), runs one inference on a
+    zeros (1, 1, 472, 1568) input tensor, prints the resolved EP, output
+    shape, first 10 output values, and InferenceMetrics, then exits.
+
+    Not a unit test — a console exe that writes its own report. Sits under
+    modules/inspection/tools/ so it ships alongside the contract it exercises.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Tools.InferenceSmokeTest</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Tools.InferenceSmokeTest</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Inference.Abstractions\NickERP.Inspection.Inference.Abstractions.csproj" />
+    <ProjectReference Include="..\..\plugins\NickERP.Inspection.Inference.OnnxRuntime\NickERP.Inspection.Inference.OnnxRuntime.csproj" />
+  </ItemGroup>
+
+</Project>

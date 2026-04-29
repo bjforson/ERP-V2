@@ -33,6 +33,7 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<OutboundSubmission> OutboundSubmissions => Set<OutboundSubmission>();
     public DbSet<RuleEvaluation> RuleEvaluations => Set<RuleEvaluation>();
     public DbSet<IcumsSigningKey> IcumsSigningKeys => Set<IcumsSigningKey>();
+    public DbSet<ScannerThresholdProfile> ScannerThresholdProfiles => Set<ScannerThresholdProfile>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -407,6 +408,57 @@ public sealed class InspectionDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.CaseId, x.AuthorityCode })
                 .IsUnique()
                 .HasDatabaseName("ux_rule_eval_tenant_case_authority");
+        });
+
+        // ----- ScannerThresholdProfile (Phase R3 / §6.5) ----------------------------
+        // Per-scanner threshold profile with proposed/shadow/active lifecycle.
+        // Table created by 20260429062458_Add_PhaseR3_TablesInferenceModernization;
+        // RLS + FORCE RLS already installed by the same migration. The
+        // mapping below was missing during R3 (table + entity + migration
+        // shipped, OnModelCreating did not) — added now so the
+        // ScannerThresholdResolver and the admin Thresholds page can
+        // reach the rows via EF.
+        modelBuilder.Entity<ScannerThresholdProfile>(e =>
+        {
+            e.ToTable("scanner_threshold_profiles");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ScannerDeviceInstanceId).IsRequired();
+            e.Property(x => x.Version).IsRequired();
+            e.Property(x => x.ValuesJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.Status).HasConversion<int>().IsRequired();
+            e.Property(x => x.EffectiveFrom);
+            e.Property(x => x.EffectiveTo);
+            e.Property(x => x.ProposedBy).HasConversion<int>().IsRequired();
+            e.Property(x => x.ProposalRationaleJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.ApprovedByUserId);
+            e.Property(x => x.ApprovedAt);
+            e.Property(x => x.ShadowStartedAt);
+            e.Property(x => x.ShadowCompletedAt);
+            e.Property(x => x.ShadowOutcomeJson).HasColumnType("jsonb");
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Partial unique index on (ScannerDeviceInstanceId) WHERE Status = 'active' (20).
+            // Created by the R3 migration; mirrored here so the model
+            // snapshot stays in sync (otherwise the next migration would
+            // try to drop+recreate it).
+            e.HasIndex(x => x.ScannerDeviceInstanceId)
+                .IsUnique()
+                .HasDatabaseName("ux_scanner_threshold_profiles_active")
+                .HasFilter("\"Status\" = 20");
+
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_scanner_threshold_profiles_tenant");
+
+            e.HasIndex(x => new { x.TenantId, x.ScannerDeviceInstanceId, x.Version })
+                .IsUnique()
+                .HasDatabaseName("ux_scanner_threshold_profiles_tenant_scanner_version");
+
+            e.HasOne(x => x.ScannerDeviceInstance)
+                .WithMany()
+                .HasForeignKey(x => x.ScannerDeviceInstanceId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ----- IcumsSigningKey (Sprint 9 / FU-icums-signing) ------------------------

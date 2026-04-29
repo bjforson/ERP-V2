@@ -1,0 +1,62 @@
+{
+  "typeCode": "container-ocr-florence2",
+  "displayName": "Container OCR (Florence-2 student)",
+  "version": "0.1.0",
+  "description": "Florence-2-base student model fine-tuned for ISO 6346 container-number OCR per §6.1 of IMAGE-ANALYSIS-MODERNIZATION.md. Consumes IInferenceRunner with model family 'container-ocr' and exposes IContainerNumberRecognizer. Decoder constrained to [A-Z]{4}[0-9]{7} ∪ <unreadable>; ISO 6346 mod-11 check-digit gate runs as post-process. Falls back to manual-entry queue (decode_path = 'manual_queue_required') when check digit fails or mean-token confidence < 0.85.",
+  "contracts": [
+    "NickERP.Inspection.Inference.OCR.ContainerNumber.IContainerNumberRecognizer"
+  ],
+  "minHostContractVersion": "1.0",
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["ModelId", "ModelVersion"],
+    "properties": {
+      "ModelId": {
+        "type": "string",
+        "default": "container-ocr-v1",
+        "description": "Logical model id passed to IInferenceRunner.LoadAsync. Should resolve to a Florence-2 ONNX export at <storage>/models/container-ocr/<version>/model.onnx."
+      },
+      "ModelVersion": {
+        "type": "string",
+        "default": "v1.0.0",
+        "description": "Artifact version (SemVer). Multiple versions can ship behind the same logical id; the host promotes one as primary."
+      },
+      "ConfidenceGate": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "default": 0.85,
+        "description": "Mean-token-softmax confidence threshold below which decode_path is forced to 'manual_queue_required'. §6.1.7 default 0.85, raised to 0.92 for >20% occluded ROIs (§6.1.8)."
+      },
+      "BeamWidth": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16,
+        "default": 4,
+        "description": "Constrained beam search width. 4 is the recommended baseline; 8 trades 1.4× latency for ~0.3pp EM in early Florence-2 ablations."
+      },
+      "MaxTokenBudget": {
+        "type": "integer",
+        "minimum": 11,
+        "maximum": 32,
+        "default": 16,
+        "description": "Hard token budget T per §6.1.8 'Decoder loop / repetition' guard. 11 chars + EOS + BOS slack = 16."
+      },
+      "InputHeightPx": {
+        "type": "integer",
+        "minimum": 64,
+        "maximum": 1024,
+        "default": 384,
+        "description": "Input tensor height. §6.1.2 fixes 384."
+      },
+      "InputWidthPx": {
+        "type": "integer",
+        "minimum": 64,
+        "maximum": 1024,
+        "default": 384,
+        "description": "Input tensor width. §6.1.2 fixes 384."
+      }
+    }
+  }
+}

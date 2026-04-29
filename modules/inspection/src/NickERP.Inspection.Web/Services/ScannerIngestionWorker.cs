@@ -1,7 +1,9 @@
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Scanners.Abstractions;
@@ -199,6 +201,7 @@ public sealed class ScannerIngestionWorker : BackgroundService, IBackgroundServi
                 var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
                 var plugins = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
                 var tenant = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+                var thresholds = scope.ServiceProvider.GetRequiredService<IScannerThresholdResolver>();
 
                 // Set the tenant FIRST — every subsequent DbContext call goes
                 // through the connection interceptor and needs app.tenant_id
@@ -256,16 +259,40 @@ public sealed class ScannerIngestionWorker : BackgroundService, IBackgroundServi
                     continue;
                 }
 
+                // §6.5 wiring — resolve the per-scanner threshold profile and
+                // merge its values into the device's ConfigJson before handing
+                // it to the adapter. Explicit per-device values in ConfigJson
+                // (e.g. operator-tuned per-station overrides) win; the resolver
+                // provides the per-scanner-instance default. If the resolver
+                // throws (DB unavailable, LISTEN/NOTIFY connection bouncing),
+                // log and let the resolver's own fallback semantics surface
+                // the v1 defaults — never block the scan loop on a calibration
+                // lookup.
+                ScannerThresholdSnapshot snapshot;
+                try
+                {
+                    snapshot = await thresholds.GetActiveAsync(instance.Id, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex,
+                        "ScannerIngestionWorker could not resolve threshold profile for instance {Id}; falling back to v1 defaults.",
+                        instance.Id);
+                    snapshot = ScannerThresholdSnapshot.V1Defaults();
+                }
+
+                var configJsonWithThresholds = MergeThresholdDefaults(instance.ConfigJson, snapshot);
+
                 var config = new ScannerDeviceConfig(
                     DeviceId: instance.Id,
                     LocationId: instance.LocationId,
                     StationId: instance.StationId,
                     TenantId: instance.TenantId,
-                    ConfigJson: instance.ConfigJson);
+                    ConfigJson: configJsonWithThresholds);
 
                 _logger.LogInformation(
-                    "ScannerIngestionWorker streaming for instance {Id} ({TypeCode}) tenant {TenantId}.",
-                    instance.Id, instance.TypeCode, instance.TenantId);
+                    "ScannerIngestionWorker streaming for instance {Id} ({TypeCode}) tenant {TenantId} thresholdsV{Version}.",
+                    instance.Id, instance.TypeCode, instance.TenantId, snapshot.Version);
 
                 await foreach (var raw in adapter.StreamAsync(config, ct))
                 {
@@ -297,5 +324,36 @@ public sealed class ScannerIngestionWorker : BackgroundService, IBackgroundServi
                 catch (TaskCanceledException) { return; }
             }
         }
+    }
+
+    /// <summary>
+    /// §6.5 — merge the per-scanner threshold snapshot's values into the
+    /// device's <c>ConfigJson</c> as defaults. Explicit per-device keys
+    /// already in <c>ConfigJson</c> win — they're operator-tuned overrides.
+    /// The resolver provides the fleet-wide-tunable per-scanner-instance
+    /// baseline.
+    ///
+    /// <para>
+    /// Today this only emits the percentile-stretch keys consumed by
+    /// <c>FS6000ScannerAdapter.ParseAsync</c> (<c>PreviewPercentileLow</c> /
+    /// <c>PreviewPercentileHigh</c>). Future adapters that want Canny or
+    /// disagreement-guard values should be added here as they're wired,
+    /// keeping the merge contract in one place rather than scattered
+    /// across the host.
+    /// </para>
+    /// </summary>
+    private static string MergeThresholdDefaults(string configJson, ScannerThresholdSnapshot snapshot)
+    {
+        var node = (string.IsNullOrWhiteSpace(configJson)
+                    ? new JsonObject()
+                    : JsonNode.Parse(configJson) as JsonObject)
+                   ?? new JsonObject();
+
+        if (!node.ContainsKey("PreviewPercentileLow"))
+            node["PreviewPercentileLow"] = snapshot.PercentileLow;
+        if (!node.ContainsKey("PreviewPercentileHigh"))
+            node["PreviewPercentileHigh"] = snapshot.PercentileHigh;
+
+        return node.ToJsonString();
     }
 }

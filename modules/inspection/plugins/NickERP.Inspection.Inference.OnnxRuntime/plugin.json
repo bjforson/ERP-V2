@@ -1,0 +1,33 @@
+{
+  "typeCode": "onnx-runtime",
+  "displayName": "ONNX Runtime (CPU + DirectML)",
+  "version": "0.1.0",
+  "description": "Default inference runner. Microsoft.ML.OnnxRuntime 1.20.x with DirectML execution provider on Windows GPUs and CPU fallback. Verifies artifact sha256 before session open and warms with a metadata-derived dummy input on load.",
+  "contracts": [
+    "NickERP.Inspection.Inference.Abstractions.IInferenceRunner"
+  ],
+  "minHostContractVersion": "1.0",
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["PreferredExecutionProvider"],
+    "properties": {
+      "PreferredExecutionProvider": {
+        "type": "string",
+        "enum": ["DirectML", "CPU"],
+        "default": "DirectML",
+        "description": "EP to try first when loading a model."
+      },
+      "FallbackExecutionProviders": {
+        "type": "array",
+        "items": { "type": "string", "enum": ["DirectML", "CPU"] },
+        "default": ["CPU"],
+        "description": "Ordered fallback chain when the preferred EP is unavailable."
+      },
+      "IntraOpThreads": { "type": "integer", "minimum": 0, "default": 1 },
+      "InterOpThreads": { "type": "integer", "minimum": 0, "default": 1 },
+      "GpuDeviceId": { "type": ["integer", "null"], "minimum": 0, "default": null },
+      "SessionWarmupTimeoutSeconds": { "type": "integer", "minimum": 1, "default": 5 }
+    }
+  }
+}

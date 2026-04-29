@@ -1,0 +1,69 @@
+{
+  "model_id": "container-split",
+  "version": "v2.0.0-smoke",
+  "sha256": "da57e2899c592e52a90459b409ee1c0b47df61f007d879e66e9bad7ad0bf0d24",
+  "onnx_opset": "18",
+  "exported_at": "2026-04-29T17:56:52Z",
+  "exported_by": "train.py",
+  "git_commit": null,
+  "training_set_hash": "aa64810f2c87b7377a420e867896a8f1aa5944966ee9bf8080b4ed7c402c88d6",
+  "eval_metrics": {
+    "overall": {
+      "n": 9,
+      "mae_px": 640.0925631447327,
+      "median_px": 633.6019656019656,
+      "p95_px": null,
+      "f1_at_5px": 0.0,
+      "pct_agreement_consensus_30px": 0.0,
+      "catastrophic_fail_rate_30px": 1.0
+    },
+    "by_container_count": {
+      "2": {
+        "n": 9,
+        "mae_px": 640.0925631447327,
+        "median_px": 633.6019656019656,
+        "p95_px": null,
+        "f1_at_5px": 0.0,
+        "pct_agreement_consensus_30px": 0.0,
+        "catastrophic_fail_rate_30px": 1.0
+      }
+    },
+    "by_scanner_type": {
+      "ASE": {
+        "n": 5,
+        "mae_px": 632.5578267507084,
+        "median_px": 631.3353922174182,
+        "p95_px": null,
+        "f1_at_5px": 0.0,
+        "pct_agreement_consensus_30px": 0.0,
+        "catastrophic_fail_rate_30px": 1.0
+      },
+      "_": {
+        "n": 4,
+        "mae_px": 649.5109836372632,
+        "median_px": 639.7418633041275,
+        "p95_px": null,
+        "f1_at_5px": 0.0,
+        "pct_agreement_consensus_30px": 0.0,
+        "catastrophic_fail_rate_30px": 1.0
+      }
+    },
+    "by_fetch_status": {
+      "http_ok": {
+        "n": 9,
+        "mae_px": 640.0925631447327,
+        "median_px": 633.6019656019656,
+        "p95_px": null,
+        "f1_at_5px": 0.0,
+        "pct_agreement_consensus_30px": 0.0,
+        "catastrophic_fail_rate_30px": 1.0
+      }
+    },
+    "n_holdout": 9,
+    "reference": "split_x_resized",
+    "weights": "C:\\Shared\\ERP V2\\tools\\inference-training\\container-split\\runs\\run-20260429T175605Z\\student.pt"
+  },
+  "base_model": "resnet18-unet-v1",
+  "size_bytes": 134345,
+  "notes": "v2 container-split student trained on v1 splitter labels. 1-epoch smoke run with ~88 scans \u2014 pipeline proof, NOT production."
+}
