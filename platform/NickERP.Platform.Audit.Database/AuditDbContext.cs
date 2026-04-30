@@ -64,6 +64,16 @@ public class AuditDbContext : DbContext
     /// </summary>
     public DbSet<EdgeNodeReplayLog> EdgeNodeReplayLogs => Set<EdgeNodeReplayLog>();
 
+    /// <summary>
+    /// Sprint 13 / P2-FU-edge-auth — per-edge-node API keys used by the
+    /// edge auth handler to authenticate incoming
+    /// <c>/api/edge/replay</c> requests. Tenant-scoped + RLS-enforced;
+    /// the auth handler reads under <c>SetSystemContext</c> so the
+    /// initial lookup can hit any key, then asserts the row's tenant
+    /// matches the request's authorized-tenant set after the fact.
+    /// </summary>
+    public DbSet<EdgeNodeApiKey> EdgeNodeApiKeys => Set<EdgeNodeApiKey>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // virtual so test subclasses can layer in additional model
@@ -209,6 +219,35 @@ public class AuditDbContext : DbContext
             // wants the latest batches per edge.
             e.HasIndex(x => new { x.EdgeNodeId, x.ReplayedAt })
                 .HasDatabaseName("ix_edge_node_replay_log_edge_time");
+        });
+
+        // ---- Sprint 13 / P2-FU-edge-auth — audit.edge_node_api_keys --
+        modelBuilder.Entity<EdgeNodeApiKey>(e =>
+        {
+            e.ToTable("edge_node_api_keys");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.EdgeNodeId).IsRequired().HasMaxLength(100);
+            e.Property(x => x.KeyHash).IsRequired();
+            e.Property(x => x.KeyPrefix).IsRequired().HasMaxLength(8);
+            e.Property(x => x.IssuedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.ExpiresAt);
+            e.Property(x => x.RevokedAt);
+            e.Property(x => x.Description).HasMaxLength(200);
+            e.Property(x => x.CreatedByUserId);
+
+            // Auth-handler hot path: lookup-by-hash. UNIQUE so two
+            // independent issuances of the same plaintext (impossible
+            // with a CSPRNG, but defence-in-depth) collide loudly
+            // rather than silently authenticating against either row.
+            e.HasIndex(x => x.KeyHash)
+                .IsUnique()
+                .HasDatabaseName("ux_edge_node_api_keys_keyhash");
+
+            // Operator UI: list keys for a given edge node.
+            e.HasIndex(x => new { x.TenantId, x.EdgeNodeId })
+                .HasDatabaseName("ix_edge_node_api_keys_tenant_edge");
         });
     }
 }
