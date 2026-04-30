@@ -1,0 +1,252 @@
+@page "/edge-keys"
+@attribute [Authorize]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Audit.Database
+@using NickERP.Platform.Audit.Database.Entities
+@using NickERP.Platform.Tenancy
+@inject AuditDbContext Db
+@inject EdgeNodeApiKeyService Service
+@inject ITenantContext TenantCtx
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Edge Node API Keys — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Edge Node API Keys</h1>
+        <p class="portal-page-subtitle">
+            Per-edge-node credentials for the <code>/api/edge/replay</code>
+            endpoint. Each key authenticates one edge; revoking a key
+            doesn't affect other edges. The plaintext is shown ONCE on
+            issue — copy it to the edge's <code>EdgeNode:Token</code>
+            config immediately, it cannot be retrieved later.
+        </p>
+    </div>
+</header>
+
+@if (_tenantId is null)
+{
+    <p class="portal-form-message">No tenant claim on the principal — cannot list keys. Sign in via a tenant-scoped account.</p>
+}
+else
+{
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Issue new key</h2>
+            <EditForm Model="_form" OnValidSubmit="IssueAsync" FormName="issue-edge-key" class="portal-form">
+                <div class="portal-form-row">
+                    <label>
+                        <span>Edge node</span>
+                        <InputSelect class="portal-input" @bind-Value="_form.EdgeNodeId">
+                            <option value="">-- pick edge --</option>
+                            @foreach (var edge in _authorizedEdges)
+                            {
+                                <option value="@edge">@edge</option>
+                            }
+                        </InputSelect>
+                    </label>
+                    <label>
+                        <span>Description (optional)</span>
+                        <InputText class="portal-input" @bind-Value="_form.Description" placeholder="e.g. tema lane 2 reissue 2026-04-30" />
+                    </label>
+                    <label>
+                        <span>Expires (UTC, optional)</span>
+                        <InputDate class="portal-input" @bind-Value="_form.ExpiresAt" />
+                    </label>
+                </div>
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary" disabled="@_busy">Issue</button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="portal-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+
+            @if (_lastIssuedPlaintext is not null)
+            {
+                <div class="portal-form-message" role="alert" style="margin-top:1rem;">
+                    <strong>Plaintext key (copy NOW — cannot be retrieved later):</strong>
+                    <br />
+                    <code data-testid="issued-plaintext">@_lastIssuedPlaintext</code>
+                    <br />
+                    Prefix: <code>@_lastIssuedPrefix</code>
+                </div>
+            }
+        </div>
+
+        @if (_keys is null)
+        {
+            <p>Loading...</p>
+        }
+        else if (_keys.Count == 0)
+        {
+            <p>No keys issued for this tenant yet.</p>
+        }
+        else
+        {
+            <table class="portal-table">
+                <thead>
+                    <tr>
+                        <th>Edge</th>
+                        <th>Prefix</th>
+                        <th>Issued</th>
+                        <th>Expires</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var k in _keys)
+                    {
+                        <tr>
+                            <td><code>@k.EdgeNodeId</code></td>
+                            <td><code>@k.KeyPrefix</code></td>
+                            <td>@k.IssuedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)</td>
+                            <td>@(k.ExpiresAt?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "(never)")</td>
+                            <td>@(k.Description ?? "")</td>
+                            <td>@StatusOf(k)</td>
+                            <td>
+                                @if (k.RevokedAt is null)
+                                {
+                                    <button type="button" class="portal-button" @onclick="() => RevokeAsync(k.KeyId)" disabled="@_busy">
+                                        Revoke
+                                    </button>
+                                }
+                                else
+                                {
+                                    <span>revoked @k.RevokedAt.Value.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private long? _tenantId;
+    private List<EdgeKeySummary>? _keys;
+    private List<string> _authorizedEdges = new();
+    private string _message = string.Empty;
+    private string? _lastIssuedPlaintext;
+    private string? _lastIssuedPrefix;
+    private bool _busy;
+
+    [SupplyParameterFromForm]
+    private IssueForm _form { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var tenantClaim = auth.User?.FindFirst("nickerp:tenant_id")?.Value;
+        if (long.TryParse(tenantClaim, out var t) && t > 0)
+        {
+            _tenantId = t;
+            // Set the tenant context so RLS resolves correctly when
+            // EdgeNodeApiKeyService runs its queries — the page is in
+            // the operator's tenant scope.
+            TenantCtx.SetTenant(t);
+            await Reload();
+        }
+    }
+
+    private async Task Reload()
+    {
+        if (_tenantId is null) return;
+        _authorizedEdges = (await Service.ListAuthorizedEdgeNodesAsync(_tenantId.Value)).ToList();
+        _keys = (await Service.ListAsync(_tenantId.Value)).ToList();
+    }
+
+    private async Task IssueAsync()
+    {
+        if (_tenantId is null) return;
+        if (string.IsNullOrWhiteSpace(_form.EdgeNodeId))
+        {
+            _message = "Pick an edge node.";
+            return;
+        }
+        // Operator may not have any authorized edges yet — surface a
+        // hint rather than a CS exception.
+        if (!_authorizedEdges.Contains(_form.EdgeNodeId))
+        {
+            _message = $"Edge node '{_form.EdgeNodeId}' is not authorized for this tenant. Create an edge_node_authorizations row first.";
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            Guid? actorId = Guid.TryParse(auth.User?.FindFirst("nickerp:id")?.Value, out var g) ? g : null;
+            DateTimeOffset? expires = _form.ExpiresAt.HasValue
+                ? new DateTimeOffset(_form.ExpiresAt.Value, TimeSpan.Zero)
+                : null;
+            var result = await Service.IssueAsync(
+                tenantId: _tenantId.Value,
+                edgeNodeId: _form.EdgeNodeId.Trim(),
+                description: string.IsNullOrWhiteSpace(_form.Description) ? null : _form.Description.Trim(),
+                expiresAt: expires,
+                createdByUserId: actorId);
+
+            _lastIssuedPlaintext = result.Plaintext;
+            _lastIssuedPrefix = result.Prefix;
+            _message = $"Issued key {result.Prefix} for {_form.EdgeNodeId}. Copy the plaintext now.";
+            _form = new IssueForm();
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Issue failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RevokeAsync(Guid keyId)
+    {
+        if (_tenantId is null) return;
+        try
+        {
+            _busy = true;
+            var changed = await Service.RevokeAsync(_tenantId.Value, keyId);
+            _message = changed
+                ? "Key revoked."
+                : "Key was already revoked or not found.";
+            // Plaintext from a previous issue is no longer relevant after
+            // a revoke — clear it so the operator doesn't accidentally
+            // ship a now-useless key.
+            _lastIssuedPlaintext = null;
+            _lastIssuedPrefix = null;
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Revoke failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string StatusOf(EdgeKeySummary k)
+    {
+        if (k.RevokedAt is not null) return "revoked";
+        if (k.ExpiresAt is { } e && e <= DateTimeOffset.UtcNow) return "expired";
+        return "active";
+    }
+
+    public sealed class IssueForm
+    {
+        public string EdgeNodeId { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public DateTime? ExpiresAt { get; set; }
+    }
+}

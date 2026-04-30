@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Platform.Audit.Database;
@@ -63,6 +64,19 @@ builder.Services.AddHttpClient(); // for Health page service probes
 // Sprint tracker — reads docs/sprint-progress.json (the canonical state file)
 // for the /sprint page. No DB write, no auth secret; safe singleton.
 builder.Services.AddSingleton<NickERP.Portal.Services.SprintProgressService>();
+
+// Sprint 13 / P2-FU-edge-auth — wiring for the per-edge-node API key
+// admin page (/edge-keys). The hasher + envelope + service live in
+// Platform.Audit.Database alongside the entity so they don't drag a
+// host-side dependency. Portal needs AddDataProtection to resolve the
+// envelope's IDataProtectionProvider (auth cookie infra usually wires
+// this implicitly, but the explicit call documents the dependency
+// and gives a stable application name for keyring isolation).
+builder.Services.AddDataProtection().SetApplicationName("NickERP.Portal");
+builder.Services.AddSingleton<NickERP.Platform.Audit.Database.IEdgeKeyHashEnvelope,
+    NickERP.Portal.Services.PortalEdgeKeyHashEnvelope>();
+builder.Services.AddScoped<NickERP.Platform.Audit.Database.EdgeKeyHasher>();
+builder.Services.AddScoped<NickERP.Platform.Audit.Database.EdgeNodeApiKeyService>();
 
 // Blazor Server (interactive server-side rendering).
 builder.Services.AddRazorComponents()

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -6,6 +7,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using NickERP.Inspection.Web.Endpoints;
+using NickERP.Inspection.Web.Services;
 using NickERP.Platform.Audit.Database;
 using NickERP.Platform.Audit.Database.Entities;
 using NickERP.Platform.Tenancy;
@@ -13,20 +15,20 @@ using NickERP.Platform.Tenancy;
 namespace NickERP.Inspection.Web.Tests;
 
 /// <summary>
-/// Sprint 11 / P2 — exercises <see cref="EdgeReplayEndpoint.HandleAsync"/>
-/// at the handler-method level. Drives an EF in-memory
-/// <see cref="AuditDbContext"/> + a hand-built <see cref="DefaultHttpContext"/>;
-/// asserts:
+/// Sprint 11 / P2 + Sprint 13 / P2-FU-edge-auth — exercises
+/// <see cref="EdgeReplayEndpoint.HandleAsync"/> at the handler-method
+/// level. Drives an EF in-memory <see cref="AuditDbContext"/> + a
+/// hand-built <see cref="DefaultHttpContext"/>.
 ///
-/// <list type="bullet">
-///   <item><description>Missing / mismatched <c>X-Edge-Token</c> returns 401.</description></item>
-///   <item><description>Edge node not authorized for tenant returns per-entry error.</description></item>
-///   <item><description>Successful replay writes audit row with replay metadata.</description></item>
-///   <item><description>Idempotent replay collapses duplicates.</description></item>
-///   <item><description>Future-dated edge timestamps rejected per-entry.</description></item>
-///   <item><description>Unsupported eventTypeHint rejected per-entry.</description></item>
-///   <item><description>Replay log row written for every batch.</description></item>
-/// </list>
+/// <para>
+/// Two auth modes covered: per-node API key (Sprint 13, the preferred
+/// path going forward) and the legacy <c>X-Edge-Token</c> shared
+/// secret (Sprint 11, kept alive during the rollout window via
+/// <c>EdgeAuth:AllowLegacyToken</c>). Most "happy path" coverage of
+/// the replay logic itself uses the legacy path because it's the
+/// simplest auth shape — we don't re-cover replay branches under
+/// per-node auth, only the auth decisions themselves.
+/// </para>
 /// </summary>
 public sealed class EdgeReplayEndpointTests
 {
@@ -36,11 +38,11 @@ public sealed class EdgeReplayEndpointTests
     {
         await using var db = BuildDb("edge-anon");
         var http = new DefaultHttpContext();
-        var config = BuildConfig(serverSecret: "expected");
+        var auth = BuildAuthHandler(db, BuildConfig(serverSecret: "expected"));
 
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>());
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
 
         result.GetType().Name.Should().Be("UnauthorizedHttpResult");
     }
@@ -52,11 +54,11 @@ public sealed class EdgeReplayEndpointTests
         await using var db = BuildDb("edge-bad-tok");
         var http = new DefaultHttpContext();
         http.Request.Headers["X-Edge-Token"] = "wrong";
-        var config = BuildConfig(serverSecret: "expected");
+        var auth = BuildAuthHandler(db, BuildConfig(serverSecret: "expected"));
 
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>());
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
 
         result.GetType().Name.Should().Be("UnauthorizedHttpResult");
     }
@@ -68,11 +70,11 @@ public sealed class EdgeReplayEndpointTests
         await using var db = BuildDb("edge-no-secret");
         var http = new DefaultHttpContext();
         http.Request.Headers["X-Edge-Token"] = "anything";
-        var config = BuildConfig(serverSecret: null);
+        var auth = BuildAuthHandler(db, BuildConfig(serverSecret: null));
 
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>());
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
 
         result.GetType().Name.Should().Be("UnauthorizedHttpResult");
     }
@@ -83,11 +85,11 @@ public sealed class EdgeReplayEndpointTests
     {
         await using var db = BuildDb("edge-bad-env");
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
 
         var body = new EdgeReplayRequestDto("", new List<EdgeReplayEventDto>());
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
 
         result.GetType().Name.Should().Contain("BadRequest");
     }
@@ -107,7 +109,7 @@ public sealed class EdgeReplayEndpointTests
         await db.SaveChangesAsync();
 
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
 
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>
         {
@@ -116,7 +118,7 @@ public sealed class EdgeReplayEndpointTests
         });
 
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
         var dto = ExtractValue<EdgeReplayResponseDto>(result);
         dto.Should().NotBeNull();
         dto!.Results.Should().HaveCount(1);
@@ -142,7 +144,7 @@ public sealed class EdgeReplayEndpointTests
         await db.SaveChangesAsync();
 
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
 
         var edgeStamp = new DateTimeOffset(2026, 4, 29, 10, 0, 0, TimeSpan.Zero);
         var body = new EdgeReplayRequestDto("edge-tema-1", new List<EdgeReplayEventDto>
@@ -160,7 +162,7 @@ public sealed class EdgeReplayEndpointTests
 
         var clock = new EdgeFixedClock(new DateTimeOffset(2026, 4, 29, 11, 30, 0, TimeSpan.Zero));
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body, clock);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body, clock);
 
         var dto = ExtractValue<EdgeReplayResponseDto>(result);
         dto!.Results.Single().Ok.Should().BeTrue();
@@ -202,7 +204,7 @@ public sealed class EdgeReplayEndpointTests
         await db.SaveChangesAsync();
 
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
         var edgeStamp = new DateTimeOffset(2026, 4, 29, 10, 0, 0, TimeSpan.Zero);
         var payload = JsonSerializer.SerializeToElement(new
         {
@@ -216,14 +218,14 @@ public sealed class EdgeReplayEndpointTests
 
         // First pass — writes the audit row.
         var first = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
         ExtractValue<EdgeReplayResponseDto>(first)!.Results.Single().Ok.Should().BeTrue();
 
         // Second pass — same edge, same timestamp, same payload. The
         // idempotency key is deterministic; the existing-row branch
         // returns ok=true without inserting again.
         var second = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
         ExtractValue<EdgeReplayResponseDto>(second)!.Results.Single().Ok.Should().BeTrue();
 
         var rows = await db.Events.AsNoTracking().ToListAsync();
@@ -247,7 +249,7 @@ public sealed class EdgeReplayEndpointTests
         await db.SaveChangesAsync();
 
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
         var clock = new EdgeFixedClock(new DateTimeOffset(2026, 4, 29, 12, 0, 0, TimeSpan.Zero));
         // 30 minutes in the future — well past the 60s clock-skew tolerance.
         var futureStamp = clock.Now.AddMinutes(30);
@@ -259,7 +261,7 @@ public sealed class EdgeReplayEndpointTests
         });
 
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body, clock);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body, clock);
 
         var dto = ExtractValue<EdgeReplayResponseDto>(result);
         dto!.Results.Single().Ok.Should().BeFalse();
@@ -280,7 +282,7 @@ public sealed class EdgeReplayEndpointTests
         await db.SaveChangesAsync();
 
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
 
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>
         {
@@ -289,7 +291,7 @@ public sealed class EdgeReplayEndpointTests
         });
 
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
         var dto = ExtractValue<EdgeReplayResponseDto>(result);
         dto!.Results.Single().Ok.Should().BeFalse();
         dto.Results.Single().Error.Should().Contain("unsupported eventTypeHint");
@@ -307,7 +309,7 @@ public sealed class EdgeReplayEndpointTests
         await db.SaveChangesAsync();
 
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
         // Missing eventType / entityType / entityId.
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>
         {
@@ -316,7 +318,7 @@ public sealed class EdgeReplayEndpointTests
         });
 
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
         var dto = ExtractValue<EdgeReplayResponseDto>(result);
         dto!.Results.Single().Ok.Should().BeFalse();
         dto.Results.Single().Error.Should().Contain("missing required fields");
@@ -334,7 +336,7 @@ public sealed class EdgeReplayEndpointTests
         await db.SaveChangesAsync();
 
         var http = NewAuthedHttp();
-        var config = BuildConfig();
+        var auth = BuildAuthHandler(db, BuildConfig());
         var stamp = DateTimeOffset.UtcNow.AddMinutes(-1);
 
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>
@@ -348,7 +350,7 @@ public sealed class EdgeReplayEndpointTests
         });
 
         var result = await EdgeReplayEndpoint.HandleAsync(
-            http, db, new TenantContext(), config, NullLoggerFactory.Instance, body);
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
         var dto = ExtractValue<EdgeReplayResponseDto>(result);
         dto!.Results.Should().HaveCount(3);
         dto.Results[0].Ok.Should().BeTrue();
@@ -364,8 +366,73 @@ public sealed class EdgeReplayEndpointTests
     }
 
     // ------------------------------------------------------------------
+    // Sprint 13 / P2-FU-edge-auth — legacy fallback toggle coverage.
+    // ------------------------------------------------------------------
 
-    private static AuditDbContext BuildDb(string name)
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Legacy_X_Edge_Token_rejected_when_AllowLegacyToken_is_false()
+    {
+        await using var db = BuildDb("edge-legacy-off");
+        var http = new DefaultHttpContext();
+        http.Request.Headers["X-Edge-Token"] = "test-secret";
+        // Legacy explicitly disabled — even a correctly-presented X-Edge-Token
+        // must be rejected so ops can complete the rollout.
+        var auth = BuildAuthHandler(db, BuildConfig(serverSecret: "test-secret", allowLegacy: false));
+
+        var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>());
+        var result = await EdgeReplayEndpoint.HandleAsync(
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
+
+        result.GetType().Name.Should().Be("UnauthorizedHttpResult");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Per_node_API_key_authenticates_when_present_in_X_Edge_Api_Key_header()
+    {
+        await using var db = BuildDb("edge-per-node-ok");
+        db.EdgeNodeAuthorizations.Add(new EdgeNodeAuthorization
+        {
+            EdgeNodeId = "edge-tema-1", TenantId = 17, AuthorizedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var config = BuildConfig(allowLegacy: false, hashKey: "test-hash-key");
+        var auth = BuildAuthHandler(db, config);
+
+        // Issue a key and seed it directly (mirrors the Issue flow).
+        var hasher = new EdgeKeyHasher(config, new TestEdgeKeyHashEnvelope());
+        var plaintext = EdgeKeyHasher.GenerateApiKey();
+        db.EdgeNodeApiKeys.Add(new EdgeNodeApiKey
+        {
+            TenantId = 17,
+            EdgeNodeId = "edge-tema-1",
+            KeyHash = hasher.ComputeHash(plaintext),
+            KeyPrefix = EdgeKeyHasher.ComputePrefix(plaintext),
+            IssuedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var http = new DefaultHttpContext();
+        http.Request.Headers["X-Edge-Api-Key"] = plaintext;
+
+        var body = new EdgeReplayRequestDto("edge-tema-1", new List<EdgeReplayEventDto>
+        {
+            new("audit.event.replay", 17, DateTimeOffset.UtcNow.AddMinutes(-1),
+                JsonSerializer.SerializeToElement(new { eventType = "x", entityType = "T", entityId = "1" }))
+        });
+
+        var result = await EdgeReplayEndpoint.HandleAsync(
+            http, db, new TenantContext(), auth, NullLoggerFactory.Instance, body);
+
+        var dto = ExtractValue<EdgeReplayResponseDto>(result);
+        dto!.Results.Single().Ok.Should().BeTrue();
+    }
+
+    // ------------------------------------------------------------------
+
+    internal static AuditDbContext BuildDb(string name)
     {
         var options = new DbContextOptionsBuilder<AuditDbContext>()
             .UseInMemoryDatabase(name + "-" + Guid.NewGuid())
@@ -374,14 +441,31 @@ public sealed class EdgeReplayEndpointTests
         return new TestAuditDbContext(options);
     }
 
-    private static IConfiguration BuildConfig(string? serverSecret = "test-secret")
+    internal static IConfiguration BuildConfig(
+        string? serverSecret = "test-secret",
+        bool allowLegacy = true,
+        string? hashKey = null)
     {
         var dict = new Dictionary<string, string?>();
         if (serverSecret is not null)
-            dict["EdgeNode:SharedSecret"] = serverSecret;
+            dict[EdgeAuthHandler.LegacySharedSecretConfigKey] = serverSecret;
+        dict[EdgeAuthHandler.LegacyTokenConfigKey] = allowLegacy.ToString();
+        if (hashKey is not null)
+            dict[EdgeKeyHasher.HashKeyConfigKey] = hashKey;
         return new ConfigurationBuilder()
             .AddInMemoryCollection(dict)
             .Build();
+    }
+
+    internal static EdgeAuthHandler BuildAuthHandler(AuditDbContext db, IConfiguration config)
+    {
+        var hasher = new EdgeKeyHasher(config, new TestEdgeKeyHashEnvelope());
+        return new EdgeAuthHandler(
+            db,
+            new TenantContext(),
+            config,
+            hasher,
+            NullLogger<EdgeAuthHandler>.Instance);
     }
 
     private static DefaultHttpContext NewAuthedHttp()
@@ -391,7 +475,7 @@ public sealed class EdgeReplayEndpointTests
         return http;
     }
 
-    private static T? ExtractValue<T>(IResult result) where T : class
+    internal static T? ExtractValue<T>(IResult result) where T : class
     {
         var prop = result.GetType().GetProperty("Value");
         return prop?.GetValue(result) as T;
@@ -403,7 +487,7 @@ public sealed class EdgeReplayEndpointTests
     /// <see cref="DomainEventRow.Payload"/>. Mirrors the
     /// <see cref="NotificationsEndpointsTests"/> fixture.
     /// </summary>
-    private sealed class TestAuditDbContext : AuditDbContext
+    internal sealed class TestAuditDbContext : AuditDbContext
     {
         public TestAuditDbContext(DbContextOptions<AuditDbContext> options) : base(options) { }
         protected override void OnAuditModelCreating(ModelBuilder modelBuilder)
@@ -427,4 +511,22 @@ internal sealed class EdgeFixedClock : TimeProvider
     public EdgeFixedClock(DateTimeOffset now) => Now = now;
     public DateTimeOffset Now { get; }
     public override DateTimeOffset GetUtcNow() => Now;
+}
+
+/// <summary>
+/// Test envelope — returns a deterministic 32-byte fallback hash key.
+/// Lets the unit tests run without spinning up a real
+/// <see cref="IDataProtectionProvider"/>.
+/// </summary>
+internal sealed class TestEdgeKeyHashEnvelope : IEdgeKeyHashEnvelope
+{
+    public byte[] DeriveFallbackHashKey()
+    {
+        // Fixed bytes — match across every test invocation so a key
+        // hashed in one fixture verifies in another.
+        var key = new byte[32];
+        for (var i = 0; i < key.Length; i++)
+            key[i] = (byte)i;
+        return key;
+    }
 }
