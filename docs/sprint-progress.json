@@ -1,17 +1,8 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": {
-    "id": "Sprint 13",
-    "name": "Edge auth + image-analysis post-hoc adapter + live-deploy migration backlog",
-    "dispatchedAt": "2026-04-30",
-    "items": [
-      { "id": "T2", "title": "P2-FU-edge-auth — per-edge-node API keys + rotation flow + handler swap", "status": "done", "branch": "plan/s13-edge-auth (deleted)", "commit": "046a979", "mergeCommit": "a5f7344", "agentId": "T2 sub-agent", "notes": "+17 tests (Inspection.Web 58→75, total 225); audit register entry landed in merge; bad-key path does NOT downgrade to legacy" },
-      { "id": "T3", "title": "Image-analysis §6.11 — post-hoc outcome adapter (pull worker + 4-phase rollout state machine + manual-entry stub + reconciliation cursor)", "status": "done", "branch": "plan/s13-img-posthoc (deleted)", "commit": "66647ce", "mergeCommit": "e7cf83d", "agentId": "T3 sub-agent", "notes": "+28 tests (Inspection.Web 75→103, total 253); pure entity reuse (no new tables) + NoOp snapshot migration; worker uses SetTenant not SetSystemContext so no audit register entry needed; phases: DevEvalManualOnly/Shadow/PrimaryPlus5PctAudit/Primary; supersession via append-only AuthorityDocument rows" },
-      { "id": "T1", "title": "Live-deploy migration backlog — staged SQL scripts + runbook 07 (NOT auto-applied)", "status": "in-progress", "notes": "Dispatched 2026-04-30 post-T3-merge; covers 5 DBs (platform/audit, identity, tenancy, nickfinance, inspection-deltas)" }
-    ]
-  },
-  "currentSprintNote": "Sprint 13 in flight 2026-04-30. T2 merged at a5f7344 (+17 tests). T3 merged at e7cf83d (+28 tests, total 253). T1 (live-deploy migration backlog staging) dispatched. Image-analysis §6.4 (active learning) and §6.9 (threat library) deferred to Sprint 14 per master triage.",
+  "currentSprint": null,
+  "currentSprintNote": "Sprint 13 shipped 2026-04-30. Three tracks landed: T2 edge auth (a5f7344, +17 tests), T3 image-analysis §6.11 post-hoc adapter (e7cf83d, +28 tests), T1 live-deploy migration backlog staging (71caeb0, files only — operator runs psql per docs/runbooks/07-sprint-13-live-deploy.md). Tests at 253/253. Sprint 14 candidates: image-analysis §6.4 (active learning loop) + §6.9 (threat library code paths); FU-icums-cluster-key-ring; G2-FU-role-resolver; P2-FU-multi-event-types. Live-deploy: 32 migrations across 3 DBs (nickerp_platform / nickerp_nickfinance / nickerp_inspection) staged for manual psql application; orchestrator does NOT auto-apply.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -25,13 +16,31 @@
   ],
   "rollingMasterScope": {
     "drainable": [],
-    "drainableNote": "Empty as of 2026-04-29 (Sprint 12 image-analysis integration shipped at ce38f25). Twelve sprints shipped this run, 208/208 tests. Sprint 13 candidates surfaced: live-deploy migration backlog (platform/audit/nickfinance migrations from Sprints 5-11 never applied to a live DB; inspection DB ahead by 5 migrations), and Phase C medium-FU pick from FU-icums-cluster-key-ring / G2-FU-role-resolver / P2-FU-multi-event-types / P2-FU-edge-auth.",
-    "gated": [],
+    "drainableNote": "Empty as of 2026-04-30 (Sprint 13 shipped at 71caeb0). Thirteen sprints shipped this run, 253/253 tests. Sprint 14 candidates: image-analysis §6.4 (active learning loop) + §6.9 (threat library code paths) — both have entity scaffolds from Sprint 12, both deferred from Sprint 13 by master triage; FU-icums-cluster-key-ring (medium); G2-FU-role-resolver (medium); P2-FU-multi-event-types (medium). The 5 staged SQL scripts at tools/migrations/sprint-13-deploy/ are awaiting operator psql application — independent of code sprint cadence.",
+    "gated": [
+      { "id": "live-deploy-application", "reason": "Sprint 13 T1 staged 32 migrations across 3 DBs but does NOT auto-apply. Operator runs psql per docs/runbooks/07-sprint-13-live-deploy.md when ready. Until then, every shipped migration since Sprint 5 is still on disk-only for nickerp_platform + nickerp_nickfinance; nickerp_inspection has the 5 Sprint-12 image-analysis migrations applied + 9 deltas pending." }
+    ],
     "outOfScope": [
       { "id": "image-analysis-real-training", "reason": "GPU-time training runs for the container-split student, OCR Florence-2 fine-tune, and §6.2 anomaly-detection PatchCore fitting are out-of-band of any chat session. Scaffolds + label exports + 1-epoch smoke runs landed in Sprint 12; real training is the user's responsibility on a GPU box." }
     ]
   },
   "history": [
+    {
+      "id": "Sprint 13",
+      "name": "Edge auth + image-analysis post-hoc adapter + live-deploy migration backlog",
+      "shippedAt": "2026-04-30",
+      "mainCommit": "71caeb0",
+      "itemCount": 3,
+      "items": [
+        { "id": "T2", "title": "P2-FU-edge-auth — per-edge-node API keys + rotation flow + handler swap (4 commits a3e7c6a/a0c81f1/cef5c5b/046a979). +17 tests (225 total). Audit register entry landed at a5f7344 alongside merge.", "commit": "046a979", "mergeCommit": "a5f7344" },
+        { "id": "T3", "title": "Image-analysis §6.11 — post-hoc outcome adapter (5 commits 4bc8b1e/f1f7622/08ee0e9/d9c6ab5/66647ce). Pull worker + 4-phase rollout state machine (DevEvalManualOnly/Shadow/PrimaryPlus5PctAudit/Primary) + manual-entry stub + reconciliation cursor. Pure entity reuse — no new tables, NoOp snapshot migration only. Worker uses SetTenant (not SetSystemContext). Supersession via append-only AuthorityDocument rows. +28 tests (253 total).", "commit": "66647ce", "mergeCommit": "e7cf83d" },
+        { "id": "T1", "title": "Live-deploy migration backlog staging (2 commits 206c8b3/e7dbcc8). 5 SQL scripts + runbook 07 (~750 lines). Structural correction: 3 DBs (nickerp_platform / nickerp_nickfinance / nickerp_inspection) × 5 schemas, not 5 DBs as in original brief. 32 migrations to apply on first run; 5 already applied to inspection (Sprint 12). 3 irreversible migrations called out. **NOT auto-applied** — operator runs psql.", "commit": "e7dbcc8", "mergeCommit": "71caeb0" }
+      ],
+      "ratifications": [
+        { "id": "Sprint13-T3-phase-naming", "title": "Phase naming follows entity values (DevEvalManualOnly/Shadow/PrimaryPlus5PctAudit/Primary), not the brief's speculative Disabled/Shadow/Active/Authoritative" },
+        { "id": "Sprint13-T1-db-layout", "title": "v2 DB layout corrected to 3 physical DBs × 5 schemas during T1 (was assumed 5 DBs in the brief)" }
+      ]
+    },
     {
       "id": "Sprint 12",
       "name": "Image-analysis integration (parallel-session incorporation)",
@@ -200,7 +209,16 @@
     { "id": "G2-FU-bl0008-sweep", "title": "Refactor [SupplyParameterFromForm] initializer pattern (4+5 BL0008 warnings)", "from": "G2 / Sprint 10", "severity": "low (cosmetic)" },
     { "id": "G2-FU-sequence-promotion", "title": "Promote per-box voucher sequence_number from MAX+1 to a real Postgres sequence under multi-writer load", "from": "G2 / Sprint 10", "severity": "low (single-writer path safe today)" },
     { "id": "P2-FU-multi-event-types", "title": "Edge replay multi-handler fan-out (scan-captured / voucher-disbursed / etc.) beyond v0's audit.event.replay only", "from": "P2 / Sprint 11", "severity": "medium (gates real edge use-cases)" },
-    { "id": "P2-FU-edge-auth", "title": "Promote edge auth from shared X-Edge-Token secret to per-edge-node API keys + rotation flow", "from": "P2 / Sprint 11", "severity": "medium (production-grade edge auth)" },
-    { "id": "P2-FU-sqlite-migrations-script", "title": "dotnet ef migrations script --idempotent doesn't yet support SQLite in 10.0.7 — manually maintained DDL in tools/edge-sqlite/ until upstream lands", "from": "P2 / Sprint 11", "severity": "low (cosmetic; works today via manual file)" }
+    { "id": "P2-FU-sqlite-migrations-script", "title": "dotnet ef migrations script --idempotent doesn't yet support SQLite in 10.0.7 — manually maintained DDL in tools/edge-sqlite/ until upstream lands", "from": "P2 / Sprint 11", "severity": "low (cosmetic; works today via manual file)" },
+    { "id": "FU-posthoc-idempotency-column", "title": "Lift PostHocOutcomeWriter idempotency dedup from JSON-path lookup to a real idempotency_key column on authority_documents + unique index on (ExternalSystemInstanceId, IdempotencyKey); backfill expression extracts the JSON value for existing rows", "from": "T3 §6.11 / Sprint 13", "severity": "medium (write-path performance + integrity)" },
+    { "id": "FU-posthoc-container-window-fallback", "title": "Implement §6.11.6 step 1 case-lookup path 2 (scanner_serial + ±4h capture window + container_number) — only declaration-number lookup paths land in v0", "from": "T3 §6.11 / Sprint 13", "severity": "low (unblocks declaration-less authorities + v1-cutover edge cases)" },
+    { "id": "FU-posthoc-multipage", "title": "Spec IAsyncEnumerable<AuthorityDocumentDto> overload on IInboundOutcomeAdapter for paginating authorities (orchestrator cursor doesn't help mid-call)", "from": "T3 §6.11 / Sprint 13", "severity": "low (no push-paged authority confirmed yet)" },
+    { "id": "FU-posthoc-prometheus-metrics", "title": "Emit §6.11.12 Prometheus metrics (posthoc_outcomes_received_total, posthoc_match_failures_total, posthoc_lag_days_histogram, posthoc_supersession_total, posthoc_pull_cursor_lag_seconds, posthoc_webhook_rejections_total, posthoc_manual_entries_total)", "from": "T3 §6.11 / Sprint 13", "severity": "low (gates §6.4.8 'median lag > 60 days' runbook)" },
+    { "id": "FU-posthoc-webhook-receiver", "title": "Wire /api/posthoc/webhooks/{instanceId} endpoint with mTLS + IP allow-list + HMAC replay window per §6.11.4 / §6.11.10 (contract method exists, no HTTP route)", "from": "T3 §6.11 / Sprint 13", "severity": "medium (hold for first push-capable authority)" },
+    { "id": "FU-posthoc-domain-events", "title": "Emit AuthorityDocumentReceived + AnalystReviewPostHocOutcomeUpdated domain events from PostHocOutcomeWriter (only manual-entry service emits one event today)", "from": "T3 §6.11 / Sprint 13", "severity": "low (consumer-driven; unblocks notification routing for case watchers)" },
+    { "id": "FU-posthoc-admin-role", "title": "Distinct inspection.outcome_admin role per §6.11.9 (currently gated on Inspection.Admin)", "from": "T3 §6.11 / Sprint 13", "severity": "low (waits for v2 identity role split)" },
+    { "id": "FU-posthoc-portal-relocation", "title": "Move /admin/posthoc-outcomes from Inspection.Web to apps/portal/Areas/Admin/PostHocOutcomes/ when v2 portal admin shape is finalised (followed Sprint 12 Thresholds.razor precedent for now)", "from": "T3 §6.11 / Sprint 13", "severity": "cosmetic" },
+    { "id": "FU-edge-auth-cluster-key-ring", "title": "EdgeAuth:HashKey DataProtection envelope fallback has the same per-host-key-ring problem as ICUMS signing keys — same fix when ops wires up shared key ring (PortalEdgeKeyHashEnvelope inline doc)", "from": "T2 / Sprint 13", "severity": "medium (single-host prod fine; clustered breaks)" },
+    { "id": "Sprint13-T1-operator-action", "title": "Operator must run psql against the 5 SQL scripts under tools/migrations/sprint-13-deploy/ per runbook 07 to bring nickerp_platform + nickerp_nickfinance live; nickerp_inspection has 9 deltas pending too. Inspection had 5 already applied (Sprint 12 image-analysis).", "from": "T1 / Sprint 13", "severity": "user-action (gates any prod cutover)" }
   ]
 }
