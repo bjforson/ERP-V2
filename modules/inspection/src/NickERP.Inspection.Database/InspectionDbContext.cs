@@ -34,6 +34,8 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<RuleEvaluation> RuleEvaluations => Set<RuleEvaluation>();
     public DbSet<IcumsSigningKey> IcumsSigningKeys => Set<IcumsSigningKey>();
     public DbSet<ScannerThresholdProfile> ScannerThresholdProfiles => Set<ScannerThresholdProfile>();
+    public DbSet<OutcomePullCursor> OutcomePullCursors => Set<OutcomePullCursor>();
+    public DbSet<PostHocRolloutPhase> PostHocRolloutPhases => Set<PostHocRolloutPhase>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -488,6 +490,66 @@ public sealed class InspectionDbContext : DbContext
             // Hot-path lookup: find the active-for-signing key for a tenant.
             e.HasIndex(x => new { x.TenantId, x.ActivatedAt, x.RetiredAt })
                 .HasDatabaseName("ix_icums_signing_keys_tenant_active");
+        });
+
+        // ----- OutcomePullCursor (Sprint 13 / §6.11.8) ------------------------------
+        // Per-instance pull cursor for the inbound post-hoc outcome
+        // adapter. Table created by 20260429062458_Add_PhaseR3_TablesInferenceModernization;
+        // RLS + FORCE RLS already installed. The mapping below was missing
+        // during R3 — added now so the OutcomePullWorker can reach the rows
+        // via EF.
+        modelBuilder.Entity<OutcomePullCursor>(e =>
+        {
+            e.ToTable("outcome_pull_cursors");
+            e.HasKey(x => x.ExternalSystemInstanceId);
+            e.Property(x => x.ExternalSystemInstanceId).ValueGeneratedNever();
+            e.Property(x => x.LastSuccessfulPullAt).IsRequired();
+            e.Property(x => x.LastPullWindowUntil).IsRequired();
+            e.Property(x => x.ConsecutiveFailures).IsRequired().HasDefaultValue(0);
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Mirror the R3 migration's index so the model snapshot stays in sync.
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_outcome_pull_cursors_tenant");
+
+            e.HasOne(x => x.ExternalSystemInstance)
+                .WithMany()
+                .HasForeignKey(x => x.ExternalSystemInstanceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- PostHocRolloutPhase (Sprint 13 / §6.11.13) ---------------------------
+        // Per-authority rollout-phase tracking. One row per
+        // (TenantId, ExternalSystemInstanceId). Table created by
+        // 20260429062458_Add_PhaseR3_TablesInferenceModernization; RLS +
+        // FORCE RLS already installed. Adding the EF mapping now so the
+        // OutcomePullWorker can enumerate phase rows.
+        modelBuilder.Entity<PostHocRolloutPhase>(e =>
+        {
+            e.ToTable("posthoc_rollout_phase");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.ExternalSystemInstanceId).IsRequired();
+            e.Property(x => x.CurrentPhase).HasConversion<int>().IsRequired();
+            e.Property(x => x.PhaseEnteredAt).IsRequired();
+            e.Property(x => x.PromotedByUserId);
+            e.Property(x => x.GateNotesJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            // R3 migration index parity:
+            //   IX_posthoc_rollout_phase_ExternalSystemInstanceId — single-col
+            //   ux_posthoc_rollout_tenant_instance — unique on (TenantId, InstanceId)
+            e.HasIndex(x => x.ExternalSystemInstanceId)
+                .HasDatabaseName("IX_posthoc_rollout_phase_ExternalSystemInstanceId");
+            e.HasIndex(x => new { x.TenantId, x.ExternalSystemInstanceId })
+                .IsUnique()
+                .HasDatabaseName("ux_posthoc_rollout_tenant_instance");
+
+            e.HasOne(x => x.ExternalSystemInstance)
+                .WithMany()
+                .HasForeignKey(x => x.ExternalSystemInstanceId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

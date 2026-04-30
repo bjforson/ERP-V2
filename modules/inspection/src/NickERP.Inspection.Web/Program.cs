@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using NickERP.Inspection.Application.PostHocOutcomes;
 using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
@@ -140,6 +141,12 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.CaseWorkflowService>(
 // + state-transition rules live in one place.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.ThresholdAdminService>();
 
+// §6.11.9 — manual-entry path for post-hoc outcomes. Wraps the
+// IPostHocOutcomeWriter so the Razor admin page (Components/Pages/
+// PostHocOutcomes.razor) and any direct caller (tests) route through
+// the same persistence + audit-emit shape as the worker.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.PostHocOutcomeManualEntryService>();
+
 // Sprint A2 — in-process MeterListener powering the /perf admin page.
 // Singleton so the listener spans the host's lifetime; instruments are
 // auto-discovered via NickErpActivity.Meter (the OTel pipeline picks
@@ -175,6 +182,20 @@ builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerIngestionWorker>());
 builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerIngestionWorker>());
+
+// Sprint 13 / §6.11 — post-hoc outcome adapter pull pipeline. Binds
+// OutcomeIngestionOptions from PostHocOutcomes:* config and registers
+// the OutcomePullWorker as a singleton so the (hosted-service slot,
+// probe slot) idiom resolves the same instance — same ScannerIngestion
+// shape. The worker walks every active PostHocRolloutPhase row (phase
+// >= Shadow), resolves its IInboundOutcomeAdapter plugin, and pulls
+// outcomes via FetchOutcomesAsync into the AuthorityDocument table.
+builder.Services.AddPostHocOutcomeIngestion(builder.Configuration);
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.OutcomePullWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutcomePullWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutcomePullWorker>());
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
