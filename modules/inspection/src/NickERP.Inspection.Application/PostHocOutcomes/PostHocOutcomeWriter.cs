@@ -174,21 +174,64 @@ public sealed class PostHocOutcomeWriter : IPostHocOutcomeWriter
         Guid instanceId, string idempotencyKey, CancellationToken ct)
     {
         // EF Core can't translate System.Text.Json access on jsonb into
-        // a Postgres operator without an Npgsql json-path expression and
-        // a configured value converter. Apply the path filter via raw
-        // SQL — the index on (TenantId, CaseId) keeps it cheap, and the
-        // commit-4 migration upgrades this to a unique-indexed lookup.
-        var match = await _db.AuthorityDocuments
-            .FromSqlInterpolated($@"
+        // a Postgres operator without an Npgsql json-path expression
+        // and a configured value converter. The Postgres path uses raw
+        // SQL with the `->>` operator; the InMemory test provider
+        // (no SQL pipeline) trips a NotSupportedException there, so
+        // we fall back to a LINQ scan + in-memory parse.
+        //
+        // Both paths are bounded by the (TenantId, ExternalSystemInstanceId)
+        // narrowing — the population is small for any one instance until
+        // commit 4's migration upgrades this to a real column + unique
+        // index.
+        try
+        {
+            return await _db.AuthorityDocuments
+                .FromSqlInterpolated($@"
 SELECT * FROM inspection.authority_documents
 WHERE ""ExternalSystemInstanceId"" = {instanceId}
   AND ""DocumentType"" = {AuthorityDocumentTypes.PostHocOutcome}
   AND ""PayloadJson""->>'idempotency_key' = {idempotencyKey}
 LIMIT 1
 ")
+                .AsNoTracking()
+                .FirstOrDefaultAsync(ct);
+        }
+        catch (InvalidOperationException)
+        {
+            // FromSqlInterpolated isn't supported on the InMemory provider.
+            return await FindByIdempotencyKeyInMemoryAsync(instanceId, idempotencyKey, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return await FindByIdempotencyKeyInMemoryAsync(instanceId, idempotencyKey, ct);
+        }
+    }
+
+    /// <summary>
+    /// LINQ-only fallback for providers that don't support FromSqlInterpolated
+    /// (notably the EF InMemory test provider). Scans every PostHoc
+    /// document under the instance and parses PayloadJson in-memory.
+    /// </summary>
+    private async Task<AuthorityDocument?> FindByIdempotencyKeyInMemoryAsync(
+        Guid instanceId, string idempotencyKey, CancellationToken ct)
+    {
+        var candidates = await _db.AuthorityDocuments
             .AsNoTracking()
-            .FirstOrDefaultAsync(ct);
-        return match;
+            .Where(d => d.ExternalSystemInstanceId == instanceId
+                        && d.DocumentType == AuthorityDocumentTypes.PostHocOutcome)
+            .ToListAsync(ct);
+        foreach (var c in candidates)
+        {
+            try
+            {
+                var node = System.Text.Json.Nodes.JsonNode.Parse(c.PayloadJson) as System.Text.Json.Nodes.JsonObject;
+                if (node?["idempotency_key"]?.GetValue<string>() == idempotencyKey)
+                    return c;
+            }
+            catch (System.Text.Json.JsonException) { /* skip malformed */ }
+        }
+        return null;
     }
 
     private async Task<AuthorityDocument?> FindByReferenceAsync(
@@ -257,8 +300,14 @@ LIMIT 1
         IReadOnlyList<Guid> supersedesChain,
         CancellationToken ct)
     {
+        // Tracked query so the SaveChanges in the caller picks up the
+        // PostHocOutcomeJson mutation. AsNoTracking + Attach+IsModified
+        // works on the relational provider but the InMemory provider's
+        // change tracker doesn't always honour the IsModified flag for
+        // detached entities — keep this simple and let EF detect the
+        // change naturally.
         var review = await (
-            from rs in _db.ReviewSessions.AsNoTracking()
+            from rs in _db.ReviewSessions
             join rev in _db.AnalystReviews on rs.Id equals rev.ReviewSessionId
             where rs.CaseId == caseId
             orderby rs.StartedAt descending
@@ -287,11 +336,7 @@ LIMIT 1
             ["supersedes_chain"] = new JsonArray(supersedesChain.Select(id => (JsonNode?)id.ToString()).ToArray())
         };
 
-        // Re-attach a tracked instance and update the column. The lookup
-        // above used AsNoTracking so we only update the one field.
-        _db.AnalystReviews.Attach(review);
         review.PostHocOutcomeJson = normalised.ToJsonString();
-        _db.Entry(review).Property(r => r.PostHocOutcomeJson).IsModified = true;
     }
 
     private static string EnrichPayload(
