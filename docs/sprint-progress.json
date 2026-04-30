@@ -1,8 +1,17 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": null,
-  "currentSprintNote": "Sprint 12 (image-analysis integration) shipped end-to-end on 2026-04-29. Phase A at 95ca5e4 + 7b9f056 (89 files / 15,569 insertions; DisposeAsync idempotency fix-forward), Phase B at ce38f25 (8 files / 451 insertions; admin UI + §7.0 contract bumps). 208/208 tests across both phases. Stash@{0} drained (its content fully landed via Phase A's working-tree files + Phase B's stash patch application; verified before drop). Drainable backlog returns to empty. Sprint 13 candidates: live-deploy migration backlog (platform/audit/nickfinance never applied to a live DB; inspection DB is one step ahead from this sprint), Phase C medium-FU pick from FU-icums-cluster-key-ring / G2-FU-role-resolver / P2-FU-multi-event-types / P2-FU-edge-auth.",
+  "currentSprint": {
+    "id": "Sprint 13",
+    "name": "Edge auth + image-analysis post-hoc adapter + live-deploy migration backlog",
+    "dispatchedAt": "2026-04-30",
+    "items": [
+      { "id": "T2", "title": "P2-FU-edge-auth — per-edge-node API keys + rotation flow + handler swap", "status": "done", "branch": "plan/s13-edge-auth (deleted)", "commit": "046a979", "mergeCommit": "a5f7344", "agentId": "T2 sub-agent", "notes": "+17 tests (Inspection.Web 58→75, total 225); audit register entry landed in merge; bad-key path does NOT downgrade to legacy" },
+      { "id": "T3", "title": "Image-analysis §6.11 — post-hoc outcome adapter (pull worker + 4-phase rollout state machine + manual-entry stub + reconciliation cursor)", "status": "in-progress", "branch": "plan/s13-img-posthoc", "agentId": "T3 sub-agent" },
+      { "id": "T1", "title": "Live-deploy migration backlog — staged SQL scripts + runbook 07 (NOT auto-applied)", "status": "queued", "notes": "Dispatched after T3 merges so scripts include T3's new migrations" }
+    ]
+  },
+  "currentSprintNote": "Sprint 13 dispatched 2026-04-30 with three tracks. T2 (edge auth) merged at a5f7344, 225/225 tests. T3 (post-hoc adapter §6.11) running. T1 (live-deploy migration backlog staging) queued behind T3. Image-analysis §6.4 (active learning) and §6.9 (threat library) deferred to Sprint 14 per master triage.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
