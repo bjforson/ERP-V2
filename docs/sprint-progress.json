@@ -7,11 +7,11 @@
     "dispatchedAt": "2026-04-30",
     "items": [
       { "id": "T2", "title": "P2-FU-edge-auth — per-edge-node API keys + rotation flow + handler swap", "status": "done", "branch": "plan/s13-edge-auth (deleted)", "commit": "046a979", "mergeCommit": "a5f7344", "agentId": "T2 sub-agent", "notes": "+17 tests (Inspection.Web 58→75, total 225); audit register entry landed in merge; bad-key path does NOT downgrade to legacy" },
-      { "id": "T3", "title": "Image-analysis §6.11 — post-hoc outcome adapter (pull worker + 4-phase rollout state machine + manual-entry stub + reconciliation cursor)", "status": "in-progress", "branch": "plan/s13-img-posthoc", "agentId": "T3 sub-agent" },
-      { "id": "T1", "title": "Live-deploy migration backlog — staged SQL scripts + runbook 07 (NOT auto-applied)", "status": "queued", "notes": "Dispatched after T3 merges so scripts include T3's new migrations" }
+      { "id": "T3", "title": "Image-analysis §6.11 — post-hoc outcome adapter (pull worker + 4-phase rollout state machine + manual-entry stub + reconciliation cursor)", "status": "done", "branch": "plan/s13-img-posthoc (deleted)", "commit": "66647ce", "mergeCommit": "e7cf83d", "agentId": "T3 sub-agent", "notes": "+28 tests (Inspection.Web 75→103, total 253); pure entity reuse (no new tables) + NoOp snapshot migration; worker uses SetTenant not SetSystemContext so no audit register entry needed; phases: DevEvalManualOnly/Shadow/PrimaryPlus5PctAudit/Primary; supersession via append-only AuthorityDocument rows" },
+      { "id": "T1", "title": "Live-deploy migration backlog — staged SQL scripts + runbook 07 (NOT auto-applied)", "status": "in-progress", "notes": "Dispatched 2026-04-30 post-T3-merge; covers 5 DBs (platform/audit, identity, tenancy, nickfinance, inspection-deltas)" }
     ]
   },
-  "currentSprintNote": "Sprint 13 dispatched 2026-04-30 with three tracks. T2 (edge auth) merged at a5f7344, 225/225 tests. T3 (post-hoc adapter §6.11) running. T1 (live-deploy migration backlog staging) queued behind T3. Image-analysis §6.4 (active learning) and §6.9 (threat library) deferred to Sprint 14 per master triage.",
+  "currentSprintNote": "Sprint 13 in flight 2026-04-30. T2 merged at a5f7344 (+17 tests). T3 merged at e7cf83d (+28 tests, total 253). T1 (live-deploy migration backlog staging) dispatched. Image-analysis §6.4 (active learning) and §6.9 (threat library) deferred to Sprint 14 per master triage.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
