@@ -126,6 +126,12 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.CaseWorkflowService>(
 // + state-transition rules live in one place.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.ThresholdAdminService>();
 
+// §6.11.9 — manual-entry path for post-hoc outcomes. Wraps the
+// IPostHocOutcomeWriter so the Razor admin page (Components/Pages/
+// PostHocOutcomes.razor) and any direct caller (tests) route through
+// the same persistence + audit-emit shape as the worker.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.PostHocOutcomeManualEntryService>();
+
 // Sprint A2 — in-process MeterListener powering the /perf admin page.
 // Singleton so the listener spans the host's lifetime; instruments are
 // auto-discovered via NickErpActivity.Meter (the OTel pipeline picks

@@ -1,0 +1,269 @@
+@page "/admin/posthoc-outcomes"
+@page "/admin/posthoc-outcomes/{CaseId:guid}"
+@* §6.11.9 manual-entry admin tool. Operator selects a case (by id from the URL or
+   declaration / container search), fills in the §6.11.5-shaped form, submits.
+   The handler routes through the same IPostHocOutcomeWriter as the worker so
+   manual + API rows look identical downstream — distinguishable only by
+   payload.entry_method.
+
+   TODO(team): the §6.11.10 admin role is `inspection.outcome_admin`; until
+   that role lands in the v2 identity role list, gate via Inspection.Admin
+   the same way Thresholds.razor does. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.PostHocOutcomes
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+@inject PostHocOutcomeManualEntryService EntryService
+@inject Microsoft.AspNetCore.Components.NavigationManager Nav
+
+<PageTitle>Post-hoc outcomes — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Post-hoc outcomes (manual entry)</h1>
+        <p class="inspection-page-subtitle">
+            §6.11.9 — for authorities without an automated outcome API, or to
+            backfill prior cases. Form mirrors §6.11.5; submitted rows land in
+            <code>authority_documents</code> with <code>payload.entry_method = "manual"</code>.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (CaseId is null)
+{
+    @* Case picker / search *@
+    <section class="inspection-section">
+        <h2>Find a case</h2>
+        <p class="inspection-page-subtitle">
+            Paste a declaration number or container number to find a case to
+            attach the outcome to.
+        </p>
+
+        <EditForm Model="_search" OnValidSubmit="DoSearch" FormName="case-search">
+            <DataAnnotationsValidator />
+            <div class="inspection-form-row">
+                <label for="search-text">Declaration / container number</label>
+                <InputText id="search-text" @bind-Value="_search.Query" placeholder="C-2026-04-28-073491 or MSCU1234567" />
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-btn inspection-btn-primary">Search</button>
+            </div>
+        </EditForm>
+
+        @if (_searchResults is not null)
+        {
+            @if (_searchResults.Count == 0)
+            {
+                <p class="inspection-empty">No cases match. Check the declaration / container number, or open a fresh case from the Cases page first.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead>
+                        <tr>
+                            <th>Subject</th>
+                            <th>State</th>
+                            <th>Opened</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in _searchResults)
+                        {
+                            <tr>
+                                <td><code>@c.SubjectIdentifier</code></td>
+                                <td>@c.State</td>
+                                <td>@c.OpenedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td><a class="inspection-btn" href="@($"/admin/posthoc-outcomes/{c.Id}")">Enter outcome</a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    </section>
+}
+else
+{
+    @* Manual-entry form for the selected case *@
+    <section class="inspection-section">
+        <a href="/admin/posthoc-outcomes" class="inspection-btn">&larr; Back to search</a>
+        @if (_selectedCase is null)
+        {
+            <p>Loading case…</p>
+        }
+        else
+        {
+            <h2>Case @_selectedCase.SubjectIdentifier</h2>
+            <p class="inspection-page-subtitle">
+                Subject: <code>@_selectedCase.SubjectType</code>. State: <code>@_selectedCase.State</code>. Opened: @_selectedCase.OpenedAt.ToString("yyyy-MM-dd HH:mm").
+            </p>
+
+            <EditForm Model="_form" OnValidSubmit="DoSubmit" FormName="manual-entry">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="inspection-form-row">
+                    <label for="me-declaration">Declaration number</label>
+                    <InputText id="me-declaration" @bind-Value="_form.DeclarationNumber"
+                               placeholder="@_selectedCase.SubjectIdentifier" />
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-container">Container number</label>
+                    <InputText id="me-container" @bind-Value="_form.ContainerNumber"
+                               placeholder="MSCU1234567 (optional)" />
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-outcome">Outcome</label>
+                    <InputSelect id="me-outcome" @bind-Value="_form.Outcome">
+                        <option value="Cleared">Cleared</option>
+                        <option value="Seized">Seized</option>
+                        <option value="ReleasedWithDuty">Released with duty</option>
+                        <option value="ReExported">Re-exported</option>
+                        <option value="Pending">Pending</option>
+                    </InputSelect>
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-seized-count">Seized count</label>
+                    <InputNumber id="me-seized-count" @bind-Value="_form.SeizedCount" />
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-decided-at">Decided at (UTC)</label>
+                    <InputDate id="me-decided-at" Type="InputDateType.DateTimeLocal"
+                               @bind-Value="_decidedAtLocal" />
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-officer">Decided by officer id</label>
+                    <InputText id="me-officer" @bind-Value="_form.DecidedByOfficerId" />
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-ref">Decision reference</label>
+                    <InputText id="me-ref" @bind-Value="_form.DecisionReference"
+                               placeholder="GRA-SEIZURE-2026-0241" required />
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-supersedes">Supersedes prior decision reference</label>
+                    <InputText id="me-supersedes" @bind-Value="_form.SupersedesDecisionReference"
+                               placeholder="(if a correction)" />
+                </div>
+
+                <div class="inspection-form-row">
+                    <label for="me-notes">Operator notes</label>
+                    <InputTextArea id="me-notes" @bind-Value="_form.OperatorNotes" />
+                </div>
+
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-btn inspection-btn-primary"
+                            disabled="@_submitting">
+                        @if (_submitting) { @("Submitting…") } else { @("Submit outcome") }
+                    </button>
+                </div>
+            </EditForm>
+
+            @if (_lastResult is not null)
+            {
+                <div class="inspection-callout">
+                    <strong>Result:</strong> @_lastResult
+                </div>
+            }
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid? CaseId { get; set; }
+
+    [SupplyParameterFromForm(FormName = "case-search")] public CaseSearchModel _search { get; set; } = new();
+    [SupplyParameterFromForm(FormName = "manual-entry")] public ManualEntryForm _form { get; set; } = new();
+
+    private List<InspectionCase>? _searchResults;
+    private InspectionCase? _selectedCase;
+    private DateTime? _decidedAtLocal;
+    private bool _submitting;
+    private string? _lastResult;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CaseId is Guid id)
+        {
+            _selectedCase = await Db.Cases.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == id);
+            if (_selectedCase is not null && string.IsNullOrEmpty(_form.DeclarationNumber))
+            {
+                _form.DeclarationNumber = _selectedCase.SubjectIdentifier;
+            }
+        }
+    }
+
+    private async Task DoSearch()
+    {
+        var q = (_search.Query ?? string.Empty).Trim();
+        if (q.Length == 0)
+        {
+            _searchResults = new List<InspectionCase>();
+            return;
+        }
+        _searchResults = await Db.Cases.AsNoTracking()
+            .Where(c => c.SubjectIdentifier.Contains(q))
+            .OrderByDescending(c => c.OpenedAt)
+            .Take(25)
+            .ToListAsync();
+    }
+
+    private async Task DoSubmit()
+    {
+        if (_selectedCase is null) return;
+        if (string.IsNullOrWhiteSpace(_form.DecisionReference))
+        {
+            _lastResult = "Decision reference is required.";
+            return;
+        }
+        if (_decidedAtLocal is DateTime t)
+        {
+            _form.DecidedAt = new DateTimeOffset(t, TimeZoneInfo.Local.GetUtcOffset(t)).ToUniversalTime();
+        }
+        _submitting = true;
+        try
+        {
+            var outcome = await EntryService.RecordAsync(_selectedCase.Id, _form);
+            _lastResult = outcome switch
+            {
+                OutcomeWriteOutcome.Inserted => "Inserted — outcome attached to case.",
+                OutcomeWriteOutcome.Deduplicated => "Already on file — duplicate (idempotency key matched). No-op.",
+                OutcomeWriteOutcome.Superseded => "Superseded — prior decision was on file; supersession appended.",
+                OutcomeWriteOutcome.NoMatchingCase => "No matching case found for the declaration / container.",
+                _ => outcome.ToString()
+            };
+        }
+        catch (Exception ex)
+        {
+            _lastResult = "Error: " + ex.Message;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    public sealed class CaseSearchModel
+    {
+        public string? Query { get; set; }
+    }
+}
