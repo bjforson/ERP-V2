@@ -1,0 +1,118 @@
+@page "/banking/fx-rates/new"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.BankingFxrateManage)]
+@using Microsoft.EntityFrameworkCore
+@inject BankingDbContext Db
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance &middot; New FX rate</PageTitle>
+
+<NepPageHeader Title="Manual FX rate"
+               Lede="Off-grid scenarios — when BoG isn't reachable or a custom rate is needed for a one-off trade. Stored as Source = 'manual'." />
+
+<EditForm Model="_form" OnValidSubmit="SubmitAsync" FormName="newFxRate">
+    <NepCard>
+        <label>
+            From currency
+            <select @bind="_form.FromCurrency">
+                <option value="USD">USD &mdash; US Dollar</option>
+                <option value="EUR">EUR &mdash; Euro</option>
+                <option value="GBP">GBP &mdash; Pound Sterling</option>
+                <option value="NGN">NGN &mdash; Nigerian Naira</option>
+            </select>
+            <small class="muted">Ghana's main inbound trade currencies.</small>
+        </label>
+        <label>
+            To currency (functional)
+            <select @bind="_form.ToCurrency">
+                <option value="GHS">GHS &mdash; Ghana Cedi</option>
+            </select>
+            <small class="muted">Functional currency is GHS for v1.</small>
+        </label>
+        <label>
+            Rate
+            <input type="number" step="0.0001" min="0.0001" @bind="_form.Rate" required />
+            <small class="muted">e.g. 1 USD = 16.20 GHS &rarr; rate = 16.20.</small>
+        </label>
+        <label>
+            As-of date
+            <input type="date" @bind="_form.AsOfDate" required />
+        </label>
+        <button type="submit" class="primary" disabled="@_busy">@(_busy ? "Saving…" : "Save rate")</button>
+        <a href="/banking/fx-rates" class="secondary">Cancel</a>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="error">@_error</div>
+        }
+    </NepCard>
+</EditForm>
+
+@code {
+    private FormModel _form = new();
+    private bool _busy;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        _form.AsOfDate = DateTime.UtcNow.Date;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            if (_form.Rate <= 0m) { _error = "Rate must be positive."; return; }
+            if (string.Equals(_form.FromCurrency, _form.ToCurrency, StringComparison.OrdinalIgnoreCase))
+            {
+                _error = "From and To currencies must differ.";
+                return;
+            }
+
+            var asOf = DateOnly.FromDateTime(_form.AsOfDate);
+            var existing = await Db.FxRates.FirstOrDefaultAsync(
+                r => r.TenantId == User.TenantId
+                  && r.FromCurrency == _form.FromCurrency
+                  && r.ToCurrency == _form.ToCurrency
+                  && r.AsOfDate == asOf);
+            var now = DateTimeOffset.UtcNow;
+            if (existing is null)
+            {
+                Db.FxRates.Add(new FxRate
+                {
+                    FromCurrency = _form.FromCurrency,
+                    ToCurrency = _form.ToCurrency,
+                    Rate = _form.Rate,
+                    AsOfDate = asOf,
+                    Source = "manual",
+                    RecordedAt = now,
+                    RecordedByUserId = User.UserId,
+                    TenantId = User.TenantId,
+                });
+            }
+            else
+            {
+                existing.Rate = _form.Rate;
+                existing.Source = "manual";
+                existing.RecordedAt = now;
+                existing.RecordedByUserId = User.UserId;
+            }
+            await Db.SaveChangesAsync();
+            Nav.NavigateTo("/banking/fx-rates");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private sealed class FormModel
+    {
+        public string FromCurrency { get; set; } = "USD";
+        public string ToCurrency { get; set; } = "GHS";
+        public decimal Rate { get; set; }
+        public DateTime AsOfDate { get; set; }
+    }
+}

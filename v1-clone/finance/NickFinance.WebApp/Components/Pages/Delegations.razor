@@ -1,0 +1,94 @@
+@page "/approvals/delegations"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PettyDelegationManage)]
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.PettyCash.Approvals
+@inject PettyCashDbContext Db
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Delegations</PageTitle>
+
+<NepPageHeader Title="Approval delegations" Lede="Active and historical delegations involving you. The approval engine substitutes the delegate during the validity window." />
+
+<NepCard>
+    <a href="/approvals/delegations/new" class="primary">New delegation</a>
+    <ExportButton TItem="ApprovalDelegation" Items="_all" Filename="delegations" />
+</NepCard>
+
+<NepCard>
+    <h3>Outgoing (your approvals routed to others)</h3>
+    <table>
+        <thead><tr><th>Delegate</th><th>From</th><th>Until</th><th>Reason</th><th>Status</th></tr></thead>
+        <tbody>
+            @foreach (var d in _outgoing)
+            {
+                <tr>
+                    <td><code>@d.DelegateUserId.ToString("N")[..8]</code></td>
+                    <td>@d.ValidFromUtc.UtcDateTime.ToString("yyyy-MM-dd")</td>
+                    <td>@d.ValidUntilUtc.UtcDateTime.ToString("yyyy-MM-dd")</td>
+                    <td>@d.Reason</td>
+                    <td><NepPill Tone="@StatusTone(d)">@StatusLabel(d)</NepPill></td>
+                </tr>
+            }
+            @if (_outgoing.Count == 0)
+            {
+                <tr><td colspan="5"><NepEmpty Title="No outgoing delegations" Hint="Going on leave? Click 'New delegation' above." /></td></tr>
+            }
+        </tbody>
+    </table>
+</NepCard>
+
+<NepCard>
+    <h3>Incoming (others' approvals routed to you)</h3>
+    <table>
+        <thead><tr><th>From user</th><th>From</th><th>Until</th><th>Reason</th><th>Status</th></tr></thead>
+        <tbody>
+            @foreach (var d in _incoming)
+            {
+                <tr>
+                    <td><code>@d.UserId.ToString("N")[..8]</code></td>
+                    <td>@d.ValidFromUtc.UtcDateTime.ToString("yyyy-MM-dd")</td>
+                    <td>@d.ValidUntilUtc.UtcDateTime.ToString("yyyy-MM-dd")</td>
+                    <td>@d.Reason</td>
+                    <td><NepPill Tone="@StatusTone(d)">@StatusLabel(d)</NepPill></td>
+                </tr>
+            }
+            @if (_incoming.Count == 0)
+            {
+                <tr><td colspan="5"><NepEmpty Title="No incoming delegations" Hint="Nobody has routed their approvals to you." /></td></tr>
+            }
+        </tbody>
+    </table>
+</NepCard>
+
+@code {
+    private List<ApprovalDelegation> _outgoing = new();
+    private List<ApprovalDelegation> _incoming = new();
+    private List<ApprovalDelegation> _all = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var rows = await Db.ApprovalDelegations
+            .Where(d => d.TenantId == User.TenantId && (d.UserId == User.UserId || d.DelegateUserId == User.UserId))
+            .OrderByDescending(d => d.ValidFromUtc)
+            .ToListAsync();
+        _outgoing = rows.Where(d => d.UserId == User.UserId).ToList();
+        _incoming = rows.Where(d => d.DelegateUserId == User.UserId).ToList();
+        _all = rows;
+    }
+
+    private string StatusLabel(ApprovalDelegation d)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now < d.ValidFromUtc) return "Scheduled";
+        if (now > d.ValidUntilUtc) return "Expired";
+        return "Active";
+    }
+
+    private string StatusTone(ApprovalDelegation d) => StatusLabel(d) switch
+    {
+        "Active" => "ok",
+        "Scheduled" => "warn",
+        _ => "default"
+    };
+}

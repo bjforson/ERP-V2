@@ -1,0 +1,62 @@
+@page "/petty-cash"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@using Microsoft.EntityFrameworkCore
+@inject PettyCashDbContext Db
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Petty cash</PageTitle>
+
+<NepPageHeader Title="Petty cash"
+               Lede="@($"All vouchers for tenant {User.TenantId}. Click a voucher to view detail / approve / disburse.")">
+    <Actions>
+        <a href="/petty-cash/new" class="primary">New voucher</a>
+    </Actions>
+</NepPageHeader>
+
+<NepCard>
+    <NepTable TItem="Voucher" Items="_vouchers">
+        <Header>
+            <th>No.</th><th>Date</th><th>Requester</th><th>Category</th><th>Purpose</th>
+            <th class="right">Amount</th><th>Status</th><th></th>
+        </Header>
+        <Row Context="v">
+            <td><code>@v.VoucherNo</code></td>
+            <td>@v.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd")</td>
+            <td><code>@(v.RequesterUserId.ToString("N")[..8])</code></td>
+            <td>@v.Category</td>
+            <td>@v.Purpose</td>
+            <td class="right"><NepMoney Minor="@(v.AmountApprovedMinor ?? v.AmountRequestedMinor)" Currency="GHS" /></td>
+            <td><NepPill Tone="@PillTone(v.Status.ToString())">@v.Status</NepPill></td>
+            <td><a href="@($"/petty-cash/{v.VoucherId}")">view</a></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No vouchers yet"
+                      Hint="Petty-cash vouchers will appear here as custodians submit them."
+                      Icon="@Icons.Material.Filled.ReceiptLong">
+                <Action><a class="primary" href="/petty-cash/new">New voucher</a></Action>
+            </NepEmpty>
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<Voucher> _vouchers = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _vouchers = await Db.Vouchers
+            .Where(v => v.TenantId == User.TenantId)
+            .OrderByDescending(v => v.CreatedAt)
+            .Take(100)
+            .ToListAsync();
+    }
+
+    private static string PillTone(string status) => status switch
+    {
+        "Submitted" or "Issued" or "PartiallyPaid" => "warn",
+        "Approved" or "Disbursed" or "Paid"        => "ok",
+        "Rejected" or "Void"                       => "bad",
+        _                                          => "default"
+    };
+}

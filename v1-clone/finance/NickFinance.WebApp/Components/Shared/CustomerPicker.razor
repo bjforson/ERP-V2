@@ -1,0 +1,70 @@
+@*
+    Customer picker. Search by code OR name (case-insensitive). Active
+    customers only.
+*@
+
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.AR
+@inject ArDbContext Db
+@inject NickFinance.WebApp.Services.CurrentUser User
+
+<EntityPicker TItem="Customer"
+              Value="@Value"
+              ValueChanged="OnSelectedAsync"
+              Search="SearchAsync"
+              LabelOf="@(c => c.Name)"
+              Placeholder="@Placeholder"
+              Disabled="@Disabled"
+              CssClass="@CssClass">
+    <RowTemplate Context="c">
+        <strong>@c.Name</strong>
+        <span class="muted small">· @c.Code</span>
+        @if (c.IsVatRegistered)
+        {
+            <span class="muted small">· VAT</span>
+        }
+    </RowTemplate>
+</EntityPicker>
+
+@code {
+    [Parameter] public Customer? Value { get; set; }
+    [Parameter] public EventCallback<Customer?> ValueChanged { get; set; }
+
+    [Parameter] public Guid CustomerId { get; set; }
+    [Parameter] public EventCallback<Guid> CustomerIdChanged { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; } = "Search a customer…";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Value is null && CustomerId != Guid.Empty)
+        {
+            Value = await Db.Customers.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.TenantId == User.TenantId && c.CustomerId == CustomerId);
+        }
+    }
+
+    private async Task<IReadOnlyList<Customer>> SearchAsync(string query, CancellationToken ct)
+    {
+        var q = (query ?? string.Empty).Trim();
+        var rows = Db.Customers.AsNoTracking()
+            .Where(c => c.TenantId == User.TenantId && c.IsActive);
+        if (!string.IsNullOrEmpty(q))
+        {
+            var like = $"%{q}%";
+            rows = rows.Where(c =>
+                EF.Functions.ILike(c.Code, like)
+             || EF.Functions.ILike(c.Name, like));
+        }
+        return await rows.OrderBy(c => c.Name).Take(20).ToListAsync(ct);
+    }
+
+    private async Task OnSelectedAsync(Customer? customer)
+    {
+        Value = customer;
+        await ValueChanged.InvokeAsync(customer);
+        await CustomerIdChanged.InvokeAsync(customer?.CustomerId ?? Guid.Empty);
+    }
+}

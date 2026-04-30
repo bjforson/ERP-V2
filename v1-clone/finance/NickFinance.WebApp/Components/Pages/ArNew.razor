@@ -1,0 +1,113 @@
+@page "/ar/new"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ArInvoiceIssue)]
+@using Microsoft.EntityFrameworkCore
+@inject ArDbContext Db
+@inject IArService Svc
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · New invoice</PageTitle>
+
+<NepPageHeader Title="New AR invoice" />
+
+@if (_customers.Count == 0)
+{
+    <NepCard Variant="warning">
+        <p>No customers yet. Add one at <a href="/ar/customers">Customers</a>.</p>
+    </NepCard>
+}
+else
+{
+    <EditForm Model="_form" OnValidSubmit="SubmitAsync" FormName="newInvoice">
+        <NepCard>
+            <label>
+                Customer
+                <select @bind="_form.CustomerId">
+                    @foreach (var c in _customers)
+                    {
+                        <option value="@c.CustomerId">@c.Name (@c.Code)</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Invoice date
+                <input type="date" @bind="_form.InvoiceDate" />
+            </label>
+            <label>
+                Due date
+                <input type="date" @bind="_form.DueDate" />
+            </label>
+            <label>
+                Reference (P/O, declaration, etc.)
+                <input type="text" @bind="_form.Reference" maxlength="200" />
+            </label>
+            <label>
+                Description
+                <input type="text" @bind="_form.Description" required maxlength="500" />
+            </label>
+            <label>
+                Net amount (GHS)
+                <input type="number" step="0.01" min="0.01" @bind="_form.NetGhs" />
+            </label>
+            <label>
+                Revenue account
+                <input type="text" @bind="_form.RevenueAccount" maxlength="32" />
+            </label>
+            <button type="submit" class="primary" disabled="@_busy">@(_busy ? "Saving…" : "Save draft")</button>
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="error">@_error</div>
+            }
+        </NepCard>
+    </EditForm>
+}
+
+@code {
+    private List<Customer> _customers = new();
+    private FormModel _form = new();
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _customers = await Db.Customers
+            .Where(c => c.TenantId == User.TenantId && c.IsActive)
+            .OrderBy(c => c.Name).ToListAsync();
+        if (_customers.Count > 0) _form.CustomerId = _customers[0].CustomerId;
+        _form.InvoiceDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        _form.DueDate = _form.InvoiceDate.AddDays(30);
+        _form.RevenueAccount = "4010";
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var net = (long)Math.Round(_form.NetGhs * 100m, 0, MidpointRounding.ToEven);
+            if (net <= 0) { _error = "Net amount must be positive."; return; }
+            var inv = await Svc.DraftInvoiceAsync(new DraftInvoiceRequest(
+                CustomerId: _form.CustomerId,
+                InvoiceDate: _form.InvoiceDate,
+                DueDate: _form.DueDate,
+                Reference: _form.Reference,
+                Lines: new[] { new DraftInvoiceLine(_form.Description, net, _form.RevenueAccount) },
+                TenantId: User.TenantId));
+            Nav.NavigateTo($"/ar/{inv.ArInvoiceId}");
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private sealed class FormModel
+    {
+        public Guid CustomerId { get; set; }
+        public DateOnly InvoiceDate { get; set; }
+        public DateOnly DueDate { get; set; }
+        public string? Reference { get; set; }
+        public string Description { get; set; } = string.Empty;
+        public decimal NetGhs { get; set; }
+        public string RevenueAccount { get; set; } = "4010";
+    }
+}

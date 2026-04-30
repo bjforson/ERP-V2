@@ -1,0 +1,91 @@
+@*
+    Generic data table.
+
+      <NepTable TItem="Voucher" Items="_vouchers" SortColumn="@_sortCol"
+                SortDescending="@_sortDesc" OnSort="HandleSort">
+          <Header>
+              <NepTableSortHeader Column="VoucherNo">No.</NepTableSortHeader>
+              <th>Date</th>
+              <th class="right">Amount</th>
+          </Header>
+          <Row Context="v">
+              <td>@v.VoucherNo</td>
+              <td>@v.Date</td>
+              <td class="right"><Money Minor="@v.AmountMinor" /></td>
+          </Row>
+          <EmptyState>
+              <NepEmpty Title="No vouchers yet" Hint="Submit one to get started." />
+          </EmptyState>
+      </NepTable>
+
+    Pagination is intentionally OUT of scope here — the streamline agent will
+    add it. Sort is opt-in: pass OnSort + SortColumn / SortDescending to make
+    headers clickable. Without OnSort the table is read-only.
+*@
+
+@typeparam TItem
+
+<div class="nep-table-wrap @CssClass">
+    <table class="nep-table">
+        @if (Header is not null)
+        {
+            <thead>
+                <tr>
+                    <CascadingValue Value="this" IsFixed="true">
+                        @Header
+                    </CascadingValue>
+                </tr>
+            </thead>
+        }
+        <tbody>
+            @if (Items is null || !Items.Any())
+            {
+                <tr class="nep-table-empty-row">
+                    <td colspan="99">
+                        @if (EmptyState is not null)
+                        {
+                            @EmptyState
+                        }
+                        else
+                        {
+                            <NepEmpty Title="Nothing here yet" />
+                        }
+                    </td>
+                </tr>
+            }
+            else
+            {
+                foreach (var item in Items)
+                {
+                    <tr>@Row?.Invoke(item)</tr>
+                }
+            }
+        </tbody>
+        @if (Footer is not null)
+        {
+            <tfoot>@Footer</tfoot>
+        }
+    </table>
+</div>
+
+@code {
+    [Parameter] public IEnumerable<TItem>? Items { get; set; }
+    [Parameter] public RenderFragment? Header { get; set; }
+    [Parameter] public RenderFragment<TItem>? Row { get; set; }
+    [Parameter] public RenderFragment? EmptyState { get; set; }
+    [Parameter] public RenderFragment? Footer { get; set; }
+
+    [Parameter] public string? CssClass { get; set; }
+
+    /// <summary>Currently active sort column (matches the Column param of the header).</summary>
+    [Parameter] public string? SortColumn { get; set; }
+    /// <summary>True if SortColumn is sorted descending.</summary>
+    [Parameter] public bool SortDescending { get; set; }
+    /// <summary>Invoked when the user clicks a sortable header. Owner does the actual sort + setState.</summary>
+    [Parameter] public EventCallback<string> OnSort { get; set; }
+
+    internal async Task RaiseSort(string column)
+    {
+        if (OnSort.HasDelegate) await OnSort.InvokeAsync(column);
+    }
+}

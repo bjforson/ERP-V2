@@ -1,0 +1,179 @@
+@page "/petty-cash/{VoucherId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@using Microsoft.EntityFrameworkCore
+@inject PettyCashDbContext Db
+@inject IPettyCashService Svc
+@inject IPeriodService Periods
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Voucher</PageTitle>
+
+@if (_voucher is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <NepPageHeader>
+        <ChildContent>
+            <h1 class="nep-page-header-title">Voucher <code>@_voucher.VoucherNo</code></h1>
+            <p class="nep-page-header-lede">
+                <NepPill Tone="@PillTone(_voucher.Status.ToString())">@_voucher.Status</NepPill> ·
+                @_voucher.Category · <NepMoney Minor="@_voucher.AmountRequestedMinor" Currency="GHS" />
+                · requester <code>@_voucher.RequesterUserId.ToString("N")[..8]</code>
+            </p>
+        </ChildContent>
+    </NepPageHeader>
+
+    <NepCard>
+        <dl>
+            <dt>Purpose</dt><dd>@_voucher.Purpose</dd>
+            <dt>Payee</dt><dd>@(_voucher.PayeeName ?? "(self)")</dd>
+            <dt>Created</dt><dd>@_voucher.CreatedAt.ToString("u")</dd>
+            <dt>Submitted</dt><dd>@(_voucher.SubmittedAt?.ToString("u") ?? "—")</dd>
+            <dt>Decided</dt><dd>@(_voucher.DecidedAt?.ToString("u") ?? "—")</dd>
+            <dt>Disbursed</dt><dd>@(_voucher.DisbursedAt?.ToString("u") ?? "—")</dd>
+            <dt>Tax treatment</dt><dd>@_voucher.TaxTreatment</dd>
+            <dt>WHT treatment</dt><dd>@_voucher.WhtTreatment</dd>
+            @if (_voucher.LedgerEventId is not null)
+            {
+                <dt>Ledger event</dt><dd><code>@_voucher.LedgerEventId</code></dd>
+            }
+        </dl>
+    </NepCard>
+
+    <NepCard>
+        <h3>Lines</h3>
+        <table>
+            <thead><tr><th>#</th><th>Description</th><th>GL</th><th class="right">Amount</th></tr></thead>
+            <tbody>
+                @foreach (var l in _voucher.Lines.OrderBy(l => l.LineNo))
+                {
+                    <tr>
+                        <td>@l.LineNo</td>
+                        <td>@l.Description</td>
+                        <td><code>@l.GlAccount</code></td>
+                        <td class="right"><NepMoney Minor="@l.GrossAmountMinor" Currency="GHS" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </NepCard>
+
+    @if (_voucher.Status == VoucherStatus.Submitted)
+    {
+        <NepCard>
+            <h3>Decide</h3>
+            @if (_voucher.RequesterUserId == User.UserId)
+            {
+                <p class="muted">You submitted this voucher; somebody else needs to decide it (separation of duties).</p>
+            }
+            else
+            {
+                <ConfirmButton Class="primary" Disabled="@_busy"
+                               Confirm="@($"Approve voucher {_voucher.VoucherNo} for GHS {(_voucher.AmountRequestedMinor / 100m):N2}? This cannot be undone.")"
+                               OnConfirmed="ApproveAsync">Approve</ConfirmButton>
+                <button class="secondary" disabled="@_busy" @onclick="ToggleReject">Reject…</button>
+                @if (_showRejectInput)
+                {
+                    <div class="reject-row">
+                        <input type="text" @bind="_rejectReason" placeholder="Reason (required)" maxlength="1000" />
+                        <ConfirmButton Class="secondary" Disabled="@_busy"
+                                       Confirm="@($"Reject voucher {_voucher.VoucherNo}? Custodian will need to resubmit.")"
+                                       OnConfirmed="RejectAsync">Confirm reject</ConfirmButton>
+                    </div>
+                }
+            }
+        </NepCard>
+    }
+
+    @if (_voucher.Status == VoucherStatus.Approved)
+    {
+        <NepCard>
+            <h3>Disburse</h3>
+            @if (_voucher.DecidedByUserId == User.UserId)
+            {
+                <p class="muted">You approved this voucher; somebody else (a custodian) needs to disburse it.</p>
+            }
+            else
+            {
+                <ConfirmButton Class="primary" Disabled="@_busy"
+                               Confirm="@($"Disburse voucher {_voucher.VoucherNo} for GHS {(_voucher.AmountRequestedMinor / 100m):N2}? This posts the journal entry to the GL — irreversible without a reversing entry.")"
+                               OnConfirmed="DisburseAsync">Disburse (cash)</ConfirmButton>
+            }
+        </NepCard>
+    }
+
+    @if (_voucher.Status is VoucherStatus.Approved or VoucherStatus.Disbursed or VoucherStatus.Rejected)
+    {
+        <NepCard>
+            <a class="secondary" href="@($"/pdf/voucher/{VoucherId}")" target="_blank">Download PDF</a>
+        </NepCard>
+    }
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="error">@_error</div>
+    }
+}
+
+@code {
+    [Parameter] public Guid VoucherId { get; set; }
+    private Voucher? _voucher;
+    private bool _busy;
+    private bool _showRejectInput;
+    private string? _rejectReason;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _voucher = await Db.Vouchers.Include(v => v.Lines)
+            .FirstOrDefaultAsync(v => v.VoucherId == VoucherId && v.TenantId == User.TenantId);
+    }
+
+    private async Task ApproveAsync()
+    {
+        _busy = true; _error = null;
+        try { await Svc.ApproveVoucherAsync(VoucherId, User.UserId, null, null); await ReloadAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void ToggleReject() => _showRejectInput = !_showRejectInput;
+
+    private async Task RejectAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_rejectReason)) { _error = "Reason required."; return; }
+        _busy = true; _error = null;
+        try { await Svc.RejectVoucherAsync(VoucherId, User.UserId, _rejectReason!); await ReloadAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task DisburseAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var period = await Periods.GetByDateAsync(today, User.TenantId)
+                ?? await Periods.CreateAsync(today.Year, (byte)today.Month, User.TenantId);
+            await Svc.DisburseVoucherAsync(VoucherId, User.UserId, today, period.PeriodId);
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private static string PillTone(string status) => status switch
+    {
+        "Submitted" => "warn",
+        "Approved" or "Disbursed" => "ok",
+        "Rejected" or "Void" => "bad",
+        _ => "default"
+    };
+}

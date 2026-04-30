@@ -1,0 +1,38 @@
+@*
+    Page header. Replaces every <h1>...</h1><p class="lede">...</p> pattern.
+
+    Use Actions slot for the right-side button strip (typically "New X" /
+    "Export").
+*@
+
+<header class="nep-page-header">
+    @if (ChildContent is not null)
+    {
+        <div class="nep-page-header-text">@ChildContent</div>
+    }
+    else
+    {
+        <div class="nep-page-header-text">
+            <h1 class="nep-page-header-title">@Title</h1>
+            @if (!string.IsNullOrEmpty(Lede))
+            {
+                <p class="nep-page-header-lede">@Lede</p>
+            }
+        </div>
+    }
+    @if (Actions is not null)
+    {
+        <div class="nep-page-header-actions">@Actions</div>
+    }
+</header>
+
+@code {
+    /// <summary>Header title text. Required when ChildContent is not provided.</summary>
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Lede { get; set; }
+    [Parameter] public RenderFragment? Actions { get; set; }
+    /// <summary>Optional custom header markup. When provided it replaces the
+    /// default Title/Lede pair so callers can render &lt;h1&gt; with embedded
+    /// inline elements (status pills, codes, etc).</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

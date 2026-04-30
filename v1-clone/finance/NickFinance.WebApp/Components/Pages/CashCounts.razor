@@ -1,0 +1,75 @@
+@page "/petty-cash/cash-counts"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.PettyCash.CashCounts
+@inject PettyCashDbContext Db
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Cash counts</PageTitle>
+
+<NepPageHeader Title="Cash counts" Lede="Daily physical-vs-system reconciliations. Variance > 1% raises a fraud signal." />
+
+<NepCard>
+    <a href="/petty-cash/cash-count/new" class="primary">Record cash count</a>
+    <ExportButton TItem="CashCount" Items="_counts" Filename="cash-counts" />
+</NepCard>
+
+<NepCard>
+    <table>
+        <thead>
+            <tr>
+                <th>Counted at</th>
+                <th>Float</th>
+                <th class="right">Physical</th>
+                <th class="right">System</th>
+                <th class="right">Variance</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var c in _counts)
+            {
+                <tr>
+                    <td>@c.CountedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td><code>@c.FloatId.ToString("N")[..8]</code></td>
+                    <td class="right"><NepMoney Minor="c.PhysicalAmountMinor" Currency="@c.CurrencyCode" /></td>
+                    <td class="right"><NepMoney Minor="c.SystemAmountMinor" Currency="@c.CurrencyCode" /></td>
+                    <td class="right">
+                        @{
+                            var v = c.VarianceMinor;
+                            var pct = c.SystemAmountMinor == 0 ? 0m : Math.Abs(v) * 100m / Math.Abs(c.SystemAmountMinor);
+                            var tone = pct switch
+                            {
+                                <= 1m => "ok",
+                                <= 5m => "warn",
+                                _      => "bad"
+                            };
+                        }
+                        <NepPill Tone="@tone">
+                            @(v >= 0 ? "+" : "")<NepMoney Minor="v" Currency="@c.CurrencyCode" />
+                        </NepPill>
+                    </td>
+                    <td class="muted small">@c.VarianceReason</td>
+                </tr>
+            }
+            @if (_counts.Count == 0)
+            {
+                <tr><td colspan="6"><NepEmpty Title="No cash counts yet" Hint="Custodians record a daily count via the link above." /></td></tr>
+            }
+        </tbody>
+    </table>
+</NepCard>
+
+@code {
+    private List<CashCount> _counts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _counts = await Db.CashCounts
+            .Where(c => c.TenantId == User.TenantId)
+            .OrderByDescending(c => c.CountedAt)
+            .Take(100)
+            .ToListAsync();
+    }
+}

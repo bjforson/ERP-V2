@@ -1,0 +1,191 @@
+@*
+    Generic typeahead entity picker. Renders a single text input that
+    debounces on keystroke, calls the supplied <see cref="Search"/>
+    delegate, and shows up to 20 matches in a dropdown. Clicking a row
+    fires <see cref="ValueChanged"/> with the selected item.
+
+    Usage example (SitePicker wraps it):
+
+      <EntityPicker TItem="SiteEntry"
+                    Value="_form.SelectedSite"
+                    ValueChanged="@(s => _form.SelectedSite = s)"
+                    Search="@Sites.SearchAsync"
+                    LabelOf="@(s => s.Name)"
+                    Placeholder="Pick a site…" />
+
+    Search is `Func<string, CancellationToken, Task<IReadOnlyList<TItem>>>`.
+    LabelOf returns the row label for both the dropdown and the closed
+    state. The picker doesn't care what TItem is — works for users,
+    customers, vendors, accounts, and anything else.
+*@
+
+@typeparam TItem
+@implements IDisposable
+
+<div class="ep-wrap @CssClass">
+    <input class="ep-input" type="text"
+           placeholder="@Placeholder"
+           value="@_text"
+           disabled="@Disabled"
+           @oninput="OnInputAsync"
+           @onfocus="OnFocus"
+           @onblur="OnBlurAsync" />
+    @if (_open && !Disabled)
+    {
+        <div class="ep-dropdown">
+            @if (_loading)
+            {
+                <div class="ep-row ep-row-muted">Searching…</div>
+            }
+            else if (_results.Count == 0)
+            {
+                <div class="ep-row ep-row-muted">@(_text.Length == 0 ? "Type to search…" : "No matches.")</div>
+            }
+            else
+            {
+                @foreach (var item in _results)
+                {
+                    var captured = item;
+                    <div class="ep-row" @onmousedown="@(() => SelectAsync(captured))">
+                        @if (RowTemplate is not null)
+                        {
+                            @RowTemplate(captured)
+                        }
+                        else
+                        {
+                            <span>@(LabelOf?.Invoke(captured) ?? string.Empty)</span>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public TItem? Value { get; set; }
+    [Parameter] public EventCallback<TItem?> ValueChanged { get; set; }
+
+    /// <summary>Required: the search delegate.</summary>
+    [Parameter, EditorRequired]
+    public Func<string, CancellationToken, Task<IReadOnlyList<TItem>>>? Search { get; set; }
+
+    /// <summary>Required: the label projector. Used both inside the dropdown and after a selection.</summary>
+    [Parameter, EditorRequired] public Func<TItem, string>? LabelOf { get; set; }
+
+    /// <summary>Optional row template. Falls back to plain LabelOf when absent.</summary>
+    [Parameter] public RenderFragment<TItem>? RowTemplate { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; } = "Search…";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>Debounce in ms before each search call. 200ms by default.</summary>
+    [Parameter] public int DebounceMs { get; set; } = 200;
+
+    private string _text = string.Empty;
+    private bool _open;
+    private bool _loading;
+    private IReadOnlyList<TItem> _results = Array.Empty<TItem>();
+    private CancellationTokenSource? _cts;
+    private System.Threading.Timer? _timer;
+
+    protected override void OnParametersSet()
+    {
+        if (Value is not null && LabelOf is not null && string.IsNullOrEmpty(_text))
+        {
+            _text = LabelOf(Value);
+        }
+    }
+
+    private async Task OnInputAsync(ChangeEventArgs e)
+    {
+        _text = e.Value?.ToString() ?? string.Empty;
+        _open = true;
+
+        // Clear the bound value when the operator edits the box back to
+        // an empty / non-matching string. Lets a parent .razor page tell
+        // "no selection" apart from "selection then reverted".
+        if (Value is not null)
+        {
+            await ValueChanged.InvokeAsync(default);
+        }
+
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        // Debounce — stash the text and fire the search after DebounceMs.
+        _timer?.Dispose();
+        var captured = _text;
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                if (ct.IsCancellationRequested) return;
+                if (Search is null) return;
+                _loading = true;
+                await InvokeAsync(StateHasChanged);
+                var results = await Search(captured, ct);
+                if (ct.IsCancellationRequested) return;
+                _results = results.Take(20).ToList();
+            }
+            catch (OperationCanceledException) { /* search superseded */ }
+            catch
+            {
+                _results = Array.Empty<TItem>();
+            }
+            finally
+            {
+                _loading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, DebounceMs, Timeout.Infinite);
+    }
+
+    private async Task OnFocus()
+    {
+        _open = true;
+        // Trigger an initial empty-string search so the dropdown is
+        // populated with the top 20 even before the user types — useful
+        // for short lists like "all 6 sites".
+        if (Search is not null && _results.Count == 0)
+        {
+            try
+            {
+                _loading = true;
+                _cts?.Cancel();
+                _cts = new CancellationTokenSource();
+                var results = await Search(string.Empty, _cts.Token);
+                _results = results.Take(20).ToList();
+            }
+            catch { /* ignore */ }
+            finally
+            {
+                _loading = false;
+            }
+        }
+    }
+
+    private async Task OnBlurAsync()
+    {
+        // Defer the close so a click on a dropdown row registers first.
+        await Task.Delay(120);
+        _open = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectAsync(TItem item)
+    {
+        if (LabelOf is not null) _text = LabelOf(item);
+        _open = false;
+        await ValueChanged.InvokeAsync(item);
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _timer?.Dispose();
+    }
+}

@@ -1,0 +1,103 @@
+@*
+    Top navigation bar. Used by every module's MainLayout. Renders the logo
+    gradient box, brand mark, primary nav-items slot, the "switch app" pill,
+    and an optional user-menu slot on the right.
+
+    Each module owns its own NavItems markup (NavLink list); only the chrome
+    is shared. The app-switcher uses absolute hostnames so a Finance user
+    clicking "HR" lands at hr.nickscan.net regardless of whatever the dev-time
+    base URL happens to be.
+*@
+
+<header class="nep-nav">
+    <div class="nep-nav-inner">
+        <a class="nep-nav-brand" href="/" title="@Brand · @BrandTagline">
+            <div class="nep-nav-logo">@Glyph</div>
+            <div class="nep-nav-brand-text">
+                <span class="nep-nav-brand-name">@Brand</span>
+                <span class="nep-nav-brand-tag">@(BrandTagline ?? DefaultTag(Module))</span>
+            </div>
+        </a>
+
+        <nav class="nep-nav-links">
+            @NavItems
+        </nav>
+
+        <div class="nep-nav-right">
+            <div class="nep-nav-switcher" @onclick="ToggleSwitcher" @onclick:stopPropagation="true">
+                <button class="nep-nav-switcher-btn" type="button" title="Switch app">
+                    <MudIcon Icon="@Icons.Material.Filled.Apps" Style="font-size:18px;" />
+                    <MudIcon Icon="@Icons.Material.Filled.ArrowDropDown" Style="font-size:18px;" />
+                </button>
+                @if (_switcherOpen)
+                {
+                    <div class="nep-nav-switcher-menu">
+                        <a class="nep-nav-switcher-item" href="https://erp.nickscan.net">
+                            <MudIcon Icon="@Icons.Material.Filled.Hub" Style="font-size:18px;color:var(--nep-primary);" />
+                            <span>Portal</span>
+                        </a>
+                        <a class="nep-nav-switcher-item" href="https://hr.nickscan.net">
+                            <MudIcon Icon="@Icons.Material.Filled.Groups" Style="font-size:18px;color:var(--nep-module-nickhr);" />
+                            <span>NickHR</span>
+                        </a>
+                        <a class="nep-nav-switcher-item" href="https://finance.nickscan.net">
+                            <MudIcon Icon="@Icons.Material.Filled.AccountBalance" Style="font-size:18px;color:var(--nep-module-finance);" />
+                            <span>Finance</span>
+                        </a>
+                        <a class="nep-nav-switcher-item" href="https://scan.nickscan.net">
+                            <MudIcon Icon="@Icons.Material.Filled.QrCodeScanner" Style="font-size:18px;color:var(--nep-info);" />
+                            <span>Scan</span>
+                        </a>
+                    </div>
+                }
+            </div>
+
+            @if (UserMenu is not null)
+            {
+                <div class="nep-nav-user">@UserMenu</div>
+            }
+        </div>
+    </div>
+</header>
+
+@code {
+    [Parameter] public string Brand { get; set; } = "NickERP";
+
+    /// <summary>One of BrandConstants.Modules (or any module key). Drives the logo glyph + tag.</summary>
+    [Parameter] public string Module { get; set; } = "";
+
+    /// <summary>Override the small label below the brand name. Defaults to "<Module> · NickERP".</summary>
+    [Parameter] public string? BrandTagline { get; set; }
+
+    /// <summary>NavLink list rendered in the centre of the nav.</summary>
+    [Parameter] public RenderFragment? NavItems { get; set; }
+
+    /// <summary>Right-side user pill. Typically the user's name + email + an avatar.</summary>
+    [Parameter] public RenderFragment? UserMenu { get; set; }
+
+    private bool _switcherOpen;
+
+    private void ToggleSwitcher() => _switcherOpen = !_switcherOpen;
+
+    private static string DefaultTag(string module) => module switch
+    {
+        "" or null => "NickERP",
+        _          => $"{module} · NickERP"
+    };
+
+    private RenderFragment Glyph => @<MudIcon Icon="@GlyphIcon(Module)" Style="font-size:20px;color:white;" />;
+
+    private static string GlyphIcon(string module) => module?.ToLowerInvariant() switch
+    {
+        "finance"    => Icons.Material.Filled.AccountBalance,
+        "nickhr"     => Icons.Material.Filled.Groups,
+        "hr"         => Icons.Material.Filled.Groups,
+        "nscis"      => Icons.Material.Filled.QrCodeScanner,
+        "scan"       => Icons.Material.Filled.QrCodeScanner,
+        "procurement"=> Icons.Material.Filled.ShoppingCart,
+        "dms"        => Icons.Material.Filled.Description,
+        "documents"  => Icons.Material.Filled.Description,
+        "crm"        => Icons.Material.Filled.ContactPhone,
+        _            => Icons.Material.Filled.Hub
+    };
+}

@@ -1,0 +1,36 @@
+@*
+    Card surface. Replaces ad-hoc <section class="card"> and friends.
+
+    Variants:
+      default   — neutral white surface with subtle border + shadow
+      warning   — amber tint, used for "sandbox mode" / non-fatal notices
+      danger    — red tint, used for hard errors / destructive confirms
+      emphasis  — indigo tint, used for primary callouts / featured items
+*@
+
+<section class="@ResolveClass()">
+    @ChildContent
+</section>
+
+@code {
+    /// <summary>Visual variant: default | warning | danger | emphasis.</summary>
+    [Parameter] public string Variant { get; set; } = "default";
+
+    /// <summary>Optional extra class names appended to the wrapper.</summary>
+    [Parameter] public string? CssClass { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private string ResolveClass() => string.Join(" ", new[]
+    {
+        "nep-card",
+        Variant switch
+        {
+            "warning"  => "nep-card-warning",
+            "danger"   => "nep-card-danger",
+            "emphasis" => "nep-card-emphasis",
+            _          => string.Empty
+        },
+        CssClass ?? string.Empty
+    }.Where(s => !string.IsNullOrEmpty(s)));
+}

@@ -1,0 +1,133 @@
+@page "/banking/fx-rates"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@using Microsoft.EntityFrameworkCore
+@inject BankingDbContext Db
+@inject IRateImporter? Importer
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance &middot; FX rates</PageTitle>
+
+<NepPageHeader Title="FX rates"
+               Lede="Daily mid-rates against GHS. Used by reports + (Wave 3) period-close revaluation. The latest row per (currency, date) wins.">
+    <Actions>
+        <a href="/banking/fx-rates/new" class="primary">Add manual rate</a>
+        <button class="secondary" disabled="@_refreshBusy" @onclick="RefreshFromBogAsync">@(_refreshBusy ? "Fetching…" : "Refresh from BoG")</button>
+    </Actions>
+</NepPageHeader>
+
+@if (!string.IsNullOrEmpty(_status))
+{
+    <NepCard>
+        <p class="muted">@_status</p>
+    </NepCard>
+}
+
+<NepCard>
+    <div class="filter-row">
+        <label>
+            Currency filter
+            <select @bind="_filterCurrency">
+                <option value="">(any)</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="NGN">NGN</option>
+            </select>
+        </label>
+        <label>
+            Page size
+            <select @bind="_pageSize">
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+        </label>
+        <button class="secondary" @onclick="ReloadAsync">Apply</button>
+    </div>
+</NepCard>
+
+<NepCard>
+    <NepTable TItem="FxRate" Items="_rates">
+        <Header>
+            <th>As-of date</th>
+            <th>From</th>
+            <th>To</th>
+            <th class="right">Rate</th>
+            <th>Source</th>
+            <th>Recorded</th>
+        </Header>
+        <Row Context="r">
+            <td>@r.AsOfDate.ToString("yyyy-MM-dd")</td>
+            <td><code>@r.FromCurrency</code></td>
+            <td><code>@r.ToCurrency</code></td>
+            <td class="right">@r.Rate.ToString("N4")</td>
+            <td><NepPill Tone="@SourceTone(r.Source)">@r.Source</NepPill></td>
+            <td>@r.RecordedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm") UTC</td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No FX rates yet"
+                      Hint="Seed-2026-04 placeholders will appear after the next bootstrap run, or add a manual rate now."
+                      Icon="@Icons.Material.Filled.CurrencyExchange">
+                <Action><a class="primary" href="/banking/fx-rates/new">Add manual rate</a></Action>
+            </NepEmpty>
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<FxRate> _rates = new();
+    private string _filterCurrency = "";
+    private int _pageSize = 50;
+    private string? _status;
+    private bool _refreshBusy;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        var q = Db.FxRates.Where(r => r.TenantId == User.TenantId);
+        if (!string.IsNullOrEmpty(_filterCurrency))
+        {
+            q = q.Where(r => r.FromCurrency == _filterCurrency || r.ToCurrency == _filterCurrency);
+        }
+        _rates = await q.OrderByDescending(r => r.AsOfDate)
+                        .ThenBy(r => r.FromCurrency)
+                        .Take(_pageSize)
+                        .ToListAsync();
+    }
+
+    private async Task RefreshFromBogAsync()
+    {
+        if (Importer is null)
+        {
+            _status = "Rate importer not registered — BoG provider is not configured for this host.";
+            return;
+        }
+        _refreshBusy = true; _status = null;
+        try
+        {
+            // BoG publishes yesterday's rates first; we ask for that day.
+            var yesterday = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+            var n = await Importer.ImportForAsync(yesterday, User.TenantId);
+            _status = n > 0
+                ? $"Inserted/updated {n} rate(s) for {yesterday:yyyy-MM-dd}."
+                : $"BoG returned no rates for {yesterday:yyyy-MM-dd}. Use 'Add manual rate' to enter one by hand.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _status = $"Refresh failed: {ex.Message}";
+        }
+        finally { _refreshBusy = false; }
+    }
+
+    private static string SourceTone(string source) => source switch
+    {
+        "manual" => "warn",
+        "BoG-API" => "ok",
+        "BoG-csv" => "ok",
+        "interbank-mid" => "ok",
+        _ => "default"
+    };
+}

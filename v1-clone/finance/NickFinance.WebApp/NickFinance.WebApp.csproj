@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickFinance.WebApp</RootNamespace>
+    <AssemblyName>NickFinance.WebApp</AssemblyName>
+    <Description>NICKSCAN ERP / NickFinance — Blazor Server UI. Petty Cash voucher submission + approval + disbursement, AR invoices and receipts, financial reports (TB / BS / P&amp;L / GL detail). Talks to the same nickhr Postgres database via the kernel + per-module DbContexts.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NickFinance.WebApp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
+    <!--
+      W4 (2026-04-29) — cookie-login feature uses ASP.NET Identity's
+      PasswordHasher<T> (in the shared framework via Microsoft.NET.Sdk.Web)
+      and AspNetCore.DataProtection (also shared-framework). No explicit
+      PackageReference is required — they ship with the Web SDK.
+    -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
+    <PackageReference Include="MailKit" Version="4.16.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickFinance.Ledger\NickFinance.Ledger.csproj" />
+    <ProjectReference Include="..\NickFinance.PettyCash\NickFinance.PettyCash.csproj" />
+    <ProjectReference Include="..\NickFinance.AR\NickFinance.AR.csproj" />
+    <ProjectReference Include="..\NickFinance.AP\NickFinance.AP.csproj" />
+    <ProjectReference Include="..\NickFinance.Banking\NickFinance.Banking.csproj" />
+    <ProjectReference Include="..\NickFinance.Budgeting\NickFinance.Budgeting.csproj" />
+    <ProjectReference Include="..\NickFinance.FixedAssets\NickFinance.FixedAssets.csproj" />
+    <ProjectReference Include="..\NickFinance.GlSync\NickFinance.GlSync.csproj" />
+    <ProjectReference Include="..\NickFinance.Itaps\NickFinance.Itaps.csproj" />
+    <ProjectReference Include="..\NickFinance.Coa\NickFinance.Coa.csproj" />
+    <ProjectReference Include="..\NickFinance.Reporting\NickFinance.Reporting.csproj" />
+    <ProjectReference Include="..\NickFinance.TaxEngine\NickFinance.TaxEngine.csproj" />
+    <ProjectReference Include="..\NickFinance.Identity\NickFinance.Identity.csproj" />
+    <ProjectReference Include="..\NickFinance.Pdf\NickFinance.Pdf.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Observability\NickERP.Platform.Observability.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Web.Shared\NickERP.Platform.Web.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

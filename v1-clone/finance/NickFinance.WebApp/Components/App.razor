@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+
+    <!-- Inter via Google Fonts. CSP allows fonts.googleapis.com / fonts.gstatic.com -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Canonical brand tokens (--nep-*). Must load before app.css so module
+         CSS overrides build on top of consistent variables. -->
+    <link rel="stylesheet" href="_content/NickERP.Platform.Web.Shared/theme-tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="NickFinance.WebApp.styles.css" />
+    <HeadOutlet />
+    <title>NickFinance</title>
+</head>
+<body>
+    <Routes />
+    <script src="_framework/blazor.web.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

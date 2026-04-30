@@ -1,0 +1,141 @@
+@page "/ar/statement"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.WebApp.Services
+@inject ArDbContext Db
+@inject CurrentUser User
+@inject NavigationManager Nav
+@inject IEmailService Email
+@inject ICustomerStatementService StatementSvc
+@inject NickFinance.Pdf.ICustomerStatementPdfGenerator StatementPdf
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Customer statement</PageTitle>
+
+<NepPageHeader Title="Customer statement"
+               Lede="Generate a per-customer ledger PDF for any date range. Useful for month-end reconciliation and dunning packages." />
+
+<NepCard>
+    <h3>Generate</h3>
+    <EditForm Model="_form" OnValidSubmit="GenerateAsync" FormName="customerStatement">
+        <label>
+            Customer
+            <select @bind="_form.CustomerId">
+                <option value="">— select customer —</option>
+                @foreach (var c in _customers)
+                {
+                    <option value="@c.CustomerId">@c.Code · @c.Name</option>
+                }
+            </select>
+        </label>
+        <label>
+            From
+            <input type="date" @bind="_form.From" />
+        </label>
+        <label>
+            To
+            <input type="date" @bind="_form.To" />
+        </label>
+        <button type="submit" class="primary" disabled="@(_emailBusy || _form.CustomerId == Guid.Empty)">
+            Open PDF
+        </button>
+        <button type="button" class="secondary" disabled="@(_emailBusy || _form.CustomerId == Guid.Empty)" @onclick="EmailAsync">
+            @(_emailBusy ? "Sending…" : "Email statement")
+        </button>
+        @if (!string.IsNullOrEmpty(_message)) { <div class="info">@_message</div> }
+        @if (!string.IsNullOrEmpty(_error)) { <div class="error">@_error</div> }
+    </EditForm>
+</NepCard>
+
+@code {
+    private List<Customer> _customers = new();
+    private FormModel _form = new();
+    private bool _emailBusy;
+    private string? _message;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _customers = await Db.Customers
+            .Where(c => c.TenantId == User.TenantId && c.IsActive)
+            .OrderBy(c => c.Code).ToListAsync();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        _form.From = today.AddDays(-60);
+        _form.To = today;
+    }
+
+    private void GenerateAsync()
+    {
+        _message = null; _error = null;
+        if (_form.CustomerId == Guid.Empty)
+        {
+            _error = "Pick a customer first.";
+            return;
+        }
+        var url = $"/pdf/statement/{_form.CustomerId:D}?from={_form.From:yyyy-MM-dd}&to={_form.To:yyyy-MM-dd}";
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+
+    private async Task EmailAsync()
+    {
+        _message = null; _error = null;
+        if (_form.CustomerId == Guid.Empty) { _error = "Pick a customer first."; return; }
+        var customer = _customers.FirstOrDefault(c => c.CustomerId == _form.CustomerId);
+        if (customer is null) { _error = "Customer not found."; return; }
+        if (string.IsNullOrWhiteSpace(customer.Email))
+        {
+            _error = $"No email address on file for {customer.Name}. Add one on the customer record first.";
+            return;
+        }
+
+        _emailBusy = true;
+        try
+        {
+            // Build the statement once and use the bytes for the email
+            // attachment. Same call the GET endpoint makes.
+            var stmt = await StatementSvc.BuildAsync(_form.CustomerId, _form.From, _form.To, User.TenantId);
+            var ageing = await StatementSvc.ComputeAgeingAsync(_form.CustomerId, _form.To, User.TenantId);
+            var model = NickFinance.WebApp.Endpoints.PdfEndpoints.BuildStatementModel(stmt, ageing);
+            var bytes = StatementPdf.Generate(model);
+
+            var subject = $"Statement of account — {_form.From:yyyy-MM-dd} to {_form.To:yyyy-MM-dd}";
+            var body = $@"<p>Dear {System.Web.HttpUtility.HtmlEncode(customer.Name)},</p>
+<p>Please find attached your statement of account for the period
+{_form.From:yyyy-MM-dd} to {_form.To:yyyy-MM-dd}.</p>
+<p>Closing balance: <strong>{(stmt.ClosingBalanceMinor / 100m).ToString("0.00")} {stmt.CurrencyCode}</strong>.</p>
+<p>Regards,<br/>{NickFinance.Pdf.PdfBranding.CompanyName}</p>";
+
+            var ok = await Email.SendAsync(new EmailMessage(
+                To: customer.Email,
+                Subject: subject,
+                BodyHtml: body,
+                BodyText: $"Statement attached. Closing balance {stmt.ClosingBalanceMinor / 100m:0.00} {stmt.CurrencyCode}.",
+                Attachments: new[]
+                {
+                    new EmailAttachment(
+                        Filename: $"statement-{customer.Code}-{_form.From:yyyyMMdd}-{_form.To:yyyyMMdd}.pdf",
+                        ContentType: "application/pdf",
+                        Content: bytes)
+                }));
+
+            _message = ok
+                ? $"Statement emailed to {customer.Email}."
+                : "SMTP not configured (env vars NICKFINANCE_SMTP_*); no message sent. Check the service logs.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _emailBusy = false;
+        }
+    }
+
+    private sealed class FormModel
+    {
+        public Guid CustomerId { get; set; }
+        public DateOnly From { get; set; }
+        public DateOnly To { get; set; }
+    }
+}

@@ -1,0 +1,78 @@
+@*
+    Streams the supplied list to the browser as a CSV download. We ship
+    CSV (not XLSX) deliberately — every spreadsheet on earth opens it,
+    no extra dependency, no licensing footnote. If a power user wants
+    "real" Excel formatting later, swap to ClosedXML in this one file.
+
+    Usage:
+        <ExportButton TItem="MyRow" Items="_rows" Filename="vouchers" />
+
+    Customise columns by passing a `Columns` parameter — a list of
+    (header, accessor) pairs. If omitted, every public string-convertible
+    property of TItem is exported in declaration order.
+*@
+@typeparam TItem
+@inject IJSRuntime JS
+
+<button type="button" class="secondary" disabled="@(Items is null || !Items.Any())" @onclick="DownloadAsync">
+    Export CSV
+</button>
+
+@code {
+    [Parameter, EditorRequired] public IEnumerable<TItem>? Items { get; set; }
+    [Parameter] public string Filename { get; set; } = "export";
+    /// <summary>Optional explicit column list. If null, reflection picks public read-only properties.</summary>
+    [Parameter] public IReadOnlyList<(string Header, Func<TItem, object?> Accessor)>? Columns { get; set; }
+
+    private async Task DownloadAsync()
+    {
+        if (Items is null) return;
+        var rows = Items.ToList();
+        if (rows.Count == 0) return;
+
+        var cols = Columns;
+        if (cols is null)
+        {
+            // Reflect the public instance properties of TItem.
+            var props = typeof(TItem).GetProperties()
+                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
+                .ToList();
+            cols = props.Select<System.Reflection.PropertyInfo, (string, Func<TItem, object?>)>(
+                p => (p.Name, (TItem r) => p.GetValue(r))).ToList();
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(string.Join(',', cols.Select(c => Csv(c.Header))));
+        foreach (var r in rows)
+        {
+            sb.AppendLine(string.Join(',', cols.Select(c => Csv(FormatCell(c.Accessor(r))))));
+        }
+
+        // Trigger the download via a tiny inline JS interop. We don't
+        // serialize the bytes through SignalR because that's slow for big
+        // exports; we send the string and let the browser blob it.
+        var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(sb.ToString());
+        await JS.InvokeVoidAsync("eval",
+            $"(()=>{{const a=document.createElement('a');a.href={System.Text.Json.JsonSerializer.Serialize(dataUrl)};a.download={System.Text.Json.JsonSerializer.Serialize(Filename + ".csv")};a.click();}})()");
+    }
+
+    private static string FormatCell(object? v) => v switch
+    {
+        null => string.Empty,
+        DateTime dt => dt.ToString("u"),
+        DateTimeOffset dto => dto.ToString("u"),
+        DateOnly d => d.ToString("yyyy-MM-dd"),
+        decimal m => m.ToString("F2"),
+        _ => v.ToString() ?? string.Empty
+    };
+
+    private static string Csv(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        if (s.Contains(',') || s.Contains('"') || s.Contains('\n'))
+        {
+            return "\"" + s.Replace("\"", "\"\"") + "\"";
+        }
+        return s;
+    }
+}

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickFinance.Reporting</RootNamespace>
+    <AssemblyName>NickFinance.Reporting</AssemblyName>
+    <Description>NICKSCAN ERP / NickFinance — financial reporting. Trial balance, balance sheet, P&amp;L, GL detail. Pure read-side queries against the Ledger + CoA — no schema of its own.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickFinance.Ledger\NickFinance.Ledger.csproj" />
+    <ProjectReference Include="..\NickFinance.Coa\NickFinance.Coa.csproj" />
+  </ItemGroup>
+
+</Project>

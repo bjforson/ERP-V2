@@ -1,0 +1,125 @@
+@page "/petty-cash/floats/new"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PettyFloatCreate)]
+@using Microsoft.EntityFrameworkCore
+@inject IPettyCashService Svc
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · New float</PageTitle>
+
+<NepPageHeader Title="Create petty-cash float"
+               Lede="Provision the imprest float a custodian draws against. One active float per (site, currency, tenant)." />
+
+<EditForm Model="_form" OnValidSubmit="SubmitAsync" FormName="newFloat">
+    <NepCard>
+        <label>
+            Site id (GUID)
+            <input type="text" @bind="_form.SiteId" required />
+            <small class="muted">For now use any GUID per physical site. Once the NickHR site registry is wired, this field becomes a dropdown.</small>
+        </label>
+        <label>
+            Custodian user id (GUID)
+            <input type="text" @bind="_form.CustodianUserId" required />
+            <small class="muted">The person physically holding the cash. Will become an Identity user picker when Track C.2 lands.</small>
+        </label>
+        <label>
+            Initial float amount (GHS)
+            <input type="number" step="0.01" min="0" @bind="_form.AmountGhs" />
+            <small class="muted">Top-ups will replenish back to this number.</small>
+        </label>
+        <label>
+            Currency
+            <select @bind="_form.CurrencyCode">
+                <option value="GHS">GHS</option>
+                <option value="USD">USD</option>
+            </select>
+        </label>
+        <label>
+            Replenish-at threshold (%)
+            <input type="number" min="0" max="100" @bind="_form.ReplenishThresholdPct" />
+        </label>
+        <button type="submit" class="primary" disabled="@_busy">@(_busy ? "Creating…" : "Create float")</button>
+        <a href="/petty-cash/floats" class="secondary">Cancel</a>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="error">@_error</div>
+        }
+    </NepCard>
+</EditForm>
+
+<NepCard>
+    <h3>Quick fill</h3>
+    <p class="muted">No GUIDs handy? These buttons stamp synthetic ones — fine for the first run, replace once Identity is wired.</p>
+    <button class="secondary" @onclick="@(() => Stamp("Tema"))">Tema HQ</button>
+    <button class="secondary" @onclick="@(() => Stamp("Kotoka"))">Kotoka</button>
+    <button class="secondary" @onclick="@(() => Stamp("Takoradi"))">Takoradi</button>
+    <button class="secondary" @onclick="@(() => Stamp("Aflao"))">Aflao</button>
+    <button class="secondary" @onclick="@(() => Stamp("Paga"))">Paga</button>
+    <button class="secondary" @onclick="@(() => Stamp("Elubo"))">Elubo</button>
+</NepCard>
+
+@code {
+    private FormModel _form = new();
+    private bool _busy;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        _form.SiteId = Guid.NewGuid().ToString();
+        _form.CustodianUserId = User.UserId.ToString();
+        _form.AmountGhs = 5_000m;
+        _form.CurrencyCode = "GHS";
+        _form.ReplenishThresholdPct = 25;
+    }
+
+    private void Stamp(string siteName)
+    {
+        _form.SiteId = StableSiteGuid(siteName).ToString();
+    }
+
+    private static Guid StableSiteGuid(string name)
+    {
+        // Deterministic per-site GUID derived from the site name so that
+        // every row in the system pointing at "Tema" lines up — until the
+        // real NickHR sites table is plumbed in.
+        var bytes = System.Text.Encoding.UTF8.GetBytes("nickerp-site:" + name.ToLowerInvariant());
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        var guidBytes = new byte[16];
+        Array.Copy(hash, guidBytes, 16);
+        // Stamp v4 style nibbles for prettiness.
+        guidBytes[6] = (byte)((guidBytes[6] & 0x0F) | 0x40);
+        guidBytes[8] = (byte)((guidBytes[8] & 0x3F) | 0x80);
+        return new Guid(guidBytes);
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            if (!Guid.TryParse(_form.SiteId, out var site)) { _error = "Site id is not a valid GUID."; return; }
+            if (!Guid.TryParse(_form.CustodianUserId, out var custodian)) { _error = "Custodian id is not a valid GUID."; return; }
+            var minor = (long)Math.Round(_form.AmountGhs * 100m, 0, MidpointRounding.ToEven);
+            if (minor < 0) { _error = "Amount cannot be negative."; return; }
+            await Svc.CreateFloatAsync(
+                siteId: site,
+                custodianUserId: custodian,
+                initialFloat: new Money(minor, _form.CurrencyCode),
+                actorUserId: User.UserId,
+                tenantId: User.TenantId);
+            Nav.NavigateTo("/petty-cash/floats");
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private sealed class FormModel
+    {
+        public string SiteId { get; set; } = string.Empty;
+        public string CustodianUserId { get; set; } = string.Empty;
+        public decimal AmountGhs { get; set; }
+        public string CurrencyCode { get; set; } = "GHS";
+        public byte ReplenishThresholdPct { get; set; } = 25;
+    }
+}

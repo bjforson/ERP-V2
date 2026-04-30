@@ -1,0 +1,78 @@
+@page "/approvals/delegations/new"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PettyDelegationManage)]
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.PettyCash.Approvals
+@inject PettyCashDbContext Db
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · New delegation</PageTitle>
+
+<NepPageHeader Title="Delegate approvals" Lede="When you're going to be away, route any voucher that would normally need your approval to someone else for the duration." />
+
+<NepCard>
+    <label>
+        Delegate to
+        <UserPicker UserId="@(_delegateUserId ?? Guid.Empty)" UserIdChanged="@(v => _delegateUserId = v == Guid.Empty ? null : v)" RequireRole="Approver" />
+        <small class="muted">Pick someone who already has Approver / SiteManager / FinanceLead role.</small>
+    </label>
+    <label>
+        From
+        <input type="date" @bind="_from" />
+    </label>
+    <label>
+        Until
+        <input type="date" @bind="_until" />
+    </label>
+    <label>
+        Reason
+        <input type="text" @bind="_reason" maxlength="500" placeholder="annual leave / sick / training" />
+    </label>
+
+    <ConfirmButton Class="primary" Disabled="@_busy"
+                   Confirm="@($"Delegate your approvals to the chosen user from {_from:yyyy-MM-dd} to {_until:yyyy-MM-dd}?")"
+                   OnConfirmed="SubmitAsync">@(_busy ? "Saving…" : "Create delegation")</ConfirmButton>
+    <a href="/approvals/delegations" class="secondary">Cancel</a>
+    @if (!string.IsNullOrEmpty(_error)) { <div class="error">@_error</div> }
+</NepCard>
+
+@code {
+    private Guid? _delegateUserId;
+    private DateOnly _from = DateOnly.FromDateTime(DateTime.UtcNow);
+    private DateOnly _until = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(7));
+    private string? _reason;
+    private bool _busy;
+    private string? _error;
+
+    private async Task SubmitAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            if (_delegateUserId is null || _delegateUserId.Value == Guid.Empty)
+            { _error = "Pick someone to delegate to."; return; }
+            if (_delegateUserId.Value == User.UserId)
+            { _error = "You can't delegate to yourself."; return; }
+            if (_until < _from)
+            { _error = "End date must be on or after start date."; return; }
+
+            var d = new ApprovalDelegation
+            {
+                UserId = User.UserId,
+                DelegateUserId = _delegateUserId.Value,
+                ValidFromUtc = _from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+                ValidUntilUtc = _until.ToDateTime(new TimeOnly(23, 59, 59), DateTimeKind.Utc),
+                Reason = _reason,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedByUserId = User.UserId,
+                TenantId = User.TenantId
+            };
+            Db.ApprovalDelegations.Add(d);
+            await Db.SaveChangesAsync();
+            Nav.NavigateTo("/approvals/delegations");
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

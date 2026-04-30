@@ -1,0 +1,151 @@
+@inherits LayoutComponentBase
+@inject CurrentUser User
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
+@inject IHttpContextAccessor HttpCtx
+@inject NavigationManager Nav
+
+<NepPage>
+    <TopNav Brand="NickFinance" Module="@BrandConstants.Modules.Finance">
+        <NavItems>
+            <NavLink href="/" Match="NavLinkMatch.All">Home</NavLink>
+            <NavLink href="/petty-cash">Petty cash</NavLink>
+            <NavLink href="/petty-cash/floats">Floats</NavLink>
+            <NavLink href="/approvals">Approvals <PendingApprovalsBadge /></NavLink>
+            <NavLink href="/ar">AR</NavLink>
+            <NavLink href="/ar/statement">Statements</NavLink>
+            <NavLink href="/ap">AP</NavLink>
+            <NavLink href="/ap/wht-certificates">WHT certs</NavLink>
+            <NavLink href="/banking">Banking</NavLink>
+            <NavLink href="/banking/fx-rates">FX rates</NavLink>
+            <NavLink href="/fixed-assets">Assets</NavLink>
+            <NavLink href="/budgets">Budgets</NavLink>
+            <NavLink href="/reports">Reports</NavLink>
+            <NavLink href="/reports/site-pnl">Site P&L</NavLink>
+            <NavLink href="/finance/period-close">Period close</NavLink>
+            <NavLink href="/journal">Journals</NavLink>
+            <NavLink href="/petty-cash/cash-counts">Cash counts</NavLink>
+            <NavLink href="/approvals/delegations">Delegations</NavLink>
+        </NavItems>
+        <UserMenu>
+            @*
+                W4 (2026-04-29) — three sign-in paths share this slot:
+                  1. Cookie     — user explicitly logged in via /login.
+                                  POST form so logout invalidates the
+                                  cookie server-side.
+                  2. CF Access  — user came in through the public OTP
+                                  flow. Logout via Cloudflare's edge so
+                                  the JWT is also revoked.
+                  3. LAN-trust  — shared identity from the office LAN.
+                                  No real "logout" — instead offer a
+                                  link to log in as themselves.
+            *@
+            <AuthorizeView Context="auth">
+                <Authorized>
+                    @{
+                        var via = auth.User.FindFirst(NickFinance.WebApp.Identity.LanTrustAuthHandler.ViaClaimType)?.Value;
+                    }
+                    <div class="who">
+                        @if (via == "lan-trust")
+                        {
+                            <span class="who-name">LAN-trust (shared)</span>
+                            <span class="who-email muted small">@User.Email</span>
+                        }
+                        else
+                        {
+                            <span class="who-name">@User.DisplayName</span>
+                            <span class="who-email">@User.Email</span>
+                        }
+                    </div>
+                    @switch (via)
+                    {
+                        case "cookie":
+                            <form method="post" action="/logout" class="nf-logout-form">
+                                <input type="hidden" name="@AntiforgeryFieldName" value="@AntiforgeryToken" />
+                                <button type="submit" class="secondary nf-logout-button">Sign out</button>
+                            </form>
+                            break;
+                        case "lan-trust":
+                            <a href="/login?returnUrl=@CurrentReturnUrl" class="primary">Sign in as yourself</a>
+                            break;
+                        default:
+                            @* CF Access (or unknown) — bounce through the CF edge. *@
+                            <a href="/cdn-cgi/access/logout" class="secondary">Sign out</a>
+                            break;
+                    }
+                </Authorized>
+                <NotAuthorized>
+                    <a href="/login?returnUrl=@CurrentReturnUrl" class="primary">Sign in</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </UserMenu>
+    </TopNav>
+    <main>
+        <article class="content">
+            @Body
+            <details class="kbd-help">
+                <summary>Keyboard shortcuts</summary>
+                <ul>
+                    <li><kbd>Ctrl</kbd> + <kbd>/</kbd> &mdash; focus search</li>
+                    <li><kbd>n</kbd> &mdash; new petty-cash voucher</li>
+                    <li><kbd>g</kbd> <kbd>h</kbd> &mdash; home</li>
+                    <li><kbd>g</kbd> <kbd>a</kbd> &mdash; approvals</li>
+                    <li><kbd>g</kbd> <kbd>p</kbd> &mdash; petty cash</li>
+                    <li><kbd>g</kbd> <kbd>r</kbd> &mdash; reports</li>
+                    <li><kbd>g</kbd> <kbd>j</kbd> &mdash; journals</li>
+                </ul>
+            </details>
+        </article>
+    </main>
+</NepPage>
+
+<style>
+    /* W4 — embed the logout form inline so it sits next to the "who"
+       block. Native button styled to match the existing .secondary link. */
+    .nf-logout-form { display: inline; margin: 0; padding: 0; }
+    .nf-logout-button {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+        text-decoration: underline;
+    }
+</style>
+
+@code {
+    private string AntiforgeryFieldName { get; set; } = "__RequestVerificationToken";
+    private string AntiforgeryToken { get; set; } = string.Empty;
+    private string CurrentReturnUrl { get; set; } = "/";
+
+    protected override void OnInitialized()
+    {
+        // Anti-forgery token for the inline /logout POST form. We request
+        // it from IAntiforgery so it round-trips a cookie+form pair the
+        // /logout endpoint can validate. If HttpContext is null (rare —
+        // happens on a re-rendered circuit after the request rolled off),
+        // we fall back to an empty token; the endpoint itself signs the
+        // user out anyway and just skips the audit row in that case.
+        var ctx = HttpCtx.HttpContext;
+        if (ctx is not null)
+        {
+            var tokens = Antiforgery.GetAndStoreTokens(ctx);
+            AntiforgeryFieldName = tokens.FormFieldName;
+            AntiforgeryToken = tokens.RequestToken ?? string.Empty;
+        }
+
+        // Same-origin returnUrl for the "sign in" / "sign in as yourself"
+        // links. NavigationManager.Uri is absolute; strip the origin so
+        // SanitizeReturnUrl in AuthEndpoints accepts it (refuses absolute
+        // URLs to prevent open-redirect).
+        try
+        {
+            var current = new Uri(Nav.Uri);
+            CurrentReturnUrl = Uri.EscapeDataString(current.PathAndQuery);
+        }
+        catch
+        {
+            CurrentReturnUrl = "/";
+        }
+    }
+}

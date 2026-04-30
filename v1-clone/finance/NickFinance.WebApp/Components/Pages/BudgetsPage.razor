@@ -1,0 +1,54 @@
+@page "/budgets"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.BudgetManage)]
+@using Microsoft.EntityFrameworkCore
+@inject BudgetingDbContext Db
+@inject IBudgetingService Svc
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Budgets</PageTitle>
+
+<NepPageHeader Title="Annual budgets"
+               Lede="Department-level annual budgets. Variance analysis lives under Reports → P&L." />
+
+<NepCard>
+    <NepTable TItem="AnnualBudget" Items="_budgets">
+        <Header>
+            <th>Year</th><th>Department</th><th>Name</th><th>Currency</th>
+            <th>Status</th><th class="right">Lines</th>
+        </Header>
+        <Row Context="b">
+            <td>@b.FiscalYear</td>
+            <td>@(b.DepartmentCode ?? "(entity)")</td>
+            <td>@b.Name</td>
+            <td>@b.CurrencyCode</td>
+            <td><NepPill Tone="@PillTone(b.Status.ToString())">@b.Status</NepPill></td>
+            <td class="right">@b.Lines.Count</td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No budgets yet"
+                      Hint="Budget creation UI is part of v1.3. Today, budgets are seeded via the IBudgetingService API."
+                      Icon="@Icons.Material.Filled.Insights" />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<AnnualBudget> _budgets = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _budgets = await Db.Budgets
+            .Include(b => b.Lines)
+            .Where(b => b.TenantId == User.TenantId)
+            .OrderByDescending(b => b.FiscalYear).ToListAsync();
+    }
+
+    private static string PillTone(string status) => status switch
+    {
+        "Active" or "Approved" => "ok",
+        "Draft" or "Pending"   => "warn",
+        "Archived"             => "default",
+        _                      => "default"
+    };
+}

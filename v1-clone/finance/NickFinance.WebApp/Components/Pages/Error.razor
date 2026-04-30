@@ -1,0 +1,34 @@
+@page "/Error"
+@inject ILogger<Error> Logger
+
+<PageTitle>NickFinance · Error</PageTitle>
+
+<NepPageHeader Title="Something went wrong" />
+
+<NepCard Variant="warning">
+    <p>An unexpected error occurred handling your request. The finance team has been notified via the application log.</p>
+    <p>Things you can try:</p>
+    <ul>
+        <li><a href="/">Go back to the home page</a></li>
+        <li>Click your browser's back button and re-attempt the action</li>
+        <li>If this keeps happening for the same operation, screenshot this page and ping the finance team</li>
+    </ul>
+    @if (RequestId is not null)
+    {
+        <p class="muted small">Request id: <code>@RequestId</code> &mdash; quote this when reporting the issue.</p>
+    }
+</NepCard>
+
+@code {
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId =>
+        System.Diagnostics.Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+
+    protected override void OnInitialized()
+    {
+        // The exception itself was already logged by the global exception handler;
+        // this page just renders the user-facing apology + the trace id.
+        Logger.LogWarning("Error page rendered for request {RequestId}", RequestId);
+    }
+}

@@ -1,0 +1,10 @@
+.nep-page {
+    min-height: 100vh;
+    background: var(--nep-bg);
+    color: var(--nep-text);
+    font-family: var(--nep-font-sans);
+    display: flex;
+    flex-direction: column;
+}
+
+::deep main { flex: 1; }

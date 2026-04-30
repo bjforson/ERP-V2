@@ -1,0 +1,46 @@
+@*
+    Top-of-content global search bar. Renders a single text input with a
+    "Ctrl+/" hint pill on the right; pressing Enter navigates to
+    /search?q=<query>. Pressing Ctrl+/ anywhere on the page focuses
+    this box (wired via the small JS interop in MainLayout.razor).
+
+    Search itself happens on the /search page, NOT in this component —
+    the component is just an entry point. Keeps the top-nav cheap and
+    avoids duplicating the cross-module query logic.
+*@
+
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="gs-bar">
+    <span class="muted small">Search</span>
+    <input id="global-search-input" type="search"
+           value="@_query"
+           placeholder="Voucher #, invoice #, IRN, customer, vendor…"
+           @oninput="OnInput"
+           @onkeydown="OnKeyDownAsync" />
+    <span class="gs-hint" title="Press Ctrl+/ to focus">Ctrl + /</span>
+</div>
+
+@code {
+    private string _query = string.Empty;
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_query))
+        {
+            var q = Uri.EscapeDataString(_query.Trim());
+            Nav.NavigateTo($"/search?q={q}");
+        }
+        else if (e.Key == "Escape")
+        {
+            _query = string.Empty;
+            try { await JS.InvokeVoidAsync("nickfinance_blurGs"); } catch { /* JS not loaded */ }
+        }
+    }
+}

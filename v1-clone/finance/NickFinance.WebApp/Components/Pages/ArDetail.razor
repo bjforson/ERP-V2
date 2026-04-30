@@ -1,0 +1,125 @@
+@page "/ar/{InvoiceId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@using Microsoft.EntityFrameworkCore
+@inject ArDbContext Db
+@inject IArService Svc
+@inject IPeriodService Periods
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Invoice</PageTitle>
+
+@if (_invoice is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <NepPageHeader>
+        <ChildContent>
+            <h1 class="nep-page-header-title">Invoice @(_invoice.InvoiceNo ?? "(unissued)")</h1>
+            <p class="nep-page-header-lede">
+                <NepPill Tone="@PillTone(_invoice.Status.ToString())">@_invoice.Status</NepPill>
+                · @_customerName
+                · @_invoice.InvoiceDate.ToString("yyyy-MM-dd")
+            </p>
+        </ChildContent>
+    </NepPageHeader>
+
+    <NepCard>
+        <dl>
+            <dt>Customer</dt><dd>@_customerName</dd>
+            <dt>Reference</dt><dd>@_invoice.Reference</dd>
+            <dt>Net</dt><dd><NepMoney Minor="@_invoice.SubtotalNetMinor" Currency="GHS" /></dd>
+            <dt>Levies</dt><dd><NepMoney Minor="@_invoice.LeviesMinor" Currency="GHS" /></dd>
+            <dt>VAT</dt><dd><NepMoney Minor="@_invoice.VatMinor" Currency="GHS" /></dd>
+            <dt>Gross</dt><dd><NepMoney Minor="@_invoice.GrossMinor" Currency="GHS" /></dd>
+            <dt>Paid</dt><dd><NepMoney Minor="@_invoice.PaidMinor" Currency="GHS" /></dd>
+            <dt>Outstanding</dt><dd><NepMoney Minor="@_invoice.OutstandingMinor" Currency="GHS" /></dd>
+            <dt>e-VAT IRN</dt>
+            <dd>
+                @if (string.IsNullOrEmpty(_invoice.EvatIrn))
+                {
+                    <span class="muted">—</span>
+                }
+                else if (StubEvatProvider.IsSandbox(_invoice.EvatIrn))
+                {
+                    <NepPill Tone="sandbox">SANDBOX</NepPill> <code class="muted-code">@_invoice.EvatIrn</code>
+                }
+                else
+                {
+                    <code>@_invoice.EvatIrn</code>
+                }
+            </dd>
+        </dl>
+    </NepCard>
+
+    @if (_invoice.Status == ArInvoiceStatus.Draft)
+    {
+        <NepCard>
+            <ConfirmButton Class="primary" Disabled="@_busy"
+                           Confirm="@($"Issue invoice {_invoice.InvoiceNo}? This computes Ghana taxes, mints a real GRA IRN, and posts the journal entry to the ledger. Cannot be undone via the UI — reversing requires a credit note.")"
+                           OnConfirmed="IssueAsync">Issue (compute taxes + IRN + post journal)</ConfirmButton>
+            @if (!string.IsNullOrEmpty(_error)) { <div class="error">@_error</div> }
+        </NepCard>
+    }
+
+    @if (_invoice.Status is ArInvoiceStatus.Issued or ArInvoiceStatus.PartiallyPaid)
+    {
+        <NepCard>
+            <a class="primary" href="@($"/ar/{InvoiceId}/receipt")">Record receipt</a>
+            <a class="secondary" href="@($"/pdf/invoice/{InvoiceId}")" target="_blank">Download PDF</a>
+        </NepCard>
+    }
+    else if (_invoice.Status is ArInvoiceStatus.Paid)
+    {
+        <NepCard>
+            <a class="secondary" href="@($"/pdf/invoice/{InvoiceId}")" target="_blank">Download PDF</a>
+        </NepCard>
+    }
+}
+
+@code {
+    [Parameter] public Guid InvoiceId { get; set; }
+    private ArInvoice? _invoice;
+    private string _customerName = "(unknown)";
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _invoice = await Db.Invoices.Include(i => i.Lines)
+            .FirstOrDefaultAsync(i => i.ArInvoiceId == InvoiceId && i.TenantId == User.TenantId);
+        if (_invoice is not null)
+        {
+            var cust = await Db.Customers.FirstOrDefaultAsync(c => c.CustomerId == _invoice.CustomerId);
+            _customerName = cust?.Name ?? "(unknown)";
+        }
+    }
+
+    private async Task IssueAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var period = await Periods.GetByDateAsync(today, User.TenantId)
+                ?? await Periods.CreateAsync(today.Year, (byte)today.Month, User.TenantId);
+            await Svc.IssueInvoiceAsync(InvoiceId, User.UserId, today, period.PeriodId);
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private static string PillTone(string status) => status switch
+    {
+        "Issued" or "PartiallyPaid" => "warn",
+        "Paid" => "ok",
+        "Void" => "bad",
+        _ => "default"
+    };
+}

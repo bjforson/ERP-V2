@@ -1,0 +1,51 @@
+@*
+    Small numeric badge rendered next to the "Approvals" nav link. Shows
+    the count of pending approval steps assigned to the current user.
+    Auto-refreshes every 30s while the page is alive — the badge is
+    best-effort, so any error from the counter is swallowed (the worst
+    case is that the badge is briefly stale).
+*@
+
+@inject IPendingApprovalsCounter Counter
+@inject CurrentUser User
+@implements IDisposable
+
+@if (_count > 0)
+{
+    <span class="nav-badge">@_count</span>
+}
+
+@code {
+    private int _count;
+    private System.Threading.Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _timer = new System.Threading.Timer(
+            async _ => await RefreshAsync(),
+            null,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            var n = await Counter.CountAsync(User.UserId, User.TenantId);
+            if (n != _count)
+            {
+                _count = n;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch
+        {
+            // Swallow — the badge is best-effort. A failed query
+            // shouldn't bubble up and break the layout for everyone.
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

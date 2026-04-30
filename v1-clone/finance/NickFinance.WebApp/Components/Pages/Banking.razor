@@ -1,0 +1,76 @@
+@page "/banking"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.BankingReconRun)]
+@using Microsoft.EntityFrameworkCore
+@inject BankingDbContext Db
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Banking</PageTitle>
+
+<NepPageHeader Title="Banking"
+               Lede="Bank accounts + recent transactions. Statement import + auto-match + reconciliation live in IBankingService; admin UI is v1.3." />
+
+<NepCard>
+    <h3>Accounts</h3>
+    <NepTable TItem="BankAccount" Items="_accounts">
+        <Header>
+            <th>Code</th><th>Name</th><th>Bank</th><th>Account #</th><th>GL</th><th>Currency</th>
+        </Header>
+        <Row Context="a">
+            <td><code>@a.Code</code></td>
+            <td>@a.Name</td>
+            <td>@a.BankName</td>
+            <td><code>@a.AccountNumber</code></td>
+            <td><code>@a.LedgerAccount</code></td>
+            <td>@a.CurrencyCode</td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No bank accounts configured"
+                      Hint="Bank account admin UI is part of v1.3. Until then, accounts are seeded via the IBankingService API."
+                      Icon="@Icons.Material.Filled.AccountBalance" />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+<NepCard>
+    <h3>Recent transactions</h3>
+    <NepTable TItem="BankTransaction" Items="_transactions">
+        <Header>
+            <th>Date</th><th>Account</th><th>Description</th><th>Reference</th>
+            <th class="right">Amount</th><th>Match</th>
+        </Header>
+        <Row Context="t">
+            <td>@t.TransactionDate.ToString("yyyy-MM-dd")</td>
+            <td>@(_accounts.FirstOrDefault(a => a.BankAccountId == t.BankAccountId)?.Code ?? "?")</td>
+            <td>@t.Description</td>
+            <td>@t.Reference</td>
+            <td class="right">@(t.Direction == BankTransactionDirection.Debit ? "-" : "+")<NepMoney Minor="@t.AmountMinor" /></td>
+            <td><NepPill Tone="@PillTone(t.MatchStatus.ToString())">@t.MatchStatus</NepPill></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No bank transactions"
+                      Hint="Imported statement lines will appear here. Statement import is part of v1.3."
+                      Icon="@Icons.Material.Filled.Sync" />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<BankAccount> _accounts = new();
+    private List<BankTransaction> _transactions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _accounts = await Db.BankAccounts.Where(a => a.TenantId == User.TenantId).OrderBy(a => a.Code).ToListAsync();
+        _transactions = await Db.Transactions.Where(t => t.TenantId == User.TenantId)
+            .OrderByDescending(t => t.TransactionDate).Take(50).ToListAsync();
+    }
+
+    private static string PillTone(string status) => status switch
+    {
+        "Matched" => "ok",
+        "Unmatched" => "warn",
+        "Disputed" => "bad",
+        _ => "default"
+    };
+}

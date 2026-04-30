@@ -1,0 +1,181 @@
+@*
+    W4 (2026-04-29) — email + password login page that authenticates against
+    NickHR's password store (public."Users"). Static-SSR (no @rendermode) so
+    the form POSTs to a Minimal API endpoint (/login/submit) — that endpoint
+    does the SignInAsync because Blazor Server interactive components can't
+    write the cookie directly (the SignalR circuit has no HttpResponse).
+
+    Anonymous access — the cookie handler's LoginPath sends here.
+
+    Visual language:
+      - chrome-less (EmptyLayout)
+      - NepCard for the form surface
+      - indigo #4F46E5 primary for the submit button (matches NickHR's login)
+*@
+@page "/login"
+@layout EmptyLayout
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+@using Microsoft.AspNetCore.Antiforgery
+@inject IAntiforgery Antiforgery
+@inject IHttpContextAccessor HttpCtx
+
+<PageTitle>NickFinance · Sign in</PageTitle>
+
+<div class="nf-login-shell">
+    <NepCard CssClass="nf-login-card">
+        <h1 class="nf-login-title">Sign in to NickFinance</h1>
+        <p class="nf-login-sub muted">Use your NickHR email and password.</p>
+
+        @if (!string.IsNullOrEmpty(Error))
+        {
+            <div class="nf-login-error" role="alert">
+                @switch (Error)
+                {
+                    case "invalid":
+                        <strong>Invalid email or password.</strong>
+                        <span>Double-check the values and try again.</span>
+                        break;
+                    case "not-provisioned":
+                        <strong>Your password is correct, but your NickFinance access hasn't been provisioned.</strong>
+                        <span>Contact NickHR to grant your access.</span>
+                        break;
+                    case "disabled":
+                        <strong>Your account is disabled.</strong>
+                        <span>Contact NickHR to re-enable it.</span>
+                        break;
+                    case "rate-limited":
+                        <strong>Too many sign-in attempts.</strong>
+                        <span>Wait a minute and try again.</span>
+                        break;
+                    default:
+                        <strong>Sign-in failed.</strong>
+                        <span>Try again, or contact NickHR if the problem persists.</span>
+                        break;
+                }
+            </div>
+        }
+
+        <form method="post" action="/login/submit" class="nf-login-form" autocomplete="on">
+            @* Anti-forgery token. Static-SSR Blazor doesn't auto-render
+               this for non-EditForm forms, so we emit it explicitly. The
+               POST endpoint below validates it via IAntiforgery. *@
+            <input type="hidden" name="@AntiforgeryFieldName" value="@AntiforgeryToken" />
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+
+            <label class="nf-login-label">
+                <span>Email</span>
+                <input type="email"
+                       name="email"
+                       required
+                       autocomplete="username"
+                       autofocus
+                       spellcheck="false"
+                       value="@Email" />
+            </label>
+
+            <label class="nf-login-label">
+                <span>Password</span>
+                <input type="password"
+                       name="password"
+                       required
+                       autocomplete="current-password" />
+            </label>
+
+            <label class="nf-login-remember">
+                <input type="checkbox" name="rememberMe" value="true" />
+                <span>Keep me signed in for 30 days</span>
+            </label>
+
+            <button type="submit" class="nf-login-submit">Sign in</button>
+        </form>
+
+        <p class="nf-login-help muted small">
+            <a href="https://hr.nickscan.net/forgot-password" target="_blank" rel="noopener">Forgot password?</a>
+            <span class="nf-login-help-sep">·</span>
+            <a href="/">Cancel</a>
+        </p>
+    </NepCard>
+</div>
+
+<style>
+    /* Indigo #4F46E5 primary, matching NickHR login. Scoped to the page
+       — a global token would belong in theme-tokens.css, but the cookie
+       login is the only NickFinance surface that needs it today. */
+    .nf-login-shell {
+        display: grid;
+        place-items: center;
+        min-height: calc(100vh - 80px);
+        padding: 2rem 1rem;
+    }
+    .nf-login-card { max-width: 420px; width: 100%; }
+    .nf-login-title { margin: 0 0 .25rem; font-size: 1.5rem; }
+    .nf-login-sub { margin: 0 0 1.5rem; }
+    .nf-login-form { display: grid; gap: 1rem; }
+    .nf-login-label { display: grid; gap: .35rem; }
+    .nf-login-label span { font-weight: 500; font-size: .9rem; }
+    .nf-login-label input {
+        padding: .6rem .7rem;
+        border: 1px solid var(--nep-border, #d4d4d8);
+        border-radius: .375rem;
+        font-size: 1rem;
+    }
+    .nf-login-label input:focus {
+        outline: 2px solid #4F46E5;
+        outline-offset: 1px;
+    }
+    .nf-login-remember {
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+        font-size: .9rem;
+    }
+    .nf-login-submit {
+        background: #4F46E5;
+        color: #fff;
+        border: 0;
+        border-radius: .375rem;
+        padding: .6rem 1rem;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: .5rem;
+    }
+    .nf-login-submit:hover { background: #4338CA; }
+    .nf-login-error {
+        background: #FEF2F2;
+        border: 1px solid #FCA5A5;
+        color: #991B1B;
+        padding: .65rem .75rem;
+        border-radius: .375rem;
+        font-size: .9rem;
+        margin-bottom: 1rem;
+    }
+    .nf-login-error strong { display: block; margin-bottom: .15rem; }
+    .nf-login-help { margin-top: 1.25rem; text-align: center; }
+    .nf-login-help-sep { margin: 0 .5rem; }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery(Name = "error")]     public string? Error { get; set; }
+    [SupplyParameterFromQuery(Name = "email")]     public string? Email { get; set; }
+
+    private string AntiforgeryFieldName { get; set; } = "__RequestVerificationToken";
+    private string AntiforgeryToken { get; set; } = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        // Pull the request token at render time so the hidden field carries
+        // a token the POST endpoint can validate. Without this, IAntiforgery
+        // would still issue one on first read, but stamping it here makes
+        // the round-trip explicit and avoids reliance on Blazor's pipeline
+        // ordering (the form is plain HTML, not an EditForm).
+        var ctx = HttpCtx.HttpContext;
+        if (ctx is not null)
+        {
+            var tokens = Antiforgery.GetAndStoreTokens(ctx);
+            AntiforgeryFieldName = tokens.FormFieldName;
+            AntiforgeryToken = tokens.RequestToken ?? string.Empty;
+        }
+    }
+}

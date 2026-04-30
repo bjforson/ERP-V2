@@ -1,0 +1,83 @@
+@page "/journal/{EventId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.JournalView)]
+@using Microsoft.EntityFrameworkCore
+@inject LedgerDbContext Ledger
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Journal @EventId.ToString().Substring(0,8)</PageTitle>
+
+<NepPageHeader Title="Manual journal"
+               Lede="Read-only view of a posted journal. Reverse via the kernel's reversal pattern — no in-place edits." />
+
+@if (_evt is null)
+{
+    <NepCard>
+        <NepEmpty Title="Journal not found" Hint="@($"No event with id {EventId}.")" />
+    </NepCard>
+}
+else
+{
+    <NepCard>
+        <h3>@_evt.Narration</h3>
+        <p class="muted">
+            Effective <strong>@_evt.EffectiveDate.ToString("yyyy-MM-dd")</strong> ·
+            Committed <strong>@_evt.CommittedAt.ToString("u")</strong> ·
+            Source <code>@_evt.SourceModule</code> · Type <code>@_evt.EventType</code>
+        </p>
+        <p class="muted">Idempotency key: <code>@_evt.IdempotencyKey</code></p>
+        <p class="muted">Actor: <code>@_evt.ActorUserId</code></p>
+    </NepCard>
+
+    <NepCard>
+        <h3>Lines</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th><th>Account</th><th class="right">DR</th><th class="right">CR</th><th>Memo</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var l in _evt.Lines.OrderBy(l => l.LineNo))
+                {
+                    <tr>
+                        <td>@l.LineNo</td>
+                        <td><code>@l.AccountCode</code></td>
+                        <td class="right">@(l.DebitMinor > 0 ? string.Format("{0:N2}", l.DebitMinor / 100m) : "")</td>
+                        <td class="right">@(l.CreditMinor > 0 ? string.Format("{0:N2}", l.CreditMinor / 100m) : "")</td>
+                        <td>@l.Description</td>
+                    </tr>
+                }
+                <tr class="total">
+                    <td colspan="2">Totals</td>
+                    <td class="right">@(_drSum / 100m).ToString("N2")</td>
+                    <td class="right">@(_crSum / 100m).ToString("N2")</td>
+                    <td></td>
+                </tr>
+            </tbody>
+        </table>
+    </NepCard>
+}
+
+<p><a href="/journal" class="secondary">Back to list</a></p>
+
+@code {
+    [Parameter] public Guid EventId { get; set; }
+
+    private LedgerEvent? _evt;
+    private long _drSum;
+    private long _crSum;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _evt = await Ledger.Events
+            .Include(e => e.Lines)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EventId == EventId && e.TenantId == User.TenantId);
+        if (_evt is not null)
+        {
+            _drSum = _evt.Lines.Sum(l => l.DebitMinor);
+            _crSum = _evt.Lines.Sum(l => l.CreditMinor);
+        }
+    }
+}

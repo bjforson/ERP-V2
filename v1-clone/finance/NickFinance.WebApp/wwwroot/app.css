@@ -1,0 +1,493 @@
+/* ============================================================================
+ * NickFinance.WebApp — module-specific styles
+ *
+ * Brand tokens (--nep-*) come from the shared library:
+ *   _content/NickERP.Platform.Web.Shared/theme-tokens.css
+ * which is linked in App.razor BEFORE this file. Anything below is for
+ * NickFinance-specific patterns (the petty-cash list rows, the reject-row
+ * input strip, AR-specific layouts) — the shared design system lives in
+ * Platform.Web.Shared/Components/*.razor.css and gets bundled automatically.
+ *
+ * Updated for Phase 1B theme migration: every literal hex replaced with
+ * var(--nep-*) so changing brand colour in theme-tokens.css cascades here.
+ * ============================================================================ */
+
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; padding: 0;
+    font-family: var(--nep-font-sans);
+    color: var(--nep-text);
+    background: var(--nep-bg);
+    line-height: 1.5;
+}
+code {
+    font-family: var(--nep-font-mono);
+    font-size: 0.92em;
+    background: var(--nep-neutral-100);
+    padding: 0 0.25rem;
+    border-radius: 3px;
+}
+
+.page { min-height: 100vh; display: flex; flex-direction: column; }
+main { flex: 1; }
+.content { max-width: 1180px; margin: 0 auto; padding: var(--nep-space-6); }
+
+/* Legacy heading + lede styles. Pages now prefer <NepPageHeader> but
+   the bare <h1>/<p class="lede"> patterns still render reasonably. */
+.lede {
+    color: var(--nep-text-muted);
+    font-size: 0.95rem;
+    margin-bottom: 1.25rem;
+}
+h1 {
+    font-size: 1.75rem;
+    margin: 0.25rem 0 1rem;
+    color: var(--nep-text);
+    letter-spacing: -0.4px;
+}
+h3 {
+    margin: 0 0 0.75rem;
+    color: var(--nep-text);
+    font-size: 1.05rem;
+}
+
+/* Legacy top-nav classes — kept temporarily so any unswitched page renders.
+   The shared <TopNav> component supersedes this; can be deleted once every
+   layout uses the component. */
+.topnav {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    padding: 0.75rem 1.5rem;
+    background: var(--nep-neutral-900);
+    color: var(--nep-bg);
+}
+.brand { display: flex; flex-direction: column; line-height: 1.1; }
+.brand-mark { font-weight: 600; font-size: 1rem; letter-spacing: 0.02em; }
+.brand-tagline { font-size: 0.7rem; color: var(--nep-text-faint); }
+.nav-links { display: flex; gap: 0.5rem; flex: 1; }
+.nav-links a {
+    color: var(--nep-neutral-300);
+    text-decoration: none;
+    padding: 0.4rem 0.85rem;
+    border-radius: var(--nep-radius-xs);
+    font-size: 0.9rem;
+}
+.nav-links a:hover { color: var(--nep-bg); background: var(--nep-neutral-800); }
+.nav-links a.active { color: var(--nep-bg); background: var(--nep-primary); }
+.who {
+    text-align: right;
+    line-height: 1.15;
+    padding: 4px 8px;
+    border-left: 1px solid var(--nep-border);
+}
+.who-name { display: block; font-size: 0.85rem; font-weight: 600; color: var(--nep-text); }
+.who-email { display: block; font-size: 0.7rem; color: var(--nep-text-muted); }
+
+/* Legacy card/tile classes. Pages migrate to <NepCard>/<NepStat>; these stay
+   as a safety net for anything not yet ported. */
+.card {
+    background: var(--nep-surface);
+    border: 1px solid var(--nep-border);
+    border-radius: var(--nep-radius-md);
+    padding: 1.1rem 1.4rem;
+    margin-bottom: 1.1rem;
+}
+.card.warning {
+    background: var(--nep-warning-100);
+    border-color: var(--nep-warning-300);
+}
+.card-actions { margin-bottom: 0.85rem; }
+
+.tile-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.tile {
+    background: var(--nep-surface);
+    border: 1px solid var(--nep-border);
+    border-radius: var(--nep-radius-md);
+    padding: 1rem 1.25rem;
+}
+.tile-label {
+    color: var(--nep-text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.tile-value {
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: var(--nep-text);
+    margin: 0.25rem 0;
+}
+.tile-unit {
+    font-size: 0.85rem;
+    color: var(--nep-text-muted);
+    font-weight: 400;
+}
+.tile-link {
+    font-size: 0.85rem;
+    color: var(--nep-primary);
+    text-decoration: none;
+}
+.tile-link:hover { text-decoration: underline; }
+
+/* Tables — used by every list page (PettyCashList, ArList, Reports, etc.) */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+th, td {
+    border-bottom: 1px solid var(--nep-border);
+    padding: 0.45rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+}
+th {
+    background: var(--nep-neutral-100);
+    font-weight: 600;
+    color: var(--nep-text-muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.right { text-align: right; }
+tr.total td {
+    font-weight: 600;
+    background: var(--nep-bg);
+}
+
+/* Forms */
+form label, .card label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-bottom: 0.85rem;
+    font-size: 0.82rem;
+    color: var(--nep-text-muted);
+}
+form input[type=text], form input[type=number], form input[type=date], form select,
+.card input[type=text], .card input[type=number], .card input[type=date], .card select {
+    border: 1px solid var(--nep-neutral-300);
+    border-radius: var(--nep-radius-xs);
+    padding: 0.4rem 0.55rem;
+    font-size: 0.9rem;
+    width: 100%;
+    max-width: 480px;
+    background: var(--nep-surface);
+    color: var(--nep-text);
+    font-family: inherit;
+}
+form input:focus, form select:focus,
+.card input:focus, .card select:focus {
+    outline: none;
+    border-color: var(--nep-primary);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+button.primary, button.secondary, a.primary, a.secondary {
+    display: inline-block;
+    border: 0;
+    padding: 0.5rem 1rem;
+    border-radius: var(--nep-radius-xs);
+    cursor: pointer;
+    font-size: 0.9rem;
+    margin-right: 0.5rem;
+    text-decoration: none;
+    font-family: inherit;
+    font-weight: 500;
+}
+button.primary, a.primary { background: var(--nep-primary); color: #fff; }
+button.primary:hover, a.primary:hover { background: var(--nep-primary-hover); }
+button.secondary, a.secondary { background: var(--nep-neutral-200); color: var(--nep-text); }
+button.secondary:hover, a.secondary:hover { background: var(--nep-neutral-300); }
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* NickFinance-specific: voucher rejection input strip. */
+.reject-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.5rem;
+}
+
+/* Definition lists (used in voucher / invoice detail screens) */
+dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 0.4rem 1rem;
+    font-size: 0.9rem;
+}
+dt { color: var(--nep-text-muted); }
+dd { margin: 0; }
+
+.feature-list { font-size: 0.92rem; line-height: 1.6; }
+.feature-list strong { color: var(--nep-text); }
+.muted { color: var(--nep-text-muted); font-size: 0.85rem; }
+.error {
+    color: var(--nep-danger-700);
+    margin-top: 0.5rem;
+}
+
+/* Legacy pill — superseded by <NepPill>. Kept until every StatusPill use is
+   migrated. */
+.pill {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: var(--nep-radius-full);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+.pill.ok   { background: var(--nep-success-100); color: var(--nep-success-800); }
+.pill.warn { background: var(--nep-warning-100); color: var(--nep-warning-800); }
+.pill.bad  { background: var(--nep-danger-100);  color: var(--nep-danger-800);  }
+
+.muted-code {
+    color: var(--nep-text-faint);
+    font-family: var(--nep-font-mono);
+    font-size: 0.78em;
+    margin-left: 0.4rem;
+}
+.muted.small, .small.muted, .small {
+    font-size: 0.78rem;
+}
+
+/* ============================================================================
+ * Entity picker — generic typeahead used by SitePicker / UserPicker /
+ * AccountPicker / CustomerPicker / VendorPicker / FloatPicker. The picker
+ * lives entirely under .ep-wrap so styling here doesn't bleed into other
+ * inputs. Uses the same focus colour as the rest of the form chrome.
+ * ============================================================================ */
+.ep-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+}
+.ep-wrap .ep-input {
+    border: 1px solid var(--nep-neutral-300);
+    border-radius: var(--nep-radius-xs);
+    padding: 0.4rem 0.55rem;
+    font-size: 0.9rem;
+    width: 100%;
+    background: var(--nep-surface);
+    color: var(--nep-text);
+    font-family: inherit;
+}
+.ep-wrap .ep-input:focus {
+    outline: none;
+    border-color: var(--nep-primary);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+.ep-wrap .ep-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--nep-surface);
+    border: 1px solid var(--nep-border);
+    border-radius: var(--nep-radius-sm);
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.10);
+    margin-top: 4px;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 50;
+}
+.ep-wrap .ep-row {
+    padding: 0.4rem 0.6rem;
+    cursor: pointer;
+    font-size: 0.88rem;
+    border-bottom: 1px solid var(--nep-border);
+    display: flex;
+    gap: 0.35rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+}
+.ep-wrap .ep-row:last-child { border-bottom: 0; }
+.ep-wrap .ep-row:hover { background: var(--nep-bg); }
+.ep-wrap .ep-row-muted {
+    color: var(--nep-text-muted);
+    font-style: italic;
+    cursor: default;
+}
+.ep-wrap .ep-row-muted:hover { background: transparent; }
+
+/* ============================================================================
+ * Pagination + filter strip on PagedTable.
+ * ============================================================================ */
+.pt-filter-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: end;
+    padding: 0.5rem 0;
+    margin-bottom: 0.75rem;
+}
+.pt-filter-strip > .pt-filter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.78rem;
+    color: var(--nep-text-muted);
+    min-width: 140px;
+}
+.pt-filter input[type=date],
+.pt-filter input[type=text],
+.pt-filter select {
+    border: 1px solid var(--nep-neutral-300);
+    border-radius: var(--nep-radius-xs);
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+    background: var(--nep-surface);
+    color: var(--nep-text);
+    font-family: inherit;
+}
+.pt-pager {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--nep-text-muted);
+    flex-wrap: wrap;
+}
+.pt-pager .pt-pager-controls {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+}
+.pt-pager button {
+    background: var(--nep-neutral-100);
+    border: 1px solid var(--nep-border);
+    border-radius: var(--nep-radius-xs);
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--nep-text);
+}
+.pt-pager button:hover:not(:disabled) { background: var(--nep-neutral-200); }
+.pt-pager button:disabled { opacity: 0.45; cursor: not-allowed; }
+.pt-pager .pt-page-size select { padding: 0.2rem 0.35rem; }
+
+/* ============================================================================
+ * Loading skeleton — replaces the bare "<p>Loading…</p>" pattern. Animates
+ * a shimmer so the operator can tell the page is alive while data fetches.
+ * ============================================================================ */
+.nep-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+}
+.nep-skeleton .nep-skeleton-bar {
+    height: 0.85rem;
+    background: linear-gradient(
+        90deg,
+        var(--nep-neutral-100) 0%,
+        var(--nep-neutral-200) 50%,
+        var(--nep-neutral-100) 100%
+    );
+    background-size: 200% 100%;
+    border-radius: var(--nep-radius-xs);
+    animation: nep-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.nep-skeleton .nep-skeleton-bar.short { width: 30%; }
+.nep-skeleton .nep-skeleton-bar.med   { width: 60%; }
+.nep-skeleton .nep-skeleton-bar.long  { width: 90%; }
+@keyframes nep-skeleton-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* ============================================================================
+ * Global search.
+ * ============================================================================ */
+.gs-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--nep-surface);
+    border: 1px solid var(--nep-border);
+    border-radius: var(--nep-radius-sm);
+    padding: 0.3rem 0.55rem;
+    margin: 0 0 0.75rem 0;
+    max-width: 480px;
+}
+.gs-bar input {
+    flex: 1;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font-size: 0.92rem;
+    color: var(--nep-text);
+    font-family: inherit;
+}
+.gs-bar .gs-hint {
+    font-size: 0.72rem;
+    color: var(--nep-text-faint);
+    border: 1px solid var(--nep-border);
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--nep-radius-xs);
+}
+
+/* Approvals nav badge — number of pending approvals next to the link. */
+.nav-badge {
+    display: inline-block;
+    background: var(--nep-danger-700, #b91c1c);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: var(--nep-radius-full);
+    padding: 0 0.45rem;
+    min-width: 1.2rem;
+    text-align: center;
+    margin-left: 0.35rem;
+    line-height: 1.4;
+}
+
+/* Reduced muted-bias style for the picker rows. */
+.ep-row .muted.small { color: var(--nep-text-muted); }
+
+/* ============================================================================
+ * Keyboard-shortcuts help panel — collapsed <details> at the foot of every
+ * page. Surfaces the global bindings that ship from wwwroot/app.js without
+ * eating header real estate.
+ * ============================================================================ */
+.kbd-help {
+    margin: 2rem 0 1rem;
+    color: var(--nep-text-muted);
+    font-size: 0.82rem;
+}
+.kbd-help summary {
+    cursor: pointer;
+    color: var(--nep-text-muted);
+    user-select: none;
+    padding: 0.25rem 0;
+}
+.kbd-help summary:hover { color: var(--nep-text); }
+.kbd-help ul {
+    margin: 0.5rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.3rem 1rem;
+}
+.kbd-help li { padding: 0.15rem 0; }
+.kbd-help kbd {
+    display: inline-block;
+    background: var(--nep-neutral-100);
+    border: 1px solid var(--nep-border);
+    border-bottom-width: 2px;
+    border-radius: var(--nep-radius-xs);
+    padding: 0.05rem 0.4rem;
+    font-family: var(--nep-font-mono);
+    font-size: 0.78em;
+    color: var(--nep-text);
+    margin: 0 0.1rem;
+}

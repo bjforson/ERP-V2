@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickFinance.GlSync</RootNamespace>
+    <AssemblyName>NickFinance.GlSync</AssemblyName>
+    <Description>NICKSCAN ERP / NickFinance — GL-of-record sync. Exports the day's posted journals as Tally Prime-importable XML. Idempotent on idempotency_key (skips events Tally already received).</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NickFinance.Ledger\NickFinance.Ledger.csproj" />
+  </ItemGroup>
+</Project>

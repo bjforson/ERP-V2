@@ -1,0 +1,42 @@
+@*
+    W3B (2026-04-29) — friendly landing page when a CF-Access-authenticated
+    user has no identity.users row in the shared store. Uses EmptyLayout
+    so the page does NOT pull in any component that resolves CurrentUser
+    (which would recursively throw AccessNotProvisionedException).
+
+    The page is anonymous — CF Access has already authenticated the user
+    at the edge; we just don't have their identity in our DB yet.
+*@
+@page "/access-not-provisioned"
+@layout EmptyLayout
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+
+<PageTitle>NickFinance · Access not provisioned</PageTitle>
+
+<NepCard Variant="warning">
+    <h1>Your access hasn't been provisioned yet</h1>
+    <p>
+        Hi <strong>@(string.IsNullOrWhiteSpace(Email) ? "there" : Email)</strong> — you've
+        signed in via Cloudflare Access, but you don't have a NickFinance account yet.
+    </p>
+    <p>Contact your NickHR administrator to provision your access:</p>
+    <ul>
+        <li>HR opens your employee record at <code>https://hr.nickscan.net</code></li>
+        <li>Under <strong>Module access</strong> they click <strong>Provision now</strong> and
+            grant you the right NickFinance role(s)</li>
+        <li>Sign back into <a href="https://finance.nickscan.net">finance.nickscan.net</a> and you're in</li>
+    </ul>
+    <p class="muted small">
+        Reference:
+        @if (!string.IsNullOrWhiteSpace(CfAccessSub))
+        {
+            <span>@CfAccessSub · </span>
+        }
+        @DateTimeOffset.UtcNow.ToString("u")
+    </p>
+</NepCard>
+
+@code {
+    [SupplyParameterFromQuery(Name = "email")] public string? Email { get; set; }
+    [SupplyParameterFromQuery(Name = "sub")] public string? CfAccessSub { get; set; }
+}

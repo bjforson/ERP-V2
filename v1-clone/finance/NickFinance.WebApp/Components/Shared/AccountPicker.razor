@@ -1,0 +1,90 @@
+@*
+    Chart-of-accounts picker. Search by code (numeric Ghana SME convention)
+    OR by name. Optional `OnlyType` filters to one AccountType (e.g. only
+    cash/bank accounts on a receipt page).
+*@
+
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.Coa
+@inject CoaDbContext Db
+@inject NickFinance.WebApp.Services.CurrentUser User
+
+<EntityPicker TItem="Account"
+              Value="@Value"
+              ValueChanged="OnSelectedAsync"
+              Search="SearchAsync"
+              LabelOf="@(a => $"{a.Code} {a.Name}")"
+              Placeholder="@Placeholder"
+              Disabled="@Disabled"
+              CssClass="@CssClass">
+    <RowTemplate Context="a">
+        <code>@a.Code</code>
+        <span>· @a.Name</span>
+        @if (a.IsControl)
+        {
+            <span class="muted small">· control</span>
+        }
+    </RowTemplate>
+</EntityPicker>
+
+@code {
+    [Parameter] public Account? Value { get; set; }
+    [Parameter] public EventCallback<Account?> ValueChanged { get; set; }
+
+    /// <summary>Bound account code — convenience for callers that store the string code.</summary>
+    [Parameter] public string? AccountCode { get; set; }
+    [Parameter] public EventCallback<string> AccountCodeChanged { get; set; }
+
+    /// <summary>Optional account-type filter. Useful for cash account pickers (Asset only).</summary>
+    [Parameter] public AccountType? OnlyType { get; set; }
+
+    /// <summary>Optional code-prefix filter (e.g. "10" for cash/bank accounts in the Ghana SME chart).</summary>
+    [Parameter] public string? OnlyPrefix { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; } = "Search an account…";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Value is null && !string.IsNullOrWhiteSpace(AccountCode))
+        {
+            Value = await Db.Accounts.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.TenantId == User.TenantId && a.Code == AccountCode);
+        }
+    }
+
+    private async Task<IReadOnlyList<Account>> SearchAsync(string query, CancellationToken ct)
+    {
+        var q = (query ?? string.Empty).Trim();
+        var rows = Db.Accounts.AsNoTracking()
+            .Where(a => a.TenantId == User.TenantId && a.IsActive);
+
+        if (OnlyType is not null)
+        {
+            var t = OnlyType.Value;
+            rows = rows.Where(a => a.Type == t);
+        }
+        if (!string.IsNullOrWhiteSpace(OnlyPrefix))
+        {
+            var prefix = OnlyPrefix;
+            rows = rows.Where(a => a.Code.StartsWith(prefix));
+        }
+        if (!string.IsNullOrEmpty(q))
+        {
+            var like = $"%{q}%";
+            rows = rows.Where(a =>
+                EF.Functions.ILike(a.Code, like)
+             || EF.Functions.ILike(a.Name, like));
+        }
+
+        return await rows.OrderBy(a => a.Code).Take(20).ToListAsync(ct);
+    }
+
+    private async Task OnSelectedAsync(Account? account)
+    {
+        Value = account;
+        await ValueChanged.InvokeAsync(account);
+        await AccountCodeChanged.InvokeAsync(account?.Code ?? string.Empty);
+    }
+}

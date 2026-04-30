@@ -1,0 +1,57 @@
+@page "/reports/aging"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@inject IArService Ar
+@inject IApService Ap
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Aging</PageTitle>
+
+<NepPageHeader Title="Aging"
+               Lede="Receivables and payables, bucketed by days overdue from due date." />
+
+<NepCard>
+    <h3>Accounts receivable</h3>
+    <NepTable TItem="NickFinance.AR.AgingBucket" Items="_ar">
+        <Header>
+            <th>Bucket</th><th class="right"># invoices</th><th class="right">Outstanding</th>
+        </Header>
+        <Row Context="b">
+            <td>@b.Bucket</td>
+            <td class="right">@b.InvoiceCount</td>
+            <td class="right"><NepMoney Minor="@b.OutstandingTotal.Minor" Currency="@b.OutstandingTotal.CurrencyCode" /></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No outstanding receivables" Hint="All issued invoices have been paid in full." />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+<NepCard>
+    <h3>Accounts payable</h3>
+    <NepTable TItem="NickFinance.AP.AgingBucket" Items="_ap">
+        <Header>
+            <th>Bucket</th><th class="right"># bills</th><th class="right">Outstanding</th>
+        </Header>
+        <Row Context="b">
+            <td>@b.Bucket</td>
+            <td class="right">@b.BillCount</td>
+            <td class="right"><NepMoney Minor="@b.OutstandingTotal.Minor" Currency="@b.OutstandingTotal.CurrencyCode" /></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No outstanding payables" Hint="No vendor bills are open." />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private IReadOnlyList<NickFinance.AR.AgingBucket> _ar = Array.Empty<NickFinance.AR.AgingBucket>();
+    private IReadOnlyList<NickFinance.AP.AgingBucket> _ap = Array.Empty<NickFinance.AP.AgingBucket>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        _ar = await Ar.AgingReportAsync(today, User.TenantId);
+        _ap = await Ap.AgingReportAsync(today, User.TenantId);
+    }
+}

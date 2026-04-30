@@ -1,0 +1,67 @@
+@page "/reports/cash-flow"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@inject IFinancialReports Reports
+@inject LedgerDbContext Lg
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Cash Flow</PageTitle>
+
+<NepPageHeader Title="@($"Cash flow · {_from} to {_to}")" />
+
+<NepCard>
+    <label>From <input type="date" @bind="_from" /></label>
+    <label>To <input type="date" @bind="_to" /></label>
+    <button class="primary" @onclick="ReloadAsync">Reload</button>
+</NepCard>
+
+@if (_cfs is not null)
+{
+    <NepCard>
+        <h3>Operating activities</h3>
+        <table>
+            <tbody>
+                @foreach (var l in _cfs.Operating)
+                {
+                    <tr><td>@l.Heading</td><td class="right"><NepMoney Minor="@l.Amount.Minor" /></td></tr>
+                }
+                <tr class="total"><td>Net cash from operating</td><td class="right"><NepMoney Minor="@_cfs.OperatingNet.Minor" /></td></tr>
+            </tbody>
+        </table>
+    </NepCard>
+    <NepCard>
+        <h3>Investing activities</h3>
+        <table>
+            <tbody>
+                @foreach (var l in _cfs.Investing) { <tr><td>@l.Heading</td><td class="right"><NepMoney Minor="@l.Amount.Minor" /></td></tr> }
+                <tr class="total"><td>Net cash from investing</td><td class="right"><NepMoney Minor="@_cfs.InvestingNet.Minor" /></td></tr>
+            </tbody>
+        </table>
+    </NepCard>
+    <NepCard>
+        <h3>Financing activities</h3>
+        <table>
+            <tbody>
+                @foreach (var l in _cfs.Financing) { <tr><td>@l.Heading</td><td class="right"><NepMoney Minor="@l.Amount.Minor" /></td></tr> }
+                <tr class="total"><td>Net cash from financing</td><td class="right"><NepMoney Minor="@_cfs.FinancingNet.Minor" /></td></tr>
+            </tbody>
+        </table>
+    </NepCard>
+    <NepCard>
+        <p>Opening cash: <strong><NepMoney Minor="@_cfs.OpeningCash.Minor" /></strong></p>
+        <p>Closing cash: <strong><NepMoney Minor="@_cfs.ClosingCash.Minor" /></strong></p>
+    </NepCard>
+}
+
+@code {
+    private DateOnly _from = new(DateTime.UtcNow.Year, 1, 1);
+    private DateOnly _to = DateOnly.FromDateTime(DateTime.UtcNow);
+    private CashFlowStatementReport? _cfs;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _cfs = await CashFlowStatementBuilder.BuildAsync(Lg, Reports, "GHS", _from, _to, User.TenantId);
+    }
+}

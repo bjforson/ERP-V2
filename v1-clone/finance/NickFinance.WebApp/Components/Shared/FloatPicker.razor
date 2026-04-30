@@ -1,0 +1,111 @@
+@*
+    Float picker. Limited to active floats for the user's tenant. Renders
+    the row as "Site name · custodian · GHS 5,000.00" so a custodian
+    submitting a voucher can pick by site name rather than by 8-char GUID
+    prefix.
+
+    Site name lookup uses <see cref="SiteCatalog"/> for the six known Nick
+    TC-Scan sites; floats whose SiteId isn't in the catalog (a GUID
+    stamped before this PR landed) fall back to the 8-char prefix.
+*@
+
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Identity
+@using NickFinance.PettyCash
+@inject PettyCashDbContext Db
+@inject IdentityDbContext Identity
+@inject NickFinance.WebApp.Services.CurrentUser User
+
+<EntityPicker TItem="Float"
+              Value="@Value"
+              ValueChanged="OnSelectedAsync"
+              Search="SearchAsync"
+              LabelOf="@LabelFor"
+              Placeholder="@Placeholder"
+              Disabled="@Disabled"
+              CssClass="@CssClass">
+    <RowTemplate Context="f">
+        <strong>@SiteName(f.SiteId)</strong>
+        <span class="muted small">· @CustodianFor(f.CustodianUserId) · @MoneyFor(f.FloatAmountMinor, f.CurrencyCode)</span>
+    </RowTemplate>
+</EntityPicker>
+
+@code {
+    [Parameter] public Float? Value { get; set; }
+    [Parameter] public EventCallback<Float?> ValueChanged { get; set; }
+
+    [Parameter] public Guid FloatId { get; set; }
+    [Parameter] public EventCallback<Guid> FloatIdChanged { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; } = "Pick a float…";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private Dictionary<Guid, string> _custodianNames = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Value is null && FloatId != Guid.Empty)
+        {
+            Value = await Db.Floats.AsNoTracking().FirstOrDefaultAsync(f => f.FloatId == FloatId);
+        }
+    }
+
+    private async Task<IReadOnlyList<Float>> SearchAsync(string query, CancellationToken ct)
+    {
+        var q = (query ?? string.Empty).Trim();
+        var rows = await Db.Floats.AsNoTracking()
+            .Where(f => f.TenantId == User.TenantId && f.IsActive)
+            .OrderBy(f => f.CreatedAt)
+            .Take(50)
+            .ToListAsync(ct);
+
+        // Cache custodian display names on the side so the row label can
+        // render "Tema HQ · Ama (custodian)" without an N+1 lookup.
+        var custodianIds = rows.Select(r => r.CustodianUserId).Distinct().ToList();
+        if (custodianIds.Count > 0)
+        {
+            var users = await Identity.Users.AsNoTracking()
+                .Where(u => custodianIds.Contains(u.InternalUserId))
+                .Select(u => new { u.InternalUserId, u.DisplayName })
+                .ToListAsync(ct);
+            _custodianNames = users.ToDictionary(u => u.InternalUserId, u => u.DisplayName);
+        }
+
+        if (string.IsNullOrEmpty(q)) return rows;
+
+        return rows.Where(f =>
+                SiteName(f.SiteId).Contains(q, StringComparison.OrdinalIgnoreCase)
+             || CustodianFor(f.CustodianUserId).Contains(q, StringComparison.OrdinalIgnoreCase)
+             || f.CurrencyCode.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .Take(20)
+            .ToList();
+    }
+
+    private string LabelFor(Float f)
+    {
+        return $"{SiteName(f.SiteId)} · {CustodianFor(f.CustodianUserId)} · {MoneyFor(f.FloatAmountMinor, f.CurrencyCode)}";
+    }
+
+    private static string SiteName(Guid id)
+    {
+        var entry = SiteCatalog.ById(id);
+        return entry?.Name ?? id.ToString("N")[..8];
+    }
+
+    private string CustodianFor(Guid id)
+    {
+        if (_custodianNames.TryGetValue(id, out var n) && !string.IsNullOrWhiteSpace(n)) return n;
+        return id.ToString("N")[..8];
+    }
+
+    private static string MoneyFor(long minor, string currency)
+        => NickFinance.WebApp.Services.MoneyFormatter.Format(minor, currency);
+
+    private async Task OnSelectedAsync(Float? f)
+    {
+        Value = f;
+        await ValueChanged.InvokeAsync(f);
+        await FloatIdChanged.InvokeAsync(f?.FloatId ?? Guid.Empty);
+    }
+}

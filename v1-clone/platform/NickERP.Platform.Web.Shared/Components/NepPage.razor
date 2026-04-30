@@ -1,0 +1,16 @@
+@*
+    Top-level page wrapper. Drop this around the contents of every module's
+    layout (between <main> and the actual content) so brand-wide spacing /
+    background / max-width rules can hang off a single anchor.
+*@
+
+<div class="nep-page @CssClass">
+    @ChildContent
+</div>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Optional extra class names appended to the wrapper.</summary>
+    [Parameter] public string? CssClass { get; set; }
+}

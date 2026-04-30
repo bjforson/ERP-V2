@@ -1,0 +1,50 @@
+@*
+    Stat tile. Replaces NickFinance's `.tile` and Portal's StatCard for the
+    common "label + big value + optional sub" use-case.
+
+    Tone influences only the value colour. Use `positive` for KPIs trending
+    well, `negative` for alerts / red numbers.
+*@
+
+<div class="@ResolveClass()">
+    @if (!string.IsNullOrEmpty(Icon))
+    {
+        <div class="nep-stat-row">
+            <div class="nep-stat-icon">
+                <MudIcon Icon="@Icon" Style="font-size:18px;" />
+            </div>
+            @if (!string.IsNullOrEmpty(Badge))
+            {
+                <span class="nep-stat-badge">@Badge</span>
+            }
+        </div>
+    }
+    <div class="nep-stat-label">@Label</div>
+    <div class="nep-stat-value">@Value</div>
+    @if (!string.IsNullOrEmpty(Sub))
+    {
+        <div class="nep-stat-sub">@Sub</div>
+    }
+    @if (LinkUrl is not null)
+    {
+        <a class="nep-stat-link" href="@LinkUrl">@(LinkText ?? "View") &rarr;</a>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public string Value { get; set; } = "—";
+    [Parameter] public string? Sub { get; set; }
+    [Parameter] public string Tone { get; set; } = "default";
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public string? Badge { get; set; }
+    [Parameter] public string? LinkUrl { get; set; }
+    [Parameter] public string? LinkText { get; set; }
+
+    private string ResolveClass() => Tone switch
+    {
+        "positive" => "nep-stat nep-stat-positive",
+        "negative" => "nep-stat nep-stat-negative",
+        _          => "nep-stat"
+    };
+}

@@ -1,0 +1,56 @@
+@page "/ap"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ApBillEnter)]
+@using Microsoft.EntityFrameworkCore
+@inject ApDbContext Db
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Payables</PageTitle>
+
+<NepPageHeader Title="Accounts payable"
+               Lede="@($"All AP bills for tenant {User.TenantId}. Capture + approve + pay flows live in IApService; UI for create-and-pay is on the v1.3 roadmap.")" />
+
+<NepCard>
+    <NepTable TItem="ApBill" Items="_bills">
+        <Header>
+            <th>No.</th><th>Vendor</th><th>Bill date</th><th>Due</th>
+            <th class="right">Gross</th><th class="right">Outstanding</th><th>Status</th>
+        </Header>
+        <Row Context="b">
+            <td><code>@b.BillNo</code></td>
+            <td>@(_vendors.TryGetValue(b.VendorId, out var v) ? v : b.VendorId.ToString("N")[..8])</td>
+            <td>@b.BillDate.ToString("yyyy-MM-dd")</td>
+            <td>@b.DueDate.ToString("yyyy-MM-dd")</td>
+            <td class="right"><NepMoney Minor="@b.GrossMinor" Currency="GHS" /></td>
+            <td class="right"><NepMoney Minor="@(b.GrossMinor - b.PaidMinor)" Currency="GHS" /></td>
+            <td><NepPill Tone="@PillTone(b.Status.ToString())">@b.Status</NepPill></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No bills yet"
+                      Hint="AP bill capture UI is part of v1.3. The IApService API works today; bills you ingest via API will surface here."
+                      Icon="@Icons.Material.Filled.Receipt" />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<ApBill> _bills = new();
+    private Dictionary<Guid, string> _vendors = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _bills = await Db.Bills.Where(b => b.TenantId == User.TenantId)
+            .OrderByDescending(b => b.BillDate).Take(100).ToListAsync();
+        var ids = _bills.Select(b => b.VendorId).Distinct().ToList();
+        _vendors = await Db.Vendors.Where(v => ids.Contains(v.VendorId))
+            .ToDictionaryAsync(v => v.VendorId, v => v.Name);
+    }
+
+    private static string PillTone(string status) => status switch
+    {
+        "Approved" or "Paid" => "ok",
+        "Pending" or "PartiallyPaid" => "warn",
+        "Rejected" or "Void" => "bad",
+        _ => "default"
+    };
+}

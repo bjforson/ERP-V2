@@ -1,0 +1,69 @@
+@*
+    Vendor picker. Search by code OR name. Active vendors only.
+*@
+
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.AP
+@inject ApDbContext Db
+@inject NickFinance.WebApp.Services.CurrentUser User
+
+<EntityPicker TItem="Vendor"
+              Value="@Value"
+              ValueChanged="OnSelectedAsync"
+              Search="SearchAsync"
+              LabelOf="@(v => v.Name)"
+              Placeholder="@Placeholder"
+              Disabled="@Disabled"
+              CssClass="@CssClass">
+    <RowTemplate Context="v">
+        <strong>@v.Name</strong>
+        <span class="muted small">· @v.Code</span>
+        @if (v.IsVatRegistered)
+        {
+            <span class="muted small">· VAT</span>
+        }
+    </RowTemplate>
+</EntityPicker>
+
+@code {
+    [Parameter] public Vendor? Value { get; set; }
+    [Parameter] public EventCallback<Vendor?> ValueChanged { get; set; }
+
+    [Parameter] public Guid VendorId { get; set; }
+    [Parameter] public EventCallback<Guid> VendorIdChanged { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; } = "Search a vendor…";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Value is null && VendorId != Guid.Empty)
+        {
+            Value = await Db.Vendors.AsNoTracking()
+                .FirstOrDefaultAsync(v => v.TenantId == User.TenantId && v.VendorId == VendorId);
+        }
+    }
+
+    private async Task<IReadOnlyList<Vendor>> SearchAsync(string query, CancellationToken ct)
+    {
+        var q = (query ?? string.Empty).Trim();
+        var rows = Db.Vendors.AsNoTracking()
+            .Where(v => v.TenantId == User.TenantId && v.IsActive);
+        if (!string.IsNullOrEmpty(q))
+        {
+            var like = $"%{q}%";
+            rows = rows.Where(v =>
+                EF.Functions.ILike(v.Code, like)
+             || EF.Functions.ILike(v.Name, like));
+        }
+        return await rows.OrderBy(v => v.Name).Take(20).ToListAsync(ct);
+    }
+
+    private async Task OnSelectedAsync(Vendor? vendor)
+    {
+        Value = vendor;
+        await ValueChanged.InvokeAsync(vendor);
+        await VendorIdChanged.InvokeAsync(vendor?.VendorId ?? Guid.Empty);
+    }
+}

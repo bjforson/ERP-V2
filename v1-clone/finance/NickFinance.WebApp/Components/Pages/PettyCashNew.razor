@@ -1,0 +1,127 @@
+@page "/petty-cash/new"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PettyVoucherSubmit)]
+@using Microsoft.EntityFrameworkCore
+@inject PettyCashDbContext Db
+@inject IPettyCashService Svc
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · New voucher</PageTitle>
+
+<NepPageHeader Title="New petty-cash voucher" />
+
+@if (_floats.Count == 0)
+{
+    <NepCard Variant="warning">
+        <p>No active floats yet for tenant @User.TenantId. Provision one first:</p>
+        <p><a href="/petty-cash/floats/new" class="primary">Create float</a></p>
+    </NepCard>
+}
+else
+{
+    <EditForm Model="_form" OnValidSubmit="SubmitAsync" FormName="newVoucher">
+        <NepCard>
+            <label>
+                Float
+                <select @bind="_form.FloatId">
+                    @foreach (var f in _floats)
+                    {
+                        <option value="@f.FloatId">@f.SiteId.ToString("N")[..8] · custodian @f.CustodianUserId.ToString("N")[..8] · @f.CurrencyCode</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Category
+                <select @bind="_form.Category">
+                    @foreach (var c in Enum.GetValues<VoucherCategory>())
+                    {
+                        <option value="@c">@c</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Purpose
+                <input type="text" @bind="_form.Purpose" required maxlength="500" />
+            </label>
+            <label>
+                Amount (GHS)
+                <input type="number" step="0.01" min="0" @bind="_form.AmountGhs" />
+            </label>
+            <label>
+                Description
+                <input type="text" @bind="_form.LineDescription" required maxlength="500" />
+            </label>
+            <label>
+                Payee (optional)
+                <input type="text" @bind="_form.Payee" maxlength="200" />
+            </label>
+            <button type="submit" class="primary" disabled="@_busy">@(_busy ? "Submitting…" : "Submit voucher")</button>
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="error">@_error</div>
+            }
+        </NepCard>
+    </EditForm>
+}
+
+@code {
+    private List<Float> _floats = new();
+    private FormModel _form = new();
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _floats = await Db.Floats
+            .Where(f => f.TenantId == User.TenantId && f.IsActive)
+            .OrderBy(f => f.CreatedAt)
+            .ToListAsync();
+        _form.FloatId = _floats.FirstOrDefault()?.FloatId ?? Guid.Empty;
+        _form.Category = VoucherCategory.Transport;
+        _form.AmountGhs = 0m;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var amountMinor = (long)Math.Round(_form.AmountGhs * 100m, 0, MidpointRounding.ToEven);
+            if (amountMinor <= 0)
+            {
+                _error = "Amount must be positive.";
+                return;
+            }
+            var amount = new Money(amountMinor, "GHS");
+            var v = await Svc.SubmitVoucherAsync(new SubmitVoucherRequest(
+                FloatId: _form.FloatId,
+                RequesterUserId: User.UserId,
+                Category: _form.Category,
+                Purpose: _form.Purpose,
+                Amount: amount,
+                Lines: new[] { new VoucherLineInput(_form.LineDescription, amount) },
+                PayeeName: string.IsNullOrWhiteSpace(_form.Payee) ? null : _form.Payee,
+                TenantId: User.TenantId));
+            Nav.NavigateTo($"/petty-cash/{v.VoucherId}");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class FormModel
+    {
+        public Guid FloatId { get; set; }
+        public VoucherCategory Category { get; set; } = VoucherCategory.Transport;
+        public string Purpose { get; set; } = string.Empty;
+        public decimal AmountGhs { get; set; }
+        public string LineDescription { get; set; } = string.Empty;
+        public string? Payee { get; set; }
+    }
+}

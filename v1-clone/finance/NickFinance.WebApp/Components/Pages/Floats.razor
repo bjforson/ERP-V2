@@ -1,0 +1,53 @@
+@page "/petty-cash/floats"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PettyFloatCreate)]
+@using Microsoft.EntityFrameworkCore
+@inject PettyCashDbContext Db
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Floats</PageTitle>
+
+<NepPageHeader Title="Petty cash floats"
+               Lede="One row per active custodian × site × currency.">
+    <Actions>
+        <a href="/petty-cash/floats/new" class="primary">Create float</a>
+    </Actions>
+</NepPageHeader>
+
+<NepCard>
+    <NepTable TItem="Float" Items="_floats">
+        <Header>
+            <th>Site</th><th>Custodian</th><th>Currency</th>
+            <th class="right">Float</th>
+            <th>Replenish ≥</th><th>Active</th><th>Created</th>
+        </Header>
+        <Row Context="f">
+            <td><code>@f.SiteId.ToString("N")[..8]</code></td>
+            <td><code>@f.CustodianUserId.ToString("N")[..8]</code></td>
+            <td>@f.CurrencyCode</td>
+            <td class="right"><NepMoney Minor="@f.FloatAmountMinor" Currency="@f.CurrencyCode" /></td>
+            <td>@(f.ReplenishThresholdPct)%</td>
+            <td>@(f.IsActive ? "yes" : "no")</td>
+            <td>@f.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd")</td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No floats yet"
+                      Hint="Provision a float for each custodian × site × currency before custodians can submit vouchers."
+                      Icon="@Icons.Material.Filled.AccountBalanceWallet">
+                <Action><a class="primary" href="/petty-cash/floats/new">Create float</a></Action>
+            </NepEmpty>
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<Float> _floats = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _floats = await Db.Floats
+            .Where(f => f.TenantId == User.TenantId)
+            .OrderByDescending(f => f.IsActive).ThenByDescending(f => f.CreatedAt)
+            .ToListAsync();
+    }
+}

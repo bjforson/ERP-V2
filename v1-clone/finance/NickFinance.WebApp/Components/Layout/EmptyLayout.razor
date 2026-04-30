@@ -1,0 +1,15 @@
+@*
+    W3B (2026-04-29) — chrome-less layout used by /access-not-provisioned
+    so a user without an identity row can still see a coherent page (no
+    nav, no PendingApprovalsBadge — those would re-trigger CurrentUser
+    resolution and recursively throw).
+*@
+@inherits LayoutComponentBase
+
+<NepPage>
+    <main>
+        <article class="content">
+            @Body
+        </article>
+    </main>
+</NepPage>

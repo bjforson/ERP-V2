@@ -1,0 +1,32 @@
+@page "/reports/site-pnl"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Site P&amp;L</PageTitle>
+
+<NepPageHeader Title="Site-level P&L"
+               Lede="Profit and loss broken out by physical site (Tema, Kotoka, Takoradi, Aflao, Paga, Elubo)." />
+
+<NepCard Variant="warning">
+    <h3>Pending kernel work</h3>
+    <p>
+        The site-level P&L report needs <code>site_id</code> as a first-class
+        dimension on every <code>finance.ledger_event_lines</code> row. That column
+        doesn't exist yet — the kernel currently only attaches site context at the
+        source-entity level (Voucher, Float), not at the journal-line level.
+    </p>
+    <p>
+        Adding it is a single migration plus a wiring change in
+        <code>LedgerWriter.PostAsync</code> — see the feature backlog under
+        "Site-level P&L". Until that lands, this page is a placeholder.
+    </p>
+    <p>
+        For an interim view, use the
+        <a href="/reports">existing P&L report</a> filtered by date range; site
+        attribution is approximate (derived from the source voucher's float).
+    </p>
+</NepCard>
+
+<NepEmpty Title="Site dimension not yet on ledger lines"
+          Hint="Awaiting kernel migration. Use /reports for the legacy report." />

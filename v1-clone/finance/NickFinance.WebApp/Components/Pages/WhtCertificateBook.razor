@@ -1,0 +1,90 @@
+@page "/ap/wht-certificates"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ApWhtIssue)]
+@using NickFinance.AP
+@inject IWhtCertificateService WhtSvc
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · WHT certificate book</PageTitle>
+
+<NepPageHeader Title="WHT certificate book"
+               Lede="Generate the year-end Withholding Tax certificate book for GRA. Pick a year — the page lists every vendor with WHT activity, with single-vendor cert links and a one-click year-book download." />
+
+<NepCard>
+    <h3>Year</h3>
+    <label>
+        Year of assessment
+        <input type="number" min="2020" max="2099" @bind="_year" @bind:after="ReloadAsync" />
+    </label>
+    @if (_loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (_data.Count == 0)
+    {
+        <NepEmpty Title="@($"No WHT activity for {_year}")"
+                  Hint="Once payments to vendors begin producing WHT certificates, this list will populate."
+                  Icon="@Icons.Material.Filled.PendingActions" />
+    }
+    else
+    {
+        <div class="actions">
+            <a class="primary" href="@($"/pdf/wht-certificate-book/{_year}")" target="_blank" rel="noopener">
+                Generate full year book (@_data.Count vendors)
+            </a>
+        </div>
+    }
+</NepCard>
+
+@if (!_loading && _data.Count > 0)
+{
+    <NepCard>
+        <NepTable TItem="WhtCertificateData" Items="_data">
+            <Header>
+                <th>Vendor</th>
+                <th>TIN</th>
+                <th class="right">Payments</th>
+                <th class="right">Total gross</th>
+                <th class="right">Total WHT</th>
+                <th>Action</th>
+            </Header>
+            <Row Context="d">
+                <td>@d.VendorName</td>
+                <td>@(string.IsNullOrWhiteSpace(d.VendorTin) ? "(none)" : d.VendorTin)</td>
+                <td class="right">@d.Payments.Count</td>
+                <td class="right"><NepMoney Minor="@d.TotalGrossMinor" Currency="GHS" /></td>
+                <td class="right"><NepMoney Minor="@d.TotalWhtMinor" Currency="GHS" /></td>
+                <td>
+                    <a href="@($"/pdf/wht-certificate/{d.VendorId:D}/{_year}")" target="_blank" rel="noopener">
+                        Single cert
+                    </a>
+                </td>
+            </Row>
+            <EmptyState>
+                <NepEmpty Title="(no rows)" Hint="" Icon="@Icons.Material.Filled.Inbox" />
+            </EmptyState>
+        </NepTable>
+    </NepCard>
+}
+
+@code {
+    private int _year = DateTime.UtcNow.Year - 1;  // year-end book is normally for the prior year
+    private bool _loading = true;
+    private IReadOnlyList<WhtCertificateData> _data = Array.Empty<WhtCertificateData>();
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _data = await WhtSvc.GetForYearAsync(_year, User.TenantId);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

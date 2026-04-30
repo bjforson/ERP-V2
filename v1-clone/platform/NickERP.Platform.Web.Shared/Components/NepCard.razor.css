@@ -1,0 +1,25 @@
+.nep-card {
+    background: var(--nep-surface);
+    border: 1px solid var(--nep-border);
+    border-radius: var(--nep-radius-xl);
+    padding: var(--nep-space-5) var(--nep-space-6);
+    margin-bottom: var(--nep-space-4);
+    box-shadow: var(--nep-shadow-sm);
+}
+
+.nep-card-warning {
+    background: var(--nep-warning-50);
+    border-color: var(--nep-warning-200);
+    color: var(--nep-warning-900);
+}
+
+.nep-card-danger {
+    background: var(--nep-danger-50);
+    border-color: var(--nep-danger-200);
+    color: var(--nep-danger-900);
+}
+
+.nep-card-emphasis {
+    background: var(--nep-primary-soft);
+    border-color: var(--nep-primary-200);
+}

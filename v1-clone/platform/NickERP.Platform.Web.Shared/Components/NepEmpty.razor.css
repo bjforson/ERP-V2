@@ -1,0 +1,24 @@
+.nep-empty {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    padding: var(--nep-space-8) var(--nep-space-6);
+    color: var(--nep-text-muted);
+    gap: 6px;
+}
+.nep-empty-icon {
+    width: 56px; height: 56px;
+    border-radius: var(--nep-radius-full);
+    background: var(--nep-neutral-100);
+    color: var(--nep-text-faint);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 8px;
+}
+.nep-empty-title {
+    font-size: 15px; font-weight: 600; color: var(--nep-text);
+}
+.nep-empty-hint {
+    font-size: 13px; color: var(--nep-text-muted);
+    max-width: 480px;
+}
+.nep-empty-action { margin-top: 10px; }

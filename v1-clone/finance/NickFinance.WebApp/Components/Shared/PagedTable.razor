@@ -1,0 +1,170 @@
+@*
+    Pagination + filter wrapper around <NepTable>. Server-side: the
+    parent supplies a <see cref="Fetch"/> delegate that takes
+    <c>(skip, take, filters, ct)</c> and returns a page of rows + the
+    total. The component owns the page-size / page-number state and the
+    filter-strip values; the parent just renders the row template.
+
+    Usage example (ArList.razor):
+
+      <PagedTable TItem="ArInvoice"
+                  Fetch="@LoadAsync"
+                  Filters="_filters">
+          <FilterContent>
+              <div class="pt-filter">
+                  <label>Status</label>
+                  <select @bind="_filters.Status">…</select>
+              </div>
+          </FilterContent>
+          <Header>…</Header>
+          <Row Context="i">…</Row>
+      </PagedTable>
+
+    Filters is an arbitrary record the parent owns. The component re-fetches
+    whenever <see cref="Refresh"/> is called or page-size / page-number
+    changes. Filter-strip onchange handlers should call Refresh().
+*@
+
+@typeparam TItem
+@typeparam TFilters
+
+<NepCard>
+    @if (FilterContent is not null)
+    {
+        <div class="pt-filter-strip">
+            @FilterContent
+        </div>
+    }
+
+    @if (_loading && (_rows is null || _rows.Count == 0))
+    {
+        <NepSkeleton Rows="6" />
+    }
+    else
+    {
+        <NepTable TItem="TItem" Items="_rows" CssClass="@CssClass">
+            <Header>@Header</Header>
+            <Row Context="item">@Row?.Invoke(item)</Row>
+            <EmptyState>
+                @if (EmptyState is not null) { @EmptyState }
+                else { <NepEmpty Title="Nothing here yet" /> }
+            </EmptyState>
+        </NepTable>
+
+        <div class="pt-pager">
+            <span>
+                @if (_total > 0)
+                {
+                    var first = (_page * _pageSize) + 1;
+                    var last = Math.Min(first + _pageSize - 1, _total);
+                    <text>Showing @first–@last of @_total.ToString("N0")</text>
+                }
+                else
+                {
+                    <text>No rows</text>
+                }
+            </span>
+            <span class="pt-page-size">
+                <label class="muted small">Per page</label>
+                <select @bind="@_pageSizeBound">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </span>
+            <span class="pt-pager-controls">
+                <button type="button" @onclick="PrevAsync" disabled="@(_page == 0 || _loading)">‹ Prev</button>
+                <span>Page @(_page + 1) of @TotalPages</span>
+                <button type="button" @onclick="NextAsync" disabled="@(_page + 1 >= TotalPages || _loading)">Next ›</button>
+            </span>
+        </div>
+    }
+</NepCard>
+
+@code {
+    /// <summary>Server-side fetcher: <c>(skip, take, filters, ct)</c> → page of rows + total count.</summary>
+    [Parameter, EditorRequired]
+    public Func<int, int, TFilters, CancellationToken, Task<PagedResult<TItem>>>? Fetch { get; set; }
+
+    /// <summary>Filter object — the page owns the type and the bindings.</summary>
+    [Parameter] public TFilters? Filters { get; set; }
+
+    [Parameter] public RenderFragment? FilterContent { get; set; }
+    [Parameter] public RenderFragment? Header { get; set; }
+    [Parameter] public RenderFragment<TItem>? Row { get; set; }
+    [Parameter] public RenderFragment? EmptyState { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+
+    [Parameter] public int PageSize { get; set; } = 25;
+    [Parameter] public int Page { get; set; } = 0;
+
+    private List<TItem> _rows = new();
+    private int _total;
+    private int _page;
+    private int _pageSize = 25;
+    private bool _loading;
+    private CancellationTokenSource? _cts;
+
+    private int TotalPages => _total == 0 ? 1 : (int)Math.Ceiling(_total / (double)_pageSize);
+
+    private int _pageSizeBound
+    {
+        get => _pageSize;
+        set { _pageSize = value; _page = 0; _ = RefreshAsync(); }
+    }
+
+    protected override void OnInitialized()
+    {
+        _pageSize = PageSize;
+        _page = Page;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>Public — call after the parent mutates the filter object.</summary>
+    public async Task RefreshAsync()
+    {
+        if (Fetch is null) return;
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        _loading = true;
+        StateHasChanged();
+        try
+        {
+            var result = await Fetch(_page * _pageSize, _pageSize, Filters!, _cts.Token);
+            _rows = result.Rows.ToList();
+            _total = result.Total;
+        }
+        catch (OperationCanceledException) { /* superseded */ }
+        catch
+        {
+            _rows = new List<TItem>();
+            _total = 0;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task PrevAsync()
+    {
+        if (_page == 0) return;
+        _page--;
+        await RefreshAsync();
+    }
+
+    private async Task NextAsync()
+    {
+        if (_page + 1 >= TotalPages) return;
+        _page++;
+        await RefreshAsync();
+    }
+}

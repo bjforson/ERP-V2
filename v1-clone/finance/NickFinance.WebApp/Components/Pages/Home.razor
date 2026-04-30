@@ -1,0 +1,125 @@
+@page "/"
+@* Home page intentionally policy-free. The fallback "RequireAuthenticatedUser"
+   still gates anonymous traffic; authenticated users without any role land
+   here and can navigate to ask HR for access. ViewReports gate would 403
+   freshly-onboarded users before they can be granted a role. *@
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.AR
+@using NickFinance.PettyCash.Approvals
+@using NickFinance.PettyCash.Disbursement
+@using NickFinance.PettyCash.Receipts
+@inject IFinancialReports Reports
+@inject CurrentUser User
+@inject PettyCashDbContext Pc
+@inject ArDbContext Ar
+@inject IEvatProvider Evat
+@inject IOcrEngine Ocr
+@inject IDisbursementChannel Momo
+@inject IApprovalNotifier WaNotifier
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Home</PageTitle>
+
+<NepPageHeader Title="NickFinance"
+               Lede="@($"Welcome, {User.DisplayName}. Tenant {User.TenantId} · {DateTimeOffset.UtcNow:u}.")" />
+
+@if (_pinned.Count > 0)
+{
+    <NepCard Variant="warning">
+        <details open>
+            <summary><strong>@_pinned.Count integration(s) in sandbox / fallback mode</strong></summary>
+            <p>These integrations are wired but use a non-production fallback because the credential isn't set yet. Restart the service after setting the env var to activate.</p>
+            <ul>
+                @foreach (var p in _pinned)
+                {
+                    <li><strong>@p.Title</strong> — set <code>@p.EnvVar</code> to a real value. <span class="muted">@p.Description</span></li>
+                }
+            </ul>
+        </details>
+    </NepCard>
+}
+
+<div class="tile-row">
+    <NepStat Label="Open vouchers" Value="@_openVouchers.ToString("N0")"
+             LinkUrl="/petty-cash" LinkText="Manage" />
+    <NepStat Label="Open invoices" Value="@_openInvoices.ToString("N0")"
+             LinkUrl="/ar" LinkText="Manage" />
+    <NepStat Label="Outstanding AR" Value="@($"GHS {_outstandingAr:N0}")"
+             LinkUrl="/reports/aging" LinkText="Aging" />
+    <NepStat Label="YTD Net (P&L)" Value="@($"GHS {_ytdNet:N0}")"
+             LinkUrl="/reports" LinkText="P&L"
+             Tone="@(_ytdNet >= 0 ? "positive" : "negative")" />
+</div>
+
+<NepCard>
+    <h3>What works today</h3>
+    <ul class="feature-list">
+        <li><strong>Petty cash</strong> — float setup, voucher submit/approve/disburse, multi-step YAML approval policies, MoMo via NickComms gateway, receipts with duplicate detection, cash counts, budgets, fraud signals (8 rules).</li>
+        <li><strong>Accounts receivable</strong> — customer master, invoice draft/issue (Ghana tax: NHIL+GETFund+COVID compounded with VAT), e-VAT IRN issuance, customer receipts, scan-to-invoice auto-draft, aging report.</li>
+        <li><strong>Reports</strong> — trial balance, balance sheet, P&amp;L, GL detail. Each rolls live from the journal — no batch ETL.</li>
+        <li><strong>Underneath it all</strong> — append-only journal kernel with deferred balance-trigger constraint, idempotent posts, period lock, full audit reachable from <code>SourceModule</code> + <code>SourceEntityId</code>.</li>
+    </ul>
+</NepCard>
+
+@code {
+    private record PinnedItem(string Title, string EnvVar, string Description);
+
+    private int _openVouchers;
+    private int _openInvoices;
+    private long _outstandingAr;
+    private long _ytdNet;
+    private List<PinnedItem> _pinned = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Build the pinned-items banner once on page load by inspecting the
+        // registered DI singletons via their stable identifier strings.
+        if (Evat.Provider == "stub")
+        {
+            _pinned.Add(new PinnedItem(
+                "GRA e-VAT — sandbox mode",
+                "NICKFINANCE_EVAT_API_KEY",
+                "Invoices issue with SANDBOX-IRN-... and are not submitted to GRA."));
+        }
+        if (Ocr.Vendor == "noop")
+        {
+            _pinned.Add(new PinnedItem(
+                "Receipt OCR — disabled",
+                "AZURE_DOCUMENT_INTELLIGENCE_KEY",
+                "Receipt amount/date won't auto-fill from photos."));
+        }
+        if (Momo.Channel == "cash")
+        {
+            _pinned.Add(new PinnedItem(
+                "MoMo disbursement — offline cash mode",
+                "NICKCOMMS_API_KEY_NICKFINANCE",
+                "Disbursement assumes cash handed over physically; no MoMo rail call."));
+        }
+        if (WaNotifier.Channel == "noop")
+        {
+            _pinned.Add(new PinnedItem(
+                "WhatsApp approvals — disabled",
+                "WHATSAPP_CLOUD_API_TOKEN",
+                "High-value vouchers won't ping the approver's phone; in-UI queue still works."));
+        }
+
+        _openVouchers = await Pc.Vouchers
+            .CountAsync(v => v.TenantId == User.TenantId
+                          && (v.Status == VoucherStatus.Submitted || v.Status == VoucherStatus.Approved));
+
+        _openInvoices = await Ar.Invoices
+            .CountAsync(i => i.TenantId == User.TenantId
+                          && (i.Status == ArInvoiceStatus.Issued || i.Status == ArInvoiceStatus.PartiallyPaid));
+
+        _outstandingAr = await Ar.Invoices
+            .Where(i => i.TenantId == User.TenantId
+                     && (i.Status == ArInvoiceStatus.Issued || i.Status == ArInvoiceStatus.PartiallyPaid))
+            .SumAsync(i => (long?)(i.GrossMinor - i.PaidMinor)) ?? 0L;
+        _outstandingAr /= 100;
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var yearStart = new DateOnly(today.Year, 1, 1);
+        var pnl = await Reports.ProfitAndLossAsync("GHS", yearStart, today, User.TenantId);
+        _ytdNet = pnl.NetResult.Minor / 100;
+    }
+}

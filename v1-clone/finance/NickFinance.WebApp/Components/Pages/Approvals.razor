@@ -1,0 +1,63 @@
+@page "/approvals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PettyVoucherApprove)]
+@using Microsoft.EntityFrameworkCore
+@inject PettyCashDbContext Pc
+@inject IPettyCashService Svc
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Approvals</PageTitle>
+
+<NepPageHeader Title="Approvals queue"
+               Lede="@($"Vouchers awaiting your decision (assigned to {User.UserId.ToString("N")[..8]}).")" />
+
+<NepCard>
+    <NepTable TItem="Row" Items="_rows">
+        <Header>
+            <th>No.</th><th>Requester</th><th>Category</th><th>Purpose</th>
+            <th class="right">Amount</th><th>Step</th><th></th>
+        </Header>
+        <Row Context="row">
+            <td><code>@row.VoucherNo</code></td>
+            <td><code>@row.Requester.ToString("N")[..8]</code></td>
+            <td>@row.Category</td>
+            <td>@row.Purpose</td>
+            <td class="right"><NepMoney Minor="@row.AmountMinor" Currency="GHS" /></td>
+            <td>@row.StepNo · @row.Role</td>
+            <td><a href="@($"/petty-cash/{row.VoucherId}")">decide</a></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="Nothing awaiting your decision"
+                      Hint="When a voucher's policy assigns an approval step to you, it'll show up here."
+                      Icon="@Icons.Material.Filled.TaskAlt" />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private record Row(Guid VoucherId, string VoucherNo, Guid Requester, VoucherCategory Category, string Purpose, long AmountMinor, short StepNo, string Role);
+    private List<Row> _rows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Voucher approvals assigned to me + still pending — joined with the voucher.
+        var pending = await Pc.VoucherApprovals
+            .Where(a => a.TenantId == User.TenantId && a.Decision == ApprovalDecision.Pending && a.AssignedToUserId == User.UserId)
+            .OrderBy(a => a.CreatedAt)
+            .ToListAsync();
+        var voucherIds = pending.Select(a => a.VoucherId).ToList();
+        var vouchers = await Pc.Vouchers
+            .Where(v => voucherIds.Contains(v.VoucherId))
+            .ToDictionaryAsync(v => v.VoucherId, v => v);
+
+        _rows = pending
+            .Where(a => vouchers.ContainsKey(a.VoucherId))
+            .Select(a =>
+            {
+                var v = vouchers[a.VoucherId];
+                return new Row(v.VoucherId, v.VoucherNo, v.RequesterUserId, v.Category, v.Purpose, v.AmountRequestedMinor, a.StepNo, a.Role);
+            })
+            .OrderBy(r => r.VoucherNo)
+            .ToList();
+    }
+}

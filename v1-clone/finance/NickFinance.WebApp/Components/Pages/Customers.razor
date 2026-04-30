@@ -1,0 +1,84 @@
+@page "/ar/customers"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ArCustomerManage)]
+@using Microsoft.EntityFrameworkCore
+@inject ArDbContext Db
+@inject IArService Svc
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Customers</PageTitle>
+
+<NepPageHeader Title="Customers" />
+
+<NepCard>
+    <h3>Add customer</h3>
+    <EditForm Model="_form" OnValidSubmit="AddAsync" FormName="newCustomer">
+        <label>Code <input type="text" @bind="_form.Code" required /></label>
+        <label>Name <input type="text" @bind="_form.Name" required /></label>
+        <label>TIN <input type="text" @bind="_form.Tin" /></label>
+        <label>Email <input type="text" @bind="_form.Email" /></label>
+        <label>VAT-registered <input type="checkbox" @bind="_form.IsVatRegistered" /></label>
+        <button type="submit" class="primary" disabled="@_busy">Add</button>
+        @if (!string.IsNullOrEmpty(_error)) { <div class="error">@_error</div> }
+    </EditForm>
+</NepCard>
+
+<NepCard>
+    <NepTable TItem="Customer" Items="_customers">
+        <Header>
+            <th>Code</th><th>Name</th><th>TIN</th><th>VAT</th><th>Active</th>
+        </Header>
+        <Row Context="c">
+            <td><code>@c.Code</code></td>
+            <td>@c.Name</td>
+            <td>@c.Tin</td>
+            <td>@(c.IsVatRegistered ? "yes" : "no")</td>
+            <td>@(c.IsActive ? "active" : "inactive")</td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No customers yet"
+                      Hint="Add a customer in the form above to start drafting AR invoices."
+                      Icon="@Icons.Material.Filled.PersonAdd" />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<Customer> _customers = new();
+    private CreateCustomerForm _form = new();
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _customers = await Db.Customers
+            .Where(c => c.TenantId == User.TenantId)
+            .OrderBy(c => c.Code).ToListAsync();
+    }
+
+    private async Task AddAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            await Svc.CreateCustomerAsync(new CreateCustomerRequest(
+                _form.Code, _form.Name, _form.Tin, _form.IsVatRegistered, _form.Email,
+                TenantId: User.TenantId));
+            _form = new CreateCustomerForm();
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private sealed class CreateCustomerForm
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? Tin { get; set; }
+        public string? Email { get; set; }
+        public bool IsVatRegistered { get; set; }
+    }
+}

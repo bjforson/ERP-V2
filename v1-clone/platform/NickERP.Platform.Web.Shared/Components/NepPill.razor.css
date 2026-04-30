@@ -1,0 +1,14 @@
+.nep-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 0.15rem 0.6rem;
+    border-radius: var(--nep-radius-full);
+    font-size: 0.72rem; font-weight: 600;
+    letter-spacing: 0.05em;
+    background: var(--nep-neutral-100);
+    color: var(--nep-text-muted);
+    border: 1px solid transparent;
+}
+.nep-pill-ok      { background: var(--nep-success-100); color: var(--nep-success-800); border-color: var(--nep-success-200); }
+.nep-pill-warn    { background: var(--nep-warning-100); color: var(--nep-warning-800); border-color: var(--nep-warning-200); }
+.nep-pill-bad     { background: var(--nep-danger-100);  color: var(--nep-danger-800);  border-color: var(--nep-danger-200);  }
+.nep-pill-sandbox { background: var(--nep-primary-soft); color: var(--nep-primary-700); border-color: var(--nep-primary-200); }

@@ -1,0 +1,114 @@
+@page "/ar/receipt/{ReceiptId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@using Microsoft.EntityFrameworkCore
+@inject ArDbContext Db
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Receipt</PageTitle>
+
+@if (_loading)
+{
+    <p>Loading…</p>
+}
+else if (_receipt is null)
+{
+    <NepEmpty Title="Receipt not found"
+              Hint="The receipt may have been deleted or belongs to a different tenant."
+              Icon="@Icons.Material.Filled.SearchOff" />
+}
+else
+{
+    <NepPageHeader Title="@($"Receipt {_receiptDisplay}")" />
+    <p class="lede">
+        Recorded @_receipt.RecordedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")
+        for invoice <a href="@($"/ar/{_receipt.ArInvoiceId}")"><code>@(_invoice?.InvoiceNo ?? "(unknown)")</code></a>.
+    </p>
+
+    <NepCard>
+        <h3>Summary</h3>
+        <dl class="kv">
+            <dt>Customer</dt><dd>@(_customer?.Name ?? "(unknown)")</dd>
+            <dt>Invoice</dt><dd><code>@(_invoice?.InvoiceNo ?? "(unissued)")</code></dd>
+            <dt>Amount</dt><dd><NepMoney Minor="@_receipt.AmountMinor" Currency="@_receipt.CurrencyCode" /></dd>
+            <dt>Receipt date</dt><dd>@_receipt.ReceiptDate.ToString("yyyy-MM-dd")</dd>
+            <dt>Payment method</dt><dd>@DescribeChannel(_receipt.CashAccount)</dd>
+            <dt>Reference</dt><dd>@(string.IsNullOrWhiteSpace(_receipt.Reference) ? "—" : _receipt.Reference)</dd>
+            @if (_invoice is not null)
+            {
+                <dt>Invoice outstanding (after this receipt)</dt>
+                <dd><NepMoney Minor="@_invoice.OutstandingMinor" Currency="@_invoice.CurrencyCode" /></dd>
+            }
+        </dl>
+    </NepCard>
+
+    <NepCard>
+        <h3>Audit trail</h3>
+        <dl class="kv">
+            <dt>Recorded by</dt><dd><code>@_receipt.RecordedByUserId.ToString("N")[..8]</code></dd>
+            <dt>Recorded at</dt><dd>@_receipt.RecordedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</dd>
+            <dt>Ledger event</dt>
+            <dd>
+                @if (_receipt.LedgerEventId is { } eid)
+                {
+                    <a href="@($"/journal/{eid}")"><code>@eid.ToString("N")[..12]</code></a>
+                }
+                else
+                {
+                    <span>(unposted)</span>
+                }
+            </dd>
+        </dl>
+    </NepCard>
+
+    <NepCard>
+        <h3>Documents</h3>
+        <p>
+            <a class="primary" href="@($"/pdf/receipt/{_receipt.ArReceiptId}")" target="_blank" rel="noopener">
+                Download PDF
+            </a>
+        </p>
+    </NepCard>
+}
+
+@code {
+    [Parameter] public Guid ReceiptId { get; set; }
+
+    private bool _loading = true;
+    private ArReceipt? _receipt;
+    private ArInvoice? _invoice;
+    private Customer? _customer;
+    private string _receiptDisplay = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _receipt = await Db.Receipts
+                .FirstOrDefaultAsync(r => r.ArReceiptId == ReceiptId && r.TenantId == User.TenantId);
+            if (_receipt is null) return;
+            _receiptDisplay = $"R-{_receipt.ArReceiptId.ToString("N")[..8].ToUpperInvariant()}";
+
+            _invoice = await Db.Invoices.FirstOrDefaultAsync(i => i.ArInvoiceId == _receipt.ArInvoiceId);
+            if (_invoice is not null)
+            {
+                _customer = await Db.Customers.FirstOrDefaultAsync(c => c.CustomerId == _invoice.CustomerId);
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string DescribeChannel(string code) => code switch
+    {
+        "1010" => "Cash on hand",
+        "1020" => "MoMo MTN",
+        "1030" => "Bank GCB",
+        "1031" => "Bank Ecobank",
+        "1032" => "Bank Stanbic",
+        _ => $"Account {code}"
+    };
+}

@@ -1,0 +1,233 @@
+@page "/journal/new"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.JournalPost)]
+@using Microsoft.EntityFrameworkCore
+@inject IJournalService Journals
+@inject IPeriodService Periods
+@inject ICoaService Coa
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · New manual journal</PageTitle>
+
+<NepPageHeader Title="New manual journal"
+               Lede="Post an adjusting / closing entry. Validates DR=CR pre-flight; control accounts cannot be hit manually." />
+
+<NepCard>
+    <label>
+        Effective date
+        <input type="date" @bind="_effectiveDate" @bind:after="ResolvePeriodAsync" />
+    </label>
+    <p class="muted">
+        Period:
+        @if (_period is null)
+        {
+            <span>resolving…</span>
+        }
+        else
+        {
+            <span>@_period.FiscalYear-@_period.MonthNumber.ToString("D2") (@_period.Status)</span>
+        }
+    </p>
+    <label>
+        Narration
+        <input type="text" maxlength="500" @bind="_narration" @bind:event="oninput" placeholder="Why this entry exists" />
+    </label>
+</NepCard>
+
+<NepCard>
+    <h3>Lines</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Account</th><th>DR (cents)</th><th>CR (cents)</th><th>Memo</th><th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @for (var i = 0; i < _lines.Count; i++)
+            {
+                var idx = i;
+                var l = _lines[idx];
+                <tr>
+                    <td>
+                        <input list="coa-codes" type="text" value="@l.GlAccount"
+                               @oninput="(e) => OnAccountInput(idx, (string?)e.Value)"
+                               placeholder="e.g. 6300" style="min-width:9rem" />
+                    </td>
+                    <td>
+                        <input type="number" min="0" value="@l.DebitMinor"
+                               @oninput="(e) => OnDrInput(idx, (string?)e.Value)" style="width:8rem" />
+                    </td>
+                    <td>
+                        <input type="number" min="0" value="@l.CreditMinor"
+                               @oninput="(e) => OnCrInput(idx, (string?)e.Value)" style="width:8rem" />
+                    </td>
+                    <td>
+                        <input type="text" maxlength="500" value="@l.LineMemo"
+                               @oninput="(e) => OnMemoInput(idx, (string?)e.Value)" />
+                    </td>
+                    <td>
+                        <button class="secondary" @onclick="() => RemoveLine(idx)">Remove</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+        <tfoot>
+            <tr class="total">
+                <td>Totals</td>
+                <td>@(_drSum / 100m).ToString("N2")</td>
+                <td>@(_crSum / 100m).ToString("N2")</td>
+                <td>
+                    @if (_balanced)
+                    {
+                        <NepPill Tone="ok">balanced</NepPill>
+                    }
+                    else
+                    {
+                        <NepPill Tone="bad">unbalanced (diff @((_drSum - _crSum) / 100m).ToString("N2"))</NepPill>
+                    }
+                </td>
+                <td>
+                    <button class="secondary" @onclick="AddLine">Add line</button>
+                </td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <datalist id="coa-codes">
+        @foreach (var c in _coaCodes)
+        {
+            <option value="@c.Code">@c.Code — @c.Name</option>
+        }
+    </datalist>
+</NepCard>
+
+<NepCard>
+    <ConfirmButton Class="primary"
+                   Confirm="@($"Post manual journal: {_narration} (DR/CR {(_drSum / 100m):N2})?")"
+                   Disabled="@(!CanPost())"
+                   OnConfirmed="PostAsync">
+        Post journal
+    </ConfirmButton>
+    <a href="/journal" class="secondary">Cancel</a>
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <p class="error">@_error</p>
+    }
+</NepCard>
+
+@code {
+    private DateOnly _effectiveDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private string _narration = "";
+    private AccountingPeriod? _period;
+    private string? _error;
+    private List<EditLine> _lines = new();
+    private long _drSum;
+    private long _crSum;
+    private bool _balanced;
+    private List<(string Code, string Name)> _coaCodes = new();
+
+    private sealed class EditLine
+    {
+        public string GlAccount { get; set; } = "";
+        public long DebitMinor { get; set; }
+        public long CreditMinor { get; set; }
+        public string? LineMemo { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _lines.Add(new EditLine());
+        _lines.Add(new EditLine());
+        await ResolvePeriodAsync();
+        await LoadCoaCodesAsync();
+        Recalc();
+    }
+
+    private async Task ResolvePeriodAsync()
+    {
+        try
+        {
+            _period = await Periods.GetByDateAsync(_effectiveDate, User.TenantId);
+            if (_period is null)
+            {
+                _period = await Periods.CreateAsync(_effectiveDate.Year, (byte)_effectiveDate.Month, User.TenantId);
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task LoadCoaCodesAsync()
+    {
+        // Pull a small set of common GL codes — covers the bulk of manual
+        // postings (expense/income/equity). Phase 2A's <AccountPicker>
+        // replaces this datalist once it lands.
+        var likely = new[] { "1010", "1020", "1030", "1040", "1500", "2010", "2110", "3000",
+                             "4000", "4010", "5040", "6300", "6310", "6400", "6410", "6700", "6900", "7100", "7110" };
+        var found = await Coa.ActiveSetAsync(likely, User.TenantId);
+        var rows = new List<(string, string)>();
+        foreach (var code in found)
+        {
+            var acct = await Coa.FindAsync(code, User.TenantId);
+            if (acct is not null) rows.Add((acct.Code, acct.Name));
+        }
+        _coaCodes = rows;
+    }
+
+    private void OnAccountInput(int i, string? v)  { _lines[i].GlAccount = (v ?? "").Trim(); Recalc(); }
+    private void OnDrInput(int i, string? v)       { _lines[i].DebitMinor = ParseLong(v); Recalc(); }
+    private void OnCrInput(int i, string? v)       { _lines[i].CreditMinor = ParseLong(v); Recalc(); }
+    private void OnMemoInput(int i, string? v)     { _lines[i].LineMemo = v; }
+
+    private static long ParseLong(string? s)
+        => long.TryParse(s, out var n) && n >= 0 ? n : 0;
+
+    private void AddLine() { _lines.Add(new EditLine()); Recalc(); }
+
+    private void RemoveLine(int i)
+    {
+        if (_lines.Count <= 2) return;
+        _lines.RemoveAt(i);
+        Recalc();
+    }
+
+    private void Recalc()
+    {
+        _drSum = _lines.Sum(l => l.DebitMinor);
+        _crSum = _lines.Sum(l => l.CreditMinor);
+        _balanced = _drSum > 0 && _drSum == _crSum;
+    }
+
+    private bool CanPost()
+        => _period is not null
+        && _balanced
+        && _lines.Count >= 2
+        && !string.IsNullOrWhiteSpace(_narration)
+        && _lines.All(l =>
+            !string.IsNullOrWhiteSpace(l.GlAccount)
+            && (l.DebitMinor > 0) != (l.CreditMinor > 0));
+
+    private async Task PostAsync()
+    {
+        if (_period is null) return;
+        _error = null;
+        try
+        {
+            var req = new ManualJournalRequest(
+                EffectiveDate: _effectiveDate,
+                PeriodId: _period.PeriodId,
+                Narration: _narration,
+                ActorUserId: User.UserId,
+                Lines: _lines.Select(l => new ManualJournalLine(
+                    GlAccount: l.GlAccount,
+                    DebitMinor: l.DebitMinor,
+                    CreditMinor: l.CreditMinor,
+                    CurrencyCode: "GHS",
+                    LineMemo: l.LineMemo)).ToList(),
+                TenantId: User.TenantId);
+            var eventId = await Journals.PostManualAsync(req);
+            Nav.NavigateTo($"/journal/{eventId}");
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+}

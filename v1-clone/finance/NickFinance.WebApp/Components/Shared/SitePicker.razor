@@ -1,0 +1,56 @@
+@*
+    Site picker. Wraps the generic <EntityPicker> over the six hardcoded
+    Nick TC-Scan sites for now (Tema HQ, Kotoka, Takoradi, Aflao, Paga,
+    Elubo) with the SHA-256-derived deterministic GUIDs the smoke runner
+    and the FloatNew Quick-Fill buttons use.
+
+    When Track A.3 (Tenancy / Sites) lands, swap <see cref="SiteCatalog"/>
+    for an EF-backed query against the new <c>sites</c> table — the
+    picker contract stays the same.
+*@
+
+<EntityPicker TItem="SiteEntry"
+              Value="@Value"
+              ValueChanged="OnSelectedAsync"
+              Search="SearchAsync"
+              LabelOf="@(s => s.Name)"
+              Placeholder="@Placeholder"
+              Disabled="@Disabled"
+              CssClass="@CssClass">
+    <RowTemplate Context="s">
+        <strong>@s.Name</strong>
+        <span class="muted small">· @s.Code</span>
+    </RowTemplate>
+</EntityPicker>
+
+@code {
+    [Parameter] public SiteEntry? Value { get; set; }
+    [Parameter] public EventCallback<SiteEntry?> ValueChanged { get; set; }
+
+    /// <summary>Bound site GUID — convenience parameter for callers that hold a Guid.</summary>
+    [Parameter] public Guid SiteId { get; set; }
+    [Parameter] public EventCallback<Guid> SiteIdChanged { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; } = "Search a site…";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // Hydrate Value from SiteId for callers that bind by GUID only.
+        if (Value is null && SiteId != Guid.Empty)
+        {
+            Value = SiteCatalog.ById(SiteId);
+        }
+    }
+
+    private Task<IReadOnlyList<SiteEntry>> SearchAsync(string query, CancellationToken ct)
+        => Task.FromResult(SiteCatalog.Search(query));
+
+    private async Task OnSelectedAsync(SiteEntry? site)
+    {
+        Value = site;
+        await ValueChanged.InvokeAsync(site);
+        await SiteIdChanged.InvokeAsync(site?.SiteId ?? Guid.Empty);
+    }
+}

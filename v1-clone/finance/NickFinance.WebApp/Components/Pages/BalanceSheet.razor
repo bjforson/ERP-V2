@@ -1,0 +1,50 @@
+@page "/reports/bs"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@inject IFinancialReports Reports
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Balance Sheet</PageTitle>
+
+<NepPageHeader Title="@($"Balance sheet · {_asOf:yyyy-MM-dd}")" />
+
+<NepCard>
+    <label>As-of date <input type="date" @bind="_asOf" /></label>
+    <button class="primary" @onclick="ReloadAsync">Reload</button>
+</NepCard>
+
+@if (_bs is not null)
+{
+    <p class="muted">
+        @if (_bs.IsBalanced) { <NepPill Tone="ok">Assets = Liabilities + Equity</NepPill> }
+        else                 { <NepPill Tone="bad">NOT balanced — investigate.</NepPill> }
+    </p>
+    @foreach (var s in _bs.Sections)
+    {
+        <NepCard>
+            <h3>@s.Heading</h3>
+            <table>
+                <thead><tr><th>Code</th><th>Account</th><th class="right">Balance</th></tr></thead>
+                <tbody>
+                    @foreach (var l in s.Lines)
+                    {
+                        <tr><td><code>@l.AccountCode</code></td><td>@l.AccountName</td><td class="right"><NepMoney Minor="@l.Balance.Minor" /></td></tr>
+                    }
+                    <tr class="total"><td></td><td>Total @s.Heading</td><td class="right"><NepMoney Minor="@s.SectionTotal.Minor" /></td></tr>
+                </tbody>
+            </table>
+        </NepCard>
+    }
+    <NepCard>
+        <p>Total assets: <strong><NepMoney Minor="@_bs.TotalAssets.Minor" /></strong></p>
+        <p>Total liabilities + equity: <strong><NepMoney Minor="@_bs.TotalLiabilitiesAndEquity.Minor" /></strong></p>
+    </NepCard>
+}
+
+@code {
+    private DateOnly _asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+    private BalanceSheetReport? _bs;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+    private async Task ReloadAsync() => _bs = await Reports.BalanceSheetAsync("GHS", _asOf, User.TenantId);
+}

@@ -1,0 +1,42 @@
+.nep-table-wrap {
+    overflow-x: auto;
+    border-radius: var(--nep-radius-lg);
+    border: 1px solid var(--nep-border);
+    background: var(--nep-surface);
+}
+
+::deep .nep-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    color: var(--nep-text);
+}
+::deep .nep-table th,
+::deep .nep-table td {
+    border-bottom: 1px solid var(--nep-border);
+    padding: 0.5rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+}
+::deep .nep-table thead th {
+    background: var(--nep-neutral-100);
+    color: var(--nep-text-muted);
+    font-weight: 600;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--nep-border);
+    position: sticky; top: 0;
+}
+::deep .nep-table tbody tr:last-child td { border-bottom: none; }
+::deep .nep-table tbody tr:hover { background: var(--nep-bg); }
+::deep .nep-table .right { text-align: right; }
+::deep .nep-table tr.total td {
+    font-weight: 600;
+    background: var(--nep-bg);
+}
+::deep .nep-th-sort { cursor: pointer; user-select: none; }
+::deep .nep-th-sort:hover { background: var(--nep-bg-sunken); }
+::deep .nep-th-sort-active { color: var(--nep-primary); }
+::deep .nep-th-sort-label { margin-right: 4px; }
+::deep .nep-table-empty-row td { border-bottom: none; padding: 0; }

@@ -1,0 +1,62 @@
+@page "/journal"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.JournalView)]
+@using Microsoft.EntityFrameworkCore
+@inject LedgerDbContext Ledger
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Journals</PageTitle>
+
+<NepPageHeader Title="Manual journals"
+               Lede="Recent manual (accountant) journal entries. Module-driven postings live in their own modules; these are the adjusting / closing entries." />
+
+<NepCard>
+    <a href="/journal/new" class="primary">New journal</a>
+    <ExportButton TItem="Row" Items="_rows" Filename="manual-journals" />
+</NepCard>
+
+<NepCard>
+    <NepTable TItem="Row" Items="_rows">
+        <Header>
+            <th>Date</th><th>Narration</th><th class="right">Lines</th><th class="right">Total (GHS)</th><th>Actor</th><th></th>
+        </Header>
+        <Row Context="r">
+            <td>@r.Date.ToString("yyyy-MM-dd")</td>
+            <td>@r.Narration</td>
+            <td class="right">@r.Lines</td>
+            <td class="right"><NepMoney Minor="@r.TotalMinor" /></td>
+            <td><code>@r.ActorUserId.ToString().Substring(0, 8)</code></td>
+            <td><a href="@($"/journal/{r.EventId}")">View</a></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No manual journals posted yet" Hint="Click 'New journal' to post your first adjusting entry." />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    public sealed record Row(Guid EventId, DateOnly Date, string Narration, int Lines, long TotalMinor, Guid ActorUserId);
+
+    private IReadOnlyList<Row> _rows = Array.Empty<Row>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var raw = await Ledger.Events
+            .AsNoTracking()
+            .Where(e => e.TenantId == User.TenantId && e.SourceModule == "manual")
+            .OrderByDescending(e => e.EffectiveDate)
+            .ThenByDescending(e => e.CommittedAt)
+            .Take(200)
+            .Select(e => new
+            {
+                e.EventId,
+                e.EffectiveDate,
+                e.Narration,
+                e.ActorUserId,
+                LineCount = e.Lines.Count,
+                TotalDr = e.Lines.Sum(l => (long?)l.DebitMinor) ?? 0L,
+            })
+            .ToListAsync();
+        _rows = raw.Select(r => new Row(r.EventId, r.EffectiveDate, r.Narration, r.LineCount, r.TotalDr, r.ActorUserId)).ToList();
+    }
+}

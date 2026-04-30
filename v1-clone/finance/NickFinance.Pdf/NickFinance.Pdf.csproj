@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickFinance.Pdf</RootNamespace>
+    <AssemblyName>NickFinance.Pdf</AssemblyName>
+    <Description>QuestPDF-backed PDF generators for NickFinance — invoices, petty-cash vouchers, receipts. Community license; see LICENSING.md.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QuestPDF" Version="2026.2.4" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickFinance.AR\NickFinance.AR.csproj" />
+    <ProjectReference Include="..\NickFinance.AP\NickFinance.AP.csproj" />
+    <ProjectReference Include="..\NickFinance.PettyCash\NickFinance.PettyCash.csproj" />
+    <ProjectReference Include="..\NickFinance.Coa\NickFinance.Coa.csproj" />
+  </ItemGroup>
+
+</Project>

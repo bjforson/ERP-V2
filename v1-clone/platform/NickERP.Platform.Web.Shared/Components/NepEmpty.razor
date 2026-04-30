@@ -1,0 +1,27 @@
+@*
+    Empty-state block. Use inside a NepTable's <EmptyState> slot, or as a
+    standalone "coming soon" / "nothing here yet" placeholder.
+*@
+
+<div class="nep-empty">
+    @if (!string.IsNullOrEmpty(Icon))
+    {
+        <div class="nep-empty-icon"><MudIcon Icon="@Icon" Style="font-size:28px;" /></div>
+    }
+    <div class="nep-empty-title">@Title</div>
+    @if (!string.IsNullOrEmpty(Hint))
+    {
+        <div class="nep-empty-hint">@Hint</div>
+    }
+    @if (Action is not null)
+    {
+        <div class="nep-empty-action">@Action</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public RenderFragment? Action { get; set; }
+}

@@ -1,0 +1,39 @@
+@*
+    A clickable <th> that participates in NepTable's sort. Uses CascadingValue
+    to find its parent NepTable and ask it to sort. Renders a chevron when
+    this header is the active sort column.
+
+    Wraps a generic NepTable<TItem>. The CascadingValue is captured loosely as
+    object since C# generics don't survive cascading parameters in Blazor.
+*@
+
+@typeparam TItem
+
+<th class="nep-th-sort @(IsActive ? "nep-th-sort-active" : "")"
+    role="button" @onclick="ClickAsync">
+    <span class="nep-th-sort-label">@ChildContent</span>
+    @if (IsActive)
+    {
+        <MudIcon Icon="@(Parent!.SortDescending ? Icons.Material.Filled.ArrowDownward : Icons.Material.Filled.ArrowUpward)"
+                 Style="font-size:14px;vertical-align:middle;" />
+    }
+    else
+    {
+        <MudIcon Icon="@Icons.Material.Filled.UnfoldMore"
+                 Style="font-size:14px;vertical-align:middle;color:var(--nep-text-faint);" />
+    }
+</th>
+
+@code {
+    [Parameter, EditorRequired] public string Column { get; set; } = "";
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    [CascadingParameter] public NepTable<TItem>? Parent { get; set; }
+
+    private bool IsActive => Parent?.SortColumn == Column;
+
+    private async Task ClickAsync()
+    {
+        if (Parent is not null) await Parent.RaiseSort(Column);
+    }
+}

@@ -1,0 +1,89 @@
+@*
+    User picker. Backed by IdentityDbContext; matches on display_name OR
+    email (case-insensitive). Optional <see cref="RequireRole"/> filters
+    to users that hold a specific role grant — useful for
+    "<UserPicker RequireRole="Custodian">" on the float-new page.
+
+    Returns the selected <see cref="NickERP.Platform.Identity.User"/> via
+    <see cref="ValueChanged"/>; also raises <see cref="UserIdChanged"/>
+    so callers that only hold a Guid can bind by id alone.
+*@
+
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Identity
+@inject IdentityDbContext Db
+
+<EntityPicker TItem="User"
+              Value="@Value"
+              ValueChanged="OnSelectedAsync"
+              Search="SearchAsync"
+              LabelOf="@(u => u.DisplayName)"
+              Placeholder="@Placeholder"
+              Disabled="@Disabled"
+              CssClass="@CssClass">
+    <RowTemplate Context="u">
+        <strong>@u.DisplayName</strong>
+        <span class="muted small">· @u.Email</span>
+    </RowTemplate>
+</EntityPicker>
+
+@code {
+    [Parameter] public User? Value { get; set; }
+    [Parameter] public EventCallback<User?> ValueChanged { get; set; }
+
+    /// <summary>Bound user id — convenience parameter for callers that hold a Guid.</summary>
+    [Parameter] public Guid UserId { get; set; }
+    [Parameter] public EventCallback<Guid> UserIdChanged { get; set; }
+
+    /// <summary>Optional role gate (e.g. "Custodian"). When set, only users with that role appear.</summary>
+    [Parameter] public string? RequireRole { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; } = "Search a user…";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Value is null && UserId != Guid.Empty)
+        {
+            Value = await Db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.InternalUserId == UserId);
+        }
+    }
+
+    private async Task<IReadOnlyList<User>> SearchAsync(string query, CancellationToken ct)
+    {
+        var q = (query ?? string.Empty).Trim();
+
+        var users = Db.Users.AsNoTracking()
+            .Where(u => u.Status == UserStatus.Active);
+
+        if (!string.IsNullOrEmpty(q))
+        {
+            // EF.Functions.ILike works on Postgres for case-insensitive prefix/contains.
+            var like = $"%{q}%";
+            users = users.Where(u =>
+                EF.Functions.ILike(u.DisplayName, like)
+             || EF.Functions.ILike(u.Email, like));
+        }
+
+        if (!string.IsNullOrWhiteSpace(RequireRole))
+        {
+            var role = RequireRole.Trim();
+            var now = DateTimeOffset.UtcNow;
+            users = users.Where(u => Db.UserRoles
+                .Join(Db.Roles, ur => ur.RoleId, r => r.RoleId, (ur, r) => new { ur, r })
+                .Any(x => x.ur.UserId == u.InternalUserId
+                       && x.r.Name == role
+                       && (x.ur.ExpiresAt == null || x.ur.ExpiresAt > now)));
+        }
+
+        return await users.OrderBy(u => u.DisplayName).Take(20).ToListAsync(ct);
+    }
+
+    private async Task OnSelectedAsync(User? user)
+    {
+        Value = user;
+        await ValueChanged.InvokeAsync(user);
+        await UserIdChanged.InvokeAsync(user?.InternalUserId ?? Guid.Empty);
+    }
+}

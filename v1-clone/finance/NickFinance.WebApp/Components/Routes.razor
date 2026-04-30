@@ -1,0 +1,17 @@
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <PageTitle>NickFinance · Page not found</PageTitle>
+        <LayoutView Layout="typeof(MainLayout)">
+            <NepPageHeader Title="Page not found" />
+            <NepCard>
+                <p>That URL doesn't match any page on NickFinance.</p>
+                <p><a class="primary" href="/">Back to home</a></p>
+                <p class="muted small">If you reached this from a link inside the app, please flag it to the finance team — it's a bug.</p>
+            </NepCard>
+        </LayoutView>
+    </NotFound>
+</Router>

@@ -1,0 +1,55 @@
+@*
+    Money display component. Centralises the (minor / 100m).ToString("N2")
+    pattern that's repeated across every finance page.
+
+    Renamed from `Money` (per the original brief) to `NepMoney` to avoid a
+    symbol clash with NickFinance.Ledger.Money — the domain value-type. Pages
+    can now `@using` both Web.Shared.Components and NickFinance.Ledger without
+    ambiguity.
+
+    Default culture is en-GH; falls back to InvariantCulture when en-GH isn't
+    available on the runtime (older Linux base images miss it).
+*@
+
+@using System.Globalization
+
+<span class="nep-money">@FormattedValue</span>
+
+@code {
+    /// <summary>Amount in minor units (pesewa for GHS, cents for USD, …).</summary>
+    [Parameter, EditorRequired] public long Minor { get; set; }
+
+    /// <summary>ISO-4217 currency code. Optional; if set it's rendered before the number.</summary>
+    [Parameter] public string? Currency { get; set; }
+
+    /// <summary>Override the number-format culture. Defaults to en-GH (or invariant fallback).</summary>
+    [Parameter] public string? Culture { get; set; }
+
+    /// <summary>If true, hide the currency code when one is supplied. Useful inside money-only columns.</summary>
+    [Parameter] public bool HideCurrency { get; set; }
+
+    private static readonly CultureInfo _defaultCulture = ResolveDefault();
+
+    private static CultureInfo ResolveDefault()
+    {
+        try { return CultureInfo.GetCultureInfo("en-GH"); }
+        catch (CultureNotFoundException) { return CultureInfo.InvariantCulture; }
+    }
+
+    private string FormattedValue
+    {
+        get
+        {
+            var culture = Culture is null ? _defaultCulture : SafeCulture(Culture);
+            var amount  = Minor / 100m;
+            var number  = amount.ToString("N2", culture);
+            return (HideCurrency || string.IsNullOrEmpty(Currency)) ? number : $"{Currency} {number}";
+        }
+    }
+
+    private static CultureInfo SafeCulture(string name)
+    {
+        try { return CultureInfo.GetCultureInfo(name); }
+        catch (CultureNotFoundException) { return _defaultCulture; }
+    }
+}

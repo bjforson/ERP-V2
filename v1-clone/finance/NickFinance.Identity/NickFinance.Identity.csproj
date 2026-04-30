@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickFinance.Identity</RootNamespace>
+    <AssemblyName>NickFinance.Identity</AssemblyName>
+    <Description>Back-compat shim. The real types now live in NickERP.Platform.Identity; this assembly re-exports them via [TypeForwardedTo] so existing `using NickFinance.Identity;` callers keep compiling. New code should reference NickERP.Platform.Identity directly.</Description>
+    <Version>0.2.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+  </ItemGroup>
+
+</Project>

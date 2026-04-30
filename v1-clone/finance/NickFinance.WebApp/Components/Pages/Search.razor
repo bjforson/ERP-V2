@@ -1,0 +1,326 @@
+@page "/search"
+@* Global search is policy-free beyond authenticated; results themselves are
+   tenant-filtered by the EF query filter, so a user only sees their tenant's
+   data, but every authenticated user can search regardless of finance role. *@
+@using Microsoft.AspNetCore.WebUtilities
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.AP
+@using NickFinance.AR
+@using NickFinance.Coa
+@using NickFinance.Ledger
+@using NickFinance.PettyCash
+@inject NavigationManager Nav
+@inject CurrentUser User
+@inject PettyCashDbContext Pc
+@inject ArDbContext Ar
+@inject ApDbContext Ap
+@inject CoaDbContext Coa
+@inject LedgerDbContext Lg
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Search</PageTitle>
+
+<NepPageHeader Title="@(string.IsNullOrEmpty(_q) ? "Search" : $"Search: \"{_q}\"")"
+               Lede="Searches voucher numbers, invoice numbers, IRNs, customer / vendor / account names, and journal event IDs. Top 20 matches per type." />
+
+<NepCard>
+    <form @onsubmit="DoSearchAsync" @onsubmit:preventDefault="true">
+        <label>
+            Search
+            <input type="text" @bind="_q" placeholder="PC-… INV-… AGRO-IMP-… 4010 …" autofocus />
+        </label>
+        <button type="submit" class="primary">Search</button>
+    </form>
+</NepCard>
+
+@if (_loading)
+{
+    <NepCard>
+        <NepSkeleton Rows="6" />
+    </NepCard>
+}
+else if (string.IsNullOrEmpty(_q))
+{
+    <NepCard>
+        <NepEmpty Title="Type something to search"
+                  Hint="Try a partial voucher number, IRN, customer name, or journal event ID." />
+    </NepCard>
+}
+else if (_totalHits == 0)
+{
+    <NepCard>
+        <NepEmpty Title="No matches"
+                  Hint="Search runs across vouchers, invoices, customers, vendors, accounts, and journal events. Refine your query or try a fragment." />
+    </NepCard>
+}
+else
+{
+    @if (_vouchers.Count > 0)
+    {
+        <NepCard>
+            <h3>Petty-cash vouchers <NepPill>@_vouchers.Count</NepPill></h3>
+            <NepTable TItem="Voucher" Items="_vouchers">
+                <Header>
+                    <th>No.</th><th>Date</th><th>Category</th><th>Purpose</th>
+                    <th class="right">Amount</th><th>Status</th><th></th>
+                </Header>
+                <Row Context="v">
+                    <td><code>@v.VoucherNo</code></td>
+                    <td>@DateTimeFormatter.LocalDate(v.CreatedAt)</td>
+                    <td>@v.Category</td>
+                    <td>@v.Purpose</td>
+                    <td class="right"><NepMoney Minor="@v.AmountRequestedMinor" Currency="@v.CurrencyCode" /></td>
+                    <td><NepPill Tone="@VoucherTone(v.Status.ToString())">@v.Status</NepPill></td>
+                    <td><a href="@($"/petty-cash/{v.VoucherId}")">view</a></td>
+                </Row>
+            </NepTable>
+        </NepCard>
+    }
+
+    @if (_invoices.Count > 0)
+    {
+        <NepCard>
+            <h3>AR invoices <NepPill>@_invoices.Count</NepPill></h3>
+            <NepTable TItem="ArInvoice" Items="_invoices">
+                <Header>
+                    <th>No.</th><th>Date</th><th>Reference</th>
+                    <th class="right">Gross</th><th>Status</th><th>IRN</th><th></th>
+                </Header>
+                <Row Context="i">
+                    <td><code>@(string.IsNullOrEmpty(i.InvoiceNo) ? "(unissued)" : i.InvoiceNo)</code></td>
+                    <td>@i.InvoiceDate.ToString("yyyy-MM-dd")</td>
+                    <td>@i.Reference</td>
+                    <td class="right"><NepMoney Minor="@i.GrossMinor" Currency="@i.CurrencyCode" /></td>
+                    <td><NepPill Tone="@ArTone(i.Status.ToString())">@i.Status</NepPill></td>
+                    <td>@(string.IsNullOrEmpty(i.EvatIrn) ? "—" : i.EvatIrn)</td>
+                    <td><a href="@($"/ar/{i.ArInvoiceId}")">view</a></td>
+                </Row>
+            </NepTable>
+        </NepCard>
+    }
+
+    @if (_customers.Count > 0)
+    {
+        <NepCard>
+            <h3>Customers <NepPill>@_customers.Count</NepPill></h3>
+            <NepTable TItem="Customer" Items="_customers">
+                <Header>
+                    <th>Code</th><th>Name</th><th>TIN</th><th>Email</th><th>VAT</th>
+                </Header>
+                <Row Context="c">
+                    <td><code>@c.Code</code></td>
+                    <td>@c.Name</td>
+                    <td>@c.Tin</td>
+                    <td>@c.Email</td>
+                    <td>@(c.IsVatRegistered ? "yes" : "no")</td>
+                </Row>
+            </NepTable>
+        </NepCard>
+    }
+
+    @if (_vendors.Count > 0)
+    {
+        <NepCard>
+            <h3>Vendors <NepPill>@_vendors.Count</NepPill></h3>
+            <NepTable TItem="Vendor" Items="_vendors">
+                <Header>
+                    <th>Code</th><th>Name</th><th>TIN</th><th>VAT</th><th>WHT</th>
+                </Header>
+                <Row Context="v">
+                    <td><code>@v.Code</code></td>
+                    <td>@v.Name</td>
+                    <td>@v.Tin</td>
+                    <td>@(v.IsVatRegistered ? "yes" : "no")</td>
+                    <td>@v.DefaultWht</td>
+                </Row>
+            </NepTable>
+        </NepCard>
+    }
+
+    @if (_accounts.Count > 0)
+    {
+        <NepCard>
+            <h3>Chart of accounts <NepPill>@_accounts.Count</NepPill></h3>
+            <NepTable TItem="Account" Items="_accounts">
+                <Header>
+                    <th>Code</th><th>Name</th><th>Type</th><th>Currency</th><th>Active</th>
+                </Header>
+                <Row Context="a">
+                    <td><code>@a.Code</code></td>
+                    <td>@a.Name</td>
+                    <td>@a.Type</td>
+                    <td>@a.CurrencyCode</td>
+                    <td>@(a.IsActive ? "yes" : "no")</td>
+                </Row>
+            </NepTable>
+        </NepCard>
+    }
+
+    @if (_journals.Count > 0)
+    {
+        <NepCard>
+            <h3>Journal events <NepPill>@_journals.Count</NepPill></h3>
+            <NepTable TItem="LedgerEvent" Items="_journals">
+                <Header>
+                    <th>Event ID</th><th>Effective</th><th>Source</th><th>Narration</th>
+                </Header>
+                <Row Context="j">
+                    <td><code>@j.EventId.ToString("N")[..8]</code></td>
+                    <td>@j.EffectiveDate.ToString("yyyy-MM-dd")</td>
+                    <td>@j.SourceModule</td>
+                    <td>@j.Narration</td>
+                </Row>
+            </NepTable>
+        </NepCard>
+    }
+}
+
+@code {
+    private string _q = string.Empty;
+    private bool _loading;
+    private int _totalHits;
+    private List<Voucher> _vouchers = new();
+    private List<ArInvoice> _invoices = new();
+    private List<Customer> _customers = new();
+    private List<Vendor> _vendors = new();
+    private List<Account> _accounts = new();
+    private List<LedgerEvent> _journals = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        ReadQueryString();
+        if (!string.IsNullOrEmpty(_q)) await DoSearchAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var prior = _q;
+        ReadQueryString();
+        if (_q != prior && !string.IsNullOrEmpty(_q))
+        {
+            await DoSearchAsync();
+        }
+    }
+
+    private void ReadQueryString()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        if (QueryHelpers.ParseQuery(uri.Query).TryGetValue("q", out var v))
+        {
+            _q = v.ToString() ?? string.Empty;
+        }
+    }
+
+    private async Task DoSearchAsync()
+    {
+        var q = (_q ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(q))
+        {
+            ClearResults();
+            return;
+        }
+
+        _loading = true;
+        ClearResults();
+        StateHasChanged();
+        try
+        {
+            var like = $"%{q}%";
+            var tenant = User.TenantId;
+
+            // Vouchers — by VoucherNo OR by GUID prefix.
+            _vouchers = await Pc.Vouchers.AsNoTracking()
+                .Where(v => v.TenantId == tenant && (
+                    EF.Functions.ILike(v.VoucherNo, like) ||
+                    EF.Functions.ILike(v.VoucherId.ToString(), like)))
+                .OrderByDescending(v => v.CreatedAt)
+                .Take(20)
+                .ToListAsync();
+
+            // AR invoices — by InvoiceNo OR EvatIrn OR Reference.
+            _invoices = await Ar.Invoices.AsNoTracking()
+                .Where(i => i.TenantId == tenant && (
+                    EF.Functions.ILike(i.InvoiceNo, like) ||
+                    (i.EvatIrn != null && EF.Functions.ILike(i.EvatIrn, like)) ||
+                    (i.Reference != null && EF.Functions.ILike(i.Reference, like))))
+                .OrderByDescending(i => i.InvoiceDate)
+                .Take(20)
+                .ToListAsync();
+
+            // Customers — by Code OR Name OR TIN.
+            _customers = await Ar.Customers.AsNoTracking()
+                .Where(c => c.TenantId == tenant && (
+                    EF.Functions.ILike(c.Code, like) ||
+                    EF.Functions.ILike(c.Name, like) ||
+                    (c.Tin != null && EF.Functions.ILike(c.Tin, like))))
+                .OrderBy(c => c.Name)
+                .Take(20)
+                .ToListAsync();
+
+            // Vendors — by Code OR Name OR TIN.
+            _vendors = await Ap.Vendors.AsNoTracking()
+                .Where(v => v.TenantId == tenant && (
+                    EF.Functions.ILike(v.Code, like) ||
+                    EF.Functions.ILike(v.Name, like) ||
+                    (v.Tin != null && EF.Functions.ILike(v.Tin, like))))
+                .OrderBy(v => v.Name)
+                .Take(20)
+                .ToListAsync();
+
+            // Chart of accounts — by Code OR Name.
+            _accounts = await Coa.Accounts.AsNoTracking()
+                .Where(a => a.TenantId == tenant && (
+                    EF.Functions.ILike(a.Code, like) ||
+                    EF.Functions.ILike(a.Name, like)))
+                .OrderBy(a => a.Code)
+                .Take(20)
+                .ToListAsync();
+
+            // Journal events — by EventId prefix OR Narration OR
+            // SourceEntityId. Most users would search by GUID prefix.
+            _journals = await Lg.Events.AsNoTracking()
+                .Where(e => e.TenantId == tenant && (
+                    EF.Functions.ILike(e.EventId.ToString(), like) ||
+                    EF.Functions.ILike(e.Narration, like) ||
+                    EF.Functions.ILike(e.SourceEntityId, like)))
+                .OrderByDescending(e => e.CommittedAt)
+                .Take(20)
+                .ToListAsync();
+
+            _totalHits = _vouchers.Count + _invoices.Count + _customers.Count
+                       + _vendors.Count + _accounts.Count + _journals.Count;
+        }
+        catch
+        {
+            ClearResults();
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearResults()
+    {
+        _vouchers.Clear(); _invoices.Clear(); _customers.Clear();
+        _vendors.Clear(); _accounts.Clear(); _journals.Clear();
+        _totalHits = 0;
+    }
+
+    private static string VoucherTone(string s) => s switch
+    {
+        "Submitted" => "warn",
+        "Approved" or "Disbursed" => "ok",
+        "Rejected" => "bad",
+        _ => "default"
+    };
+
+    private static string ArTone(string s) => s switch
+    {
+        "Issued" or "PartiallyPaid" => "warn",
+        "Paid" => "ok",
+        "Void" => "bad",
+        _ => "default"
+    };
+}

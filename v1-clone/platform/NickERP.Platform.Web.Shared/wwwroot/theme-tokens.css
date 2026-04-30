@@ -1,0 +1,239 @@
+/* ============================================================================
+ * NICKSCAN ERP SOLUTION — Brand Theme Tokens
+ *
+ * Single source of truth for brand colors, typography, spacing.
+ * Every module's web app should reference this file via:
+ *   <link rel="stylesheet" href="_content/NickERP.Platform.Web.Shared/theme-tokens.css" />
+ * and build module-specific styles on top of these custom properties.
+ *
+ * Canonical namespace: --nep-*  (matches Portal-shipped reality).
+ * Legacy --nickerp-* aliases at the bottom of the file map to --nep-* so any
+ * pre-existing consumer of the older tokens continues to compile.
+ *
+ * Last updated: Phase 1B theme migration — promoted Portal's --nep-* set to
+ * canonical, primary realigned to indigo #4F46E5 (was declared blue #1d4ed8).
+ * ============================================================================ */
+
+:root {
+  /* ---- Brand identity ---- */
+  --nep-brand-name:    "NICKSCAN ERP SOLUTION";
+  --nep-brand-short:   "NickScan ERP";
+  --nep-brand-tagline: "Powered by Nick TC-Scan Ltd";
+
+  /* ---- Surfaces (light mode defaults) ---- */
+  --nep-bg:          #F8FAFC;
+  --nep-surface:     #FFFFFF;
+  --nep-bg-sunken:   #E2E8F0;
+  --nep-border:      #E2E8F0;
+  --nep-border-soft: #F1F5F9;
+
+  /* ---- Text ---- */
+  --nep-text:        #0F172A;
+  --nep-text-muted:  #64748B;
+  --nep-text-faint:  #94A3B8;
+
+  /* ---- Primary (indigo, matches Portal-shipped reality) ---- */
+  --nep-primary:        #4F46E5;
+  --nep-primary-hover:  #4338CA;
+  --nep-primary-soft:   #EEF2FF;
+  --nep-primary-50:     #EEF2FF;
+  --nep-primary-100:    #E0E7FF;
+  --nep-primary-200:    #C7D2FE;
+  --nep-primary-300:    #A5B4FC;
+  --nep-primary-400:    #818CF8;
+  --nep-primary-500:    #6366F1;
+  --nep-primary-600:    #4F46E5;
+  --nep-primary-700:    #4338CA;
+  --nep-primary-800:    #3730A3;
+  --nep-primary-900:    #312E81;
+
+  /* ---- Brand gradient (logo, avatar, hero accents) ---- */
+  --nep-brand-gradient: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+
+  /* ---- Module accent colors (one per module — App Launcher tiles + module pills) ---- */
+  --nep-module-nscis:       #1d4ed8;  /* blue */
+  --nep-module-nickhr:      #7C3AED;  /* purple */
+  --nep-module-finance:     #059669;  /* emerald — confirmed in Phase 1B */
+  --nep-module-procurement: #d97706;  /* amber */
+  --nep-module-dms:         #db2777;  /* pink */
+  --nep-module-crm:         #0891b2;  /* cyan */
+
+  /* ---- Semantic ramps ---- */
+  --nep-success-50:  #ECFDF5;
+  --nep-success-100: #D1FAE5;
+  --nep-success-200: #A7F3D0;
+  --nep-success-300: #6EE7B7;
+  --nep-success-400: #34D399;
+  --nep-success-500: #10B981;
+  --nep-success-600: #059669;
+  --nep-success-700: #047857;
+  --nep-success-800: #065F46;
+  --nep-success-900: #064E3B;
+  --nep-success:     #10B981;
+
+  --nep-warning-50:  #FFFBEB;
+  --nep-warning-100: #FEF3C7;
+  --nep-warning-200: #FDE68A;
+  --nep-warning-300: #FCD34D;
+  --nep-warning-400: #FBBF24;
+  --nep-warning-500: #F59E0B;
+  --nep-warning-600: #D97706;
+  --nep-warning-700: #B45309;
+  --nep-warning-800: #92400E;
+  --nep-warning-900: #78350F;
+  --nep-warning:     #F59E0B;
+
+  --nep-danger-50:  #FEF2F2;
+  --nep-danger-100: #FEE2E2;
+  --nep-danger-200: #FECACA;
+  --nep-danger-300: #FCA5A5;
+  --nep-danger-400: #F87171;
+  --nep-danger-500: #EF4444;
+  --nep-danger-600: #DC2626;
+  --nep-danger-700: #B91C1C;
+  --nep-danger-800: #991B1B;
+  --nep-danger-900: #7F1D1D;
+  --nep-danger:     #DC2626;
+
+  --nep-info-50:  #F0F9FF;
+  --nep-info-100: #E0F2FE;
+  --nep-info-200: #BAE6FD;
+  --nep-info-300: #7DD3FC;
+  --nep-info-400: #38BDF8;
+  --nep-info-500: #0EA5E9;
+  --nep-info-600: #0284C7;
+  --nep-info-700: #0369A1;
+  --nep-info-800: #075985;
+  --nep-info-900: #0C4A6E;
+  --nep-info:     #0EA5E9;
+
+  /* ---- Neutral ramp (slate) ---- */
+  --nep-neutral-50:  #F8FAFC;
+  --nep-neutral-100: #F1F5F9;
+  --nep-neutral-200: #E2E8F0;
+  --nep-neutral-300: #CBD5E1;
+  --nep-neutral-400: #94A3B8;
+  --nep-neutral-500: #64748B;
+  --nep-neutral-600: #475569;
+  --nep-neutral-700: #334155;
+  --nep-neutral-800: #1E293B;
+  --nep-neutral-900: #0F172A;
+
+  /* ---- Sidebar (always dark, regardless of theme) ---- */
+  --nep-sidebar-bg:       #1B2537;
+  --nep-sidebar-text:     #CBD5E1;
+  --nep-sidebar-text-dim: rgba(255, 255, 255, 0.4);
+  --nep-sidebar-active:   var(--nep-primary);
+
+  /* ---- Typography ---- */
+  --nep-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --nep-font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+
+  /* ---- Spacing scale (4px base) ---- */
+  --nep-space-1:  0.25rem;   /*  4px */
+  --nep-space-2:  0.5rem;    /*  8px */
+  --nep-space-3:  0.75rem;   /* 12px */
+  --nep-space-4:  1rem;      /* 16px */
+  --nep-space-5:  1.25rem;   /* 20px */
+  --nep-space-6:  1.5rem;    /* 24px */
+  --nep-space-8:  2rem;      /* 32px */
+  --nep-space-10: 2.5rem;    /* 40px */
+  --nep-space-12: 3rem;      /* 48px */
+
+  /* ---- Radius ---- */
+  --nep-radius-xs:   0.3125rem; /* 5px  inputs / kbd chips */
+  --nep-radius-sm:   0.375rem;  /* 6px */
+  --nep-radius-md:   0.5rem;    /* 8px  buttons */
+  --nep-radius-lg:   0.625rem;  /* 10px nav-search */
+  --nep-radius-xl:   0.75rem;   /* 12px cards */
+  --nep-radius-2xl:  1rem;      /* 16px */
+  --nep-radius-full: 9999px;
+
+  /* ---- Elevation ---- */
+  --nep-shadow-sm: 0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.06);
+  --nep-shadow:    0 1px 3px rgba(15,23,42,0.06), 0 4px 12px rgba(15,23,42,0.04);
+  --nep-shadow-lg: 0 4px 6px rgba(15,23,42,0.04), 0 12px 32px rgba(15,23,42,0.08);
+
+  /* ---- Layout ---- */
+  --nep-container-max: 1440px;
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] {
+  --nep-bg:          #0F1117;
+  --nep-surface:     #1B2537;
+  --nep-bg-sunken:   #0A0D12;
+  --nep-text:        #F1F5F9;
+  --nep-text-muted:  #94A3B8;
+  --nep-text-faint:  #64748B;
+  --nep-border:      #334155;
+  --nep-border-soft: #1E293B;
+  --nep-primary-soft: #1E1B4B;
+}
+
+/* ============================================================================
+ * Legacy alias section — keep --nickerp-* names compiling for any consumer
+ * that hasn't been migrated yet. Resolves to the canonical --nep-* values.
+ * Remove once every module references --nep-* directly.
+ * ============================================================================ */
+:root {
+  --nickerp-brand-name:    var(--nep-brand-name);
+  --nickerp-brand-short:   var(--nep-brand-short);
+  --nickerp-brand-tagline: var(--nep-brand-tagline);
+
+  --nickerp-primary-50:  var(--nep-primary-50);
+  --nickerp-primary-100: var(--nep-primary-100);
+  --nickerp-primary-200: var(--nep-primary-200);
+  --nickerp-primary-300: var(--nep-primary-300);
+  --nickerp-primary-400: var(--nep-primary-400);
+  --nickerp-primary-500: var(--nep-primary-500);
+  --nickerp-primary-600: var(--nep-primary-600);
+  --nickerp-primary-700: var(--nep-primary-700);
+  --nickerp-primary-800: var(--nep-primary-800);
+  --nickerp-primary-900: var(--nep-primary-900);
+
+  --nickerp-module-nscis:       var(--nep-module-nscis);
+  --nickerp-module-nickhr:      var(--nep-module-nickhr);
+  --nickerp-module-finance:     var(--nep-module-finance);
+  --nickerp-module-procurement: var(--nep-module-procurement);
+  --nickerp-module-dms:         var(--nep-module-dms);
+  --nickerp-module-crm:         var(--nep-module-crm);
+
+  --nickerp-success: var(--nep-success);
+  --nickerp-warning: var(--nep-warning);
+  --nickerp-danger:  var(--nep-danger);
+  --nickerp-info:    var(--nep-info);
+
+  --nickerp-bg:          var(--nep-bg);
+  --nickerp-bg-elevated: var(--nep-surface);
+  --nickerp-bg-sunken:   var(--nep-bg-sunken);
+  --nickerp-text:        var(--nep-text);
+  --nickerp-text-muted:  var(--nep-text-muted);
+  --nickerp-border:      var(--nep-border);
+
+  --nickerp-sidebar-bg:       var(--nep-sidebar-bg);
+  --nickerp-sidebar-text:     var(--nep-sidebar-text);
+  --nickerp-sidebar-text-dim: var(--nep-sidebar-text-dim);
+  --nickerp-sidebar-active:   var(--nep-sidebar-active);
+
+  --nickerp-font-sans: var(--nep-font-sans);
+  --nickerp-font-mono: var(--nep-font-mono);
+
+  --nickerp-space-1:  var(--nep-space-1);
+  --nickerp-space-2:  var(--nep-space-2);
+  --nickerp-space-3:  var(--nep-space-3);
+  --nickerp-space-4:  var(--nep-space-4);
+  --nickerp-space-6:  var(--nep-space-6);
+  --nickerp-space-8:  var(--nep-space-8);
+  --nickerp-space-12: var(--nep-space-12);
+
+  --nickerp-radius-sm:   var(--nep-radius-sm);
+  --nickerp-radius-md:   var(--nep-radius-md);
+  --nickerp-radius-lg:   var(--nep-radius-xl);
+  --nickerp-radius-xl:   var(--nep-radius-2xl);
+  --nickerp-radius-full: var(--nep-radius-full);
+
+  --nickerp-shadow-sm: var(--nep-shadow-sm);
+  --nickerp-shadow:    var(--nep-shadow);
+  --nickerp-shadow-lg: var(--nep-shadow-lg);
+}

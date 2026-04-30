@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickFinance.Itaps</RootNamespace>
+    <AssemblyName>NickFinance.Itaps</AssemblyName>
+    <Description>NICKSCAN ERP / NickFinance — GRA iTaPS schedule exports. CSV outputs for the monthly VAT return, the WHT return, and the SSNIT contribution schedule.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NickFinance.Ledger\NickFinance.Ledger.csproj" />
+    <ProjectReference Include="..\NickFinance.AR\NickFinance.AR.csproj" />
+    <ProjectReference Include="..\NickFinance.AP\NickFinance.AP.csproj" />
+  </ItemGroup>
+</Project>

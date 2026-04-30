@@ -1,0 +1,94 @@
+@page "/reports"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.ReportsView)]
+@inject IFinancialReports ReportsSvc
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Reports</PageTitle>
+
+<NepPageHeader Title="Reports"
+               Lede="Live financial reports — every value rolls from the journal at query time." />
+
+<NepCard>
+    <label>
+        As-of date
+        <input type="date" @bind="_asOf" />
+    </label>
+    <button class="primary" @onclick="ReloadAsync">Reload</button>
+</NepCard>
+
+<NepCard>
+    <h3>Trial balance · @_asOf.ToString("yyyy-MM-dd") · GHS</h3>
+    @if (_tb is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <p class="muted">
+            Total DR <NepMoney Minor="@_tb.TotalDebits.Minor" /> ·
+            Total CR <NepMoney Minor="@_tb.TotalCredits.Minor" /> ·
+            @if (_tb.IsBalanced) { <NepPill Tone="ok">balanced</NepPill> }
+            else                  { <NepPill Tone="bad">NOT balanced</NepPill> }
+        </p>
+        <table>
+            <thead><tr><th>Code</th><th>Account</th><th class="right">Debits</th><th class="right">Credits</th><th class="right">Balance</th></tr></thead>
+            <tbody>
+                @foreach (var r in _tb.Rows)
+                {
+                    <tr>
+                        <td><code>@r.AccountCode</code></td>
+                        <td>@r.AccountName</td>
+                        <td class="right"><NepMoney Minor="@r.Debits.Minor" /></td>
+                        <td class="right"><NepMoney Minor="@r.Credits.Minor" /></td>
+                        <td class="right"><NepMoney Minor="@r.Balance.Minor" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</NepCard>
+
+<NepCard>
+    <h3>Profit &amp; Loss · YTD to @_asOf.ToString("yyyy-MM-dd") · GHS</h3>
+    @if (_pl is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <table>
+            <thead><tr><th colspan="3">Income</th></tr></thead>
+            <tbody>
+                @foreach (var l in _pl.Income)
+                {
+                    <tr><td><code>@l.AccountCode</code></td><td>@l.AccountName</td><td class="right"><NepMoney Minor="@l.Balance.Minor" /></td></tr>
+                }
+                <tr class="total"><td></td><td>Total income</td><td class="right"><NepMoney Minor="@_pl.TotalIncome.Minor" /></td></tr>
+            </tbody>
+            <thead><tr><th colspan="3">Expenses</th></tr></thead>
+            <tbody>
+                @foreach (var l in _pl.Expenses)
+                {
+                    <tr><td><code>@l.AccountCode</code></td><td>@l.AccountName</td><td class="right"><NepMoney Minor="@l.Balance.Minor" /></td></tr>
+                }
+                <tr class="total"><td></td><td>Total expenses</td><td class="right"><NepMoney Minor="@_pl.TotalExpenses.Minor" /></td></tr>
+                <tr class="total"><td></td><td>Net result</td><td class="right"><NepMoney Minor="@_pl.NetResult.Minor" /></td></tr>
+            </tbody>
+        </table>
+    }
+</NepCard>
+
+@code {
+    private DateOnly _asOf = DateOnly.FromDateTime(DateTime.UtcNow);
+    private TrialBalanceReport? _tb;
+    private ProfitAndLossReport? _pl;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _tb = await ReportsSvc.TrialBalanceAsync("GHS", _asOf, User.TenantId);
+        _pl = await ReportsSvc.ProfitAndLossAsync("GHS", new DateOnly(_asOf.Year, 1, 1), _asOf, User.TenantId);
+    }
+}

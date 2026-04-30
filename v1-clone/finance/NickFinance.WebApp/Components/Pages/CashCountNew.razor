@@ -1,0 +1,146 @@
+@page "/petty-cash/cash-count/new"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PettyCashcountRun)]
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.PettyCash.CashCounts
+@inject PettyCashDbContext Db
+@inject ICashCountService Svc
+@inject CurrentUser User
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · New cash count</PageTitle>
+
+<NepPageHeader Title="Daily cash count" Lede="Count the physical cash on hand against the system-of-record balance computed from the ledger." />
+
+@if (_floats.Count == 0)
+{
+    <NepCard Variant="warning">
+        <p>No active floats yet for tenant @User.TenantId.</p>
+        <p><a class="primary" href="/petty-cash/floats/new">Create float</a></p>
+    </NepCard>
+}
+else
+{
+    <NepCard>
+        <label>
+            Float
+            <select @bind="_floatId">
+                @foreach (var f in _floats)
+                {
+                    <option value="@f.FloatId">@f.SiteId.ToString("N")[..8] · @f.CurrencyCode · float @((f.FloatAmountMinor / 100m).ToString("N2"))</option>
+                }
+            </select>
+        </label>
+
+        <h3>Denomination tally</h3>
+        <p class="muted small">Enter the count for each denomination. Total below is auto-computed.</p>
+        <table>
+            <thead><tr><th>Denomination (GHS)</th><th class="right">Count</th><th class="right">Subtotal</th></tr></thead>
+            <tbody>
+                @foreach (var d in _denoms)
+                {
+                    <tr>
+                        <td>@d.Label</td>
+                        <td class="right"><input type="number" min="0" step="1" @bind="d.Count" @bind:event="oninput" style="width: 6rem; text-align:right;" /></td>
+                        <td class="right"><NepMoney Minor="d.SubtotalMinor" Currency="GHS" /></td>
+                    </tr>
+                }
+                <tr class="total">
+                    <td><strong>Physical total</strong></td>
+                    <td class="right"></td>
+                    <td class="right"><strong><NepMoney Minor="PhysicalMinor" Currency="GHS" /></strong></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <label>
+            Witness (optional)
+            <UserPicker UserId="@(_witnessUserId ?? Guid.Empty)" UserIdChanged="@(v => _witnessUserId = v == Guid.Empty ? null : v)" />
+            <small class="muted">Second pair of eyes co-signing the count. Cannot be the same person as the counter.</small>
+        </label>
+
+        @if (PhysicalMinor > 0)
+        {
+            <label>
+                Variance reason (required if physical ≠ system)
+                <input type="text" @bind="_varianceReason" maxlength="500" placeholder="e.g. genuine shortage; receipt missing; rounding" />
+            </label>
+        }
+
+        <ConfirmButton Class="primary" Disabled="@_busy"
+                       Confirm="@($"Record cash count of GHS {(PhysicalMinor / 100m):N2}? This is recorded permanently and feeds the variance fraud-signal.")"
+                       OnConfirmed="SubmitAsync">@(_busy ? "Recording…" : "Record cash count")</ConfirmButton>
+        @if (!string.IsNullOrEmpty(_error)) { <div class="error">@_error</div> }
+    </NepCard>
+}
+
+@code {
+    private List<Float> _floats = new();
+    private Guid _floatId;
+    private Guid? _witnessUserId;
+    private string? _varianceReason;
+    private bool _busy;
+    private string? _error;
+
+    private sealed class Denom
+    {
+        public string Label { get; init; } = "";
+        public long UnitMinor { get; init; }
+        public int Count { get; set; }
+        public long SubtotalMinor => UnitMinor * Count;
+    }
+
+    private readonly List<Denom> _denoms = new()
+    {
+        new() { Label = "200.00 note", UnitMinor = 200_00 },
+        new() { Label = "100.00 note", UnitMinor = 100_00 },
+        new() { Label = " 50.00 note", UnitMinor =  50_00 },
+        new() { Label = " 20.00 note", UnitMinor =  20_00 },
+        new() { Label = " 10.00 note", UnitMinor =  10_00 },
+        new() { Label = "  5.00 note", UnitMinor =   5_00 },
+        new() { Label = "  2.00 note", UnitMinor =   2_00 },
+        new() { Label = "  1.00 coin", UnitMinor =   1_00 },
+        new() { Label = "  0.50 coin", UnitMinor =      50 },
+        new() { Label = "  0.20 coin", UnitMinor =      20 },
+        new() { Label = "  0.10 coin", UnitMinor =      10 },
+        new() { Label = "  0.05 coin", UnitMinor =       5 },
+        new() { Label = "  0.01 coin", UnitMinor =       1 }
+    };
+
+    private long PhysicalMinor => _denoms.Sum(d => d.SubtotalMinor);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _floats = await Db.Floats
+            .Where(f => f.TenantId == User.TenantId && f.IsActive)
+            .OrderBy(f => f.CreatedAt)
+            .ToListAsync();
+        _floatId = _floats.FirstOrDefault()?.FloatId ?? Guid.Empty;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            await Svc.RecordAsync(
+                floatId: _floatId,
+                physicalAmountMinor: PhysicalMinor,
+                currencyCode: "GHS",
+                countedByUserId: User.UserId,
+                witnessUserId: _witnessUserId,
+                varianceReason: string.IsNullOrWhiteSpace(_varianceReason) ? null : _varianceReason,
+                asOfDate: DateOnly.FromDateTime(DateTime.UtcNow),
+                tenantId: User.TenantId);
+            Nav.NavigateTo("/petty-cash/cash-counts");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

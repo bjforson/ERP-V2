@@ -1,0 +1,35 @@
+@*
+    Status / category pill. Tone maps to a semantic color:
+
+      default  — neutral grey
+      ok       — emerald (Approved / Disbursed / Paid / Operational)
+      warn     — amber  (Submitted / Issued / PartiallyPaid / Pending)
+      bad      — red    (Rejected / Void / Failed)
+      sandbox  — indigo (Stub / sandbox-mode integrations)
+
+    Drop-in replacement for NickFinance's StatusPill.razor and Portal's
+    `.nep-chip` patterns.
+*@
+
+<span class="@ResolveClass()">
+    @if (!string.IsNullOrEmpty(Icon))
+    {
+        <MudIcon Icon="@Icon" Style="font-size:11px;" />
+    }
+    @ChildContent
+</span>
+
+@code {
+    [Parameter] public string Tone { get; set; } = "default";
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private string ResolveClass() => Tone switch
+    {
+        "ok"      => "nep-pill nep-pill-ok",
+        "warn"    => "nep-pill nep-pill-warn",
+        "bad"     => "nep-pill nep-pill-bad",
+        "sandbox" => "nep-pill nep-pill-sandbox",
+        _         => "nep-pill"
+    };
+}

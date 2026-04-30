@@ -1,0 +1,373 @@
+@page "/finance/period-close"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.PeriodClose)]
+@using Microsoft.EntityFrameworkCore
+@using NickFinance.AP
+@using NickFinance.AR
+@using NickFinance.Banking
+@using NickFinance.FixedAssets
+@using NickERP.Platform.Identity
+@inject IPeriodService Periods
+@inject IFinancialReports Reports
+@inject ApDbContext Ap
+@inject ArDbContext Ar
+@inject FixedAssetsDbContext Fa
+@inject LedgerDbContext Ledger
+@inject BankingDbContext Banking
+@inject IFxRevaluationService FxReval
+@inject ISecurityAuditService Audit
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Period close</PageTitle>
+
+<NepPageHeader Title="Period close"
+               Lede="Soft- and hard-close the current accounting period. Pre-close checklist is computed live from the journals." />
+
+<NepCard>
+    <h3>Period</h3>
+    @if (_period is null)
+    {
+        <p class="muted">Resolving current period…</p>
+    }
+    else
+    {
+        <p>
+            <strong>@_period.FiscalYear · @_period.MonthNumber.ToString("D2")</strong>
+            &nbsp;<span class="muted">(@_period.StartDate.ToString("yyyy-MM-dd") to @_period.EndDate.ToString("yyyy-MM-dd"))</span>
+        </p>
+        <p>
+            Status:&nbsp;
+            @switch (_period.Status)
+            {
+                case PeriodStatus.Open:
+                    <NepPill Tone="warn">Open</NepPill>
+                    break;
+                case PeriodStatus.SoftClosed:
+                    <NepPill Tone="sandbox">SoftClosed</NepPill>
+                    break;
+                case PeriodStatus.HardClosed:
+                    <NepPill Tone="bad">HardClosed</NepPill>
+                    break;
+            }
+        </p>
+        @if (_period.ClosedAt is not null)
+        {
+            <p class="muted">Closed at @_period.ClosedAt?.ToString("u") by user @_period.ClosedByUserId.</p>
+        }
+    }
+</NepCard>
+
+<NepCard>
+    <h3>Pre-close checklist</h3>
+    @if (_loading)
+    {
+        <p class="muted">Loading checks…</p>
+    }
+    else
+    {
+        <table>
+            <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td>Trial balance balanced</td>
+                    <td>@RenderPill(_tbBalanced)</td>
+                    <td class="muted">@_tbDetail</td>
+                </tr>
+                <tr>
+                    <td>Bank reconciliation</td>
+                    <td>@RenderPill(_bankRecOk)</td>
+                    <td class="muted">@_bankRecDetail</td>
+                </tr>
+                <tr>
+                    <td>AP open bills</td>
+                    <td>@RenderPill(_apOk)</td>
+                    <td class="muted">@_apDetail</td>
+                </tr>
+                <tr>
+                    <td>AR open invoices</td>
+                    <td>@RenderPill(_arOk)</td>
+                    <td class="muted">@_arDetail</td>
+                </tr>
+                <tr>
+                    <td>Depreciation posted</td>
+                    <td>@RenderPill(_depOk)</td>
+                    <td class="muted">@_depDetail</td>
+                </tr>
+                <tr>
+                    <td>FX revaluation posted</td>
+                    <td>@RenderPill(_fxRevalOk)</td>
+                    <td class="muted">
+                        @_fxRevalDetail
+                        @if (!_fxRevalOk && _period is not null)
+                        {
+                            <ConfirmButton Class="primary"
+                                           Confirm="@($"Run FX revaluation for period {_period.FiscalYear}-{_period.MonthNumber:D2}? This posts a balanced GHS journal capturing the FX gain/loss.")"
+                                           OnConfirmed="RunFxRevaluationAsync">
+                                Run FX revaluation now
+                            </ConfirmButton>
+                        }
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    }
+</NepCard>
+
+<NepCard>
+    <h3>Close actions</h3>
+    @if (_period is null)
+    {
+        <p class="muted">No period loaded.</p>
+    }
+    else
+    {
+        <p class="muted">
+            Soft-close prevents new module postings while still allowing accountant adjustments.
+            Hard-close is irreversible — no further posting to this period.
+        </p>
+        <div class="actions">
+            <ConfirmButton Class="primary"
+                           Confirm="@($"Soft-close period {_period.FiscalYear}-{_period.MonthNumber:D2}? This stops module postings.")"
+                           Disabled="@(!CanSoftClose())"
+                           OnConfirmed="SoftCloseAsync">
+                Soft-close period
+            </ConfirmButton>
+            <ConfirmButton Class="danger"
+                           Confirm="@($"HARD-close period {_period.FiscalYear}-{_period.MonthNumber:D2}? This is IRREVERSIBLE.")"
+                           Disabled="@(!CanHardClose())"
+                           OnConfirmed="HardCloseAsync">
+                Hard-close period (irreversible)
+            </ConfirmButton>
+        </div>
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p>@_message</p>
+        }
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <p class="error">@_error</p>
+        }
+    }
+</NepCard>
+
+@code {
+    // Monetary accounts whose foreign-currency balances need translating into
+    // GHS at period end. Hardcoded to the Wave 3A baseline: USD bank float
+    // (1040) plus the AR / AP control accounts. As the chart of accounts
+    // grows (e.g. tenant-specific EUR float), update this list and the
+    // FxRevaluationService picks them up — no schema change.
+    private static readonly string[] MonetaryAccountCodes = new[] { "1040", "1100", "2000" };
+
+    private AccountingPeriod? _period;
+    private bool _loading = true;
+    private bool _tbBalanced;
+    private string _tbDetail = "";
+    private bool _bankRecOk;
+    private string _bankRecDetail = "";
+    private bool _apOk;
+    private string _apDetail = "";
+    private bool _arOk;
+    private string _arDetail = "";
+    private bool _depOk;
+    private string _depDetail = "";
+    private bool _fxRevalOk;
+    private string _fxRevalDetail = "";
+    private string? _message;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            _period = await Periods.GetByDateAsync(today, User.TenantId);
+            if (_period is null)
+            {
+                _period = await Periods.CreateAsync(today.Year, (byte)today.Month, User.TenantId);
+            }
+
+            // 1. Trial balance balanced
+            var tb = await Reports.TrialBalanceAsync("GHS", _period.EndDate, User.TenantId);
+            _tbBalanced = tb.IsBalanced;
+            _tbDetail = $"DR {tb.TotalDebits.Minor / 100m:N2} · CR {tb.TotalCredits.Minor / 100m:N2}";
+
+            // 2. Bank rec — placeholder; if no IsReconciled column exists, mark n/a
+            _bankRecOk = true;
+            _bankRecDetail = "n/a — bank statement reconciliation column not yet on entity.";
+
+            // 3. AP open bills (Captured)
+            var apOpen = await Ap.Bills
+                .CountAsync(b => b.TenantId == User.TenantId && b.Status == ApBillStatus.Captured);
+            _apOk = apOpen == 0;
+            _apDetail = apOpen == 0 ? "All AP bills posted." : $"{apOpen} bill(s) still in Captured (awaiting approval).";
+
+            // 4. AR open invoices
+            var arOpen = await Ar.Invoices
+                .CountAsync(i => i.TenantId == User.TenantId
+                              && (i.Status == ArInvoiceStatus.Issued || i.Status == ArInvoiceStatus.PartiallyPaid));
+            _arOk = true; // open invoices not strictly blocking; show count.
+            _arDetail = arOpen == 0
+                ? "No open AR invoices."
+                : $"{arOpen} invoice(s) still open (Issued or PartiallyPaid). Informational; not blocking.";
+
+            // 5. Depreciation posted — at least one asset has LastDepreciatedThrough >= period end
+            var assets = await Fa.Assets
+                .Where(a => a.TenantId == User.TenantId && a.Status == AssetStatus.Active)
+                .Select(a => new { a.LastDepreciatedThrough })
+                .ToListAsync();
+            if (assets.Count == 0)
+            {
+                _depOk = true;
+                _depDetail = "No active assets — nothing to depreciate.";
+            }
+            else
+            {
+                var posted = assets.Count(a => a.LastDepreciatedThrough is not null && a.LastDepreciatedThrough >= _period.EndDate);
+                _depOk = posted == assets.Count;
+                _depDetail = posted == assets.Count
+                    ? "All active assets depreciated through period end."
+                    : $"{assets.Count - posted} of {assets.Count} active asset(s) still need monthly depreciation posting.";
+            }
+
+            // 6. FX revaluation — green iff banking.fx_revaluation_log already
+            // has a row for this period_id. Empty foreign-currency exposure
+            // counts as green too: nothing to revalue is the same as having
+            // already revalued zero.
+            var revalCount = await Banking.FxRevaluationLogs
+                .CountAsync(l => l.TenantId == User.TenantId && l.PeriodId == _period.PeriodId);
+            if (revalCount > 0)
+            {
+                _fxRevalOk = true;
+                _fxRevalDetail = $"FX revaluation posted ({revalCount} (account, currency) pair(s)).";
+            }
+            else
+            {
+                // Still green if no foreign-currency balances exist on the
+                // monetary accounts — nothing to revalue means nothing to do.
+                var hasForeignBalance = false;
+                foreach (var code in MonetaryAccountCodes)
+                {
+                    var hits = await Ledger.EventLines
+                        .AsNoTracking()
+                        .Where(l => l.AccountCode == code
+                                 && l.CurrencyCode != "GHS"
+                                 && l.Event.TenantId == User.TenantId
+                                 && l.Event.EffectiveDate <= _period.EndDate)
+                        .Take(1)
+                        .CountAsync();
+                    if (hits > 0) { hasForeignBalance = true; break; }
+                }
+                if (!hasForeignBalance)
+                {
+                    _fxRevalOk = true;
+                    _fxRevalDetail = "No foreign-currency balances to revalue.";
+                }
+                else
+                {
+                    _fxRevalOk = false;
+                    _fxRevalDetail = "Foreign-currency balances detected; revaluation has not yet been posted for this period.";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RunFxRevaluationAsync()
+    {
+        if (_period is null) return;
+        _message = null; _error = null;
+        try
+        {
+            var result = await FxReval.RevalueAsync(
+                periodId: _period.PeriodId,
+                asOf: _period.EndDate,
+                monetaryAccountCodes: MonetaryAccountCodes,
+                actorUserId: User.UserId,
+                tenantId: User.TenantId);
+            await Audit.RecordAsync(
+                action: SecurityAuditAction.JournalPosted,
+                targetType: "FxRevaluation",
+                targetId: result.LedgerEventId.ToString(),
+                details: new
+                {
+                    _period.PeriodId,
+                    asOf = _period.EndDate,
+                    result.NetGainOrLossMinor,
+                    result.LineCount,
+                    result.WasIdempotentNoOp
+                });
+            _message = result.WasIdempotentNoOp
+                ? "FX revaluation already posted for this period."
+                : $"FX revaluation posted: net {(result.NetGainOrLossMinor >= 0 ? "gain" : "loss")} {Math.Abs(result.NetGainOrLossMinor) / 100m:N2} {result.FunctionalCurrency} across {result.LineCount} line(s).";
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private bool AllRedClear()
+    {
+        return _tbBalanced && _bankRecOk && _apOk && _arOk && _depOk && _fxRevalOk;
+    }
+
+    private bool CanSoftClose()
+        => _period is not null && _period.Status == PeriodStatus.Open && AllRedClear();
+
+    private bool CanHardClose()
+        => _period is not null && _period.Status == PeriodStatus.SoftClosed && AllRedClear();
+
+    private async Task SoftCloseAsync()
+    {
+        if (_period is null) return;
+        _message = null; _error = null;
+        try
+        {
+            _period = await Periods.SoftCloseAsync(_period.PeriodId, User.UserId);
+            await Audit.RecordAsync(
+                action: SecurityAuditAction.PeriodSoftClosed,
+                targetType: "AccountingPeriod",
+                targetId: _period.PeriodId.ToString(),
+                details: new { _period.FiscalYear, _period.MonthNumber });
+            _message = $"Period {_period.FiscalYear}-{_period.MonthNumber:D2} soft-closed.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task HardCloseAsync()
+    {
+        if (_period is null) return;
+        _message = null; _error = null;
+        try
+        {
+            _period = await Periods.HardCloseAsync(_period.PeriodId, User.UserId);
+            await Audit.RecordAsync(
+                action: SecurityAuditAction.PeriodHardClosed,
+                targetType: "AccountingPeriod",
+                targetId: _period.PeriodId.ToString(),
+                details: new { _period.FiscalYear, _period.MonthNumber });
+            _message = $"Period {_period.FiscalYear}-{_period.MonthNumber:D2} hard-closed.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private RenderFragment RenderPill(bool ok) => builder =>
+    {
+        builder.OpenComponent<NepPill>(0);
+        builder.AddAttribute(1, "Tone", ok ? "ok" : "bad");
+        builder.AddAttribute(2, "ChildContent", (RenderFragment)(b2 =>
+            b2.AddContent(0, ok ? "OK" : "Action needed")));
+        builder.CloseComponent();
+    };
+}

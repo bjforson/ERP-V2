@@ -1,0 +1,53 @@
+@page "/fixed-assets"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = NickFinance.WebApp.Identity.Permissions.AssetsRegister)]
+@using Microsoft.EntityFrameworkCore
+@inject FixedAssetsDbContext Db
+@inject CurrentUser User
+@rendermode InteractiveServer
+
+<PageTitle>NickFinance · Assets</PageTitle>
+
+<NepPageHeader Title="Fixed assets"
+               Lede="Acquisition cost, accumulated depreciation, and net book value rolled live from the journal." />
+
+<NepCard>
+    <NepTable TItem="FixedAsset" Items="_assets">
+        <Header>
+            <th>Tag</th><th>Name</th><th>Category</th><th>Acquired</th>
+            <th class="right">Cost</th><th class="right">Acc dep</th><th class="right">NBV</th>
+            <th>Status</th>
+        </Header>
+        <Row Context="a">
+            <td><code>@a.AssetTag</code></td>
+            <td>@a.Name</td>
+            <td>@a.Category</td>
+            <td>@a.AcquiredOn.ToString("yyyy-MM-dd")</td>
+            <td class="right"><NepMoney Minor="@a.AcquisitionCostMinor" /></td>
+            <td class="right"><NepMoney Minor="@a.AccumulatedDepreciationMinor" /></td>
+            <td class="right"><NepMoney Minor="@a.NetBookValueMinor" /></td>
+            <td><NepPill Tone="@PillTone(a.Status.ToString())">@a.Status</NepPill></td>
+        </Row>
+        <EmptyState>
+            <NepEmpty Title="No assets registered yet"
+                      Hint="Asset registration UI is part of v1.3. Today, assets enter the system via the IFixedAssetService API; depreciation runs nightly."
+                      Icon="@Icons.Material.Filled.Inventory2" />
+        </EmptyState>
+    </NepTable>
+</NepCard>
+
+@code {
+    private List<FixedAsset> _assets = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _assets = await Db.Assets.Where(a => a.TenantId == User.TenantId)
+            .OrderBy(a => a.AssetTag).ToListAsync();
+    }
+
+    private static string PillTone(string status) => status switch
+    {
+        "InService" or "Active" => "ok",
+        "Disposed" or "Retired" => "bad",
+        _ => "default"
+    };
+}
