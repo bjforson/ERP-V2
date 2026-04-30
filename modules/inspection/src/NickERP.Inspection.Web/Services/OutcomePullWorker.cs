@@ -248,11 +248,6 @@ public sealed class OutcomePullWorker : BackgroundService, IBackgroundServicePro
     /// <see cref="InspectionDbContext"/> + <see cref="ITenantContext"/>
     /// don't outlive the call.
     /// </summary>
-    /// <remarks>
-    /// In commit 1 this only resolves the adapter, computes the window,
-    /// and invokes <see cref="IInboundOutcomeAdapter.FetchOutcomesAsync"/>.
-    /// Commit 2 wires the persistence + cursor advance.
-    /// </remarks>
     private async Task PullForPhaseAsync(PhaseDescriptor descriptor, CancellationToken ct)
     {
         if (!RolloutPhasePolicy.ShouldPullOnCycle(descriptor.Phase))
@@ -266,6 +261,7 @@ public sealed class OutcomePullWorker : BackgroundService, IBackgroundServicePro
         var tenant = sp.GetRequiredService<ITenantContext>();
         var plugins = sp.GetRequiredService<IPluginRegistry>();
         var db = sp.GetRequiredService<InspectionDbContext>();
+        var writer = sp.GetRequiredService<IPostHocOutcomeWriter>();
 
         tenant.SetTenant(descriptor.TenantId);
 
@@ -314,10 +310,188 @@ public sealed class OutcomePullWorker : BackgroundService, IBackgroundServicePro
 
         var fetched = await adapter.FetchOutcomesAsync(cfg, window, ct);
 
-        // Commit 1 — log only. Commit 2 wires the persistence path.
-        _logger.LogInformation(
-            "OutcomePullWorker fetched {Count} outcomes for tenant={TenantId} instance={InstanceId} (commit-1: not yet persisted).",
-            fetched.Count, descriptor.TenantId, descriptor.ExternalSystemInstanceId);
+        // Persist each fetched outcome via the writer. The writer is
+        // idempotent (§6.11.7) so replay over a partially-advanced cursor
+        // is safe; a duplicate returns Deduplicated and the count is
+        // reflected in the metric. One bad record does not block the
+        // rest of the batch — log + continue, and let the next cycle
+        // replay the whole window.
+        var inserted = 0;
+        var deduped = 0;
+        var superseded = 0;
+        var unmatched = 0;
+        var failed = 0;
+        foreach (var dto in fetched)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var record = MapDtoToRecord(dto, descriptor, _clock.GetUtcNow());
+                var outcome = await writer.WriteAsync(record, ct);
+                switch (outcome)
+                {
+                    case OutcomeWriteOutcome.Inserted: inserted++; break;
+                    case OutcomeWriteOutcome.Deduplicated: deduped++; break;
+                    case OutcomeWriteOutcome.Superseded: superseded++; break;
+                    case OutcomeWriteOutcome.NoMatchingCase: unmatched++; break;
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                failed++;
+                _logger.LogError(ex,
+                    "OutcomePullWorker writer failed on one record (instance={InstanceId} ref={Ref}); continuing batch.",
+                    descriptor.ExternalSystemInstanceId, dto.ReferenceNumber);
+            }
+        }
+
+        // Cursor advance — only on a clean batch (no per-record failure).
+        // A single failed write leaves the cursor at its prior position
+        // so the next cycle replays the whole window. The writer's
+        // idempotency contract (§6.11.7) makes that safe — the inserts
+        // already in the DB will return Deduplicated on replay.
+        if (failed == 0)
+        {
+            await AdvanceCursorAsync(db, descriptor, cursor, window, ct);
+            _logger.LogInformation(
+                "OutcomePullWorker advanced cursor instance={InstanceId} until={Until:o} inserted={Inserted} deduped={Deduped} superseded={Superseded} unmatched={Unmatched}.",
+                descriptor.ExternalSystemInstanceId, window.Until, inserted, deduped, superseded, unmatched);
+        }
+        else
+        {
+            // Bump ConsecutiveFailures + leave the window pointer
+            // unchanged. The next cycle will re-pull the same range.
+            await BumpFailureCounterAsync(db, descriptor, cursor, ct);
+            _logger.LogWarning(
+                "OutcomePullWorker batch had {Failed} failures (instance={InstanceId}); cursor unchanged so the next cycle replays the window.",
+                failed, descriptor.ExternalSystemInstanceId);
+        }
+    }
+
+    /// <summary>
+    /// Advance the cursor on the writer-success path. Upserts the row
+    /// (cursor may not yet exist in the DB on first cycle) — RLS
+    /// enforces tenant scoping via the worker-scope's
+    /// <see cref="ITenantContext"/>.
+    /// </summary>
+    private async Task AdvanceCursorAsync(
+        InspectionDbContext db, PhaseDescriptor descriptor,
+        OutcomePullCursor priorCursor, OutcomeWindow window, CancellationToken ct)
+    {
+        var tracked = await db.OutcomePullCursors
+            .FirstOrDefaultAsync(c => c.ExternalSystemInstanceId == descriptor.ExternalSystemInstanceId, ct);
+
+        if (tracked is null)
+        {
+            tracked = new OutcomePullCursor
+            {
+                ExternalSystemInstanceId = descriptor.ExternalSystemInstanceId,
+                TenantId = descriptor.TenantId,
+                LastSuccessfulPullAt = window.Until,
+                LastPullWindowUntil = window.Until,
+                ConsecutiveFailures = 0
+            };
+            db.OutcomePullCursors.Add(tracked);
+        }
+        else
+        {
+            tracked.LastSuccessfulPullAt = window.Until;
+            tracked.LastPullWindowUntil = window.Until;
+            tracked.ConsecutiveFailures = 0;
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// On a partial-failure batch, bump the failure counter without
+    /// advancing the window pointer. Drives the §6.11.12
+    /// <c>posthoc_pull_cursor_lag_seconds</c> alarm logic — the next
+    /// cycle replays the same window, and the counter only resets on a
+    /// clean cycle.
+    /// </summary>
+    private async Task BumpFailureCounterAsync(
+        InspectionDbContext db, PhaseDescriptor descriptor,
+        OutcomePullCursor priorCursor, CancellationToken ct)
+    {
+        var tracked = await db.OutcomePullCursors
+            .FirstOrDefaultAsync(c => c.ExternalSystemInstanceId == descriptor.ExternalSystemInstanceId, ct);
+
+        if (tracked is null)
+        {
+            tracked = new OutcomePullCursor
+            {
+                ExternalSystemInstanceId = descriptor.ExternalSystemInstanceId,
+                TenantId = descriptor.TenantId,
+                LastSuccessfulPullAt = priorCursor.LastSuccessfulPullAt,
+                LastPullWindowUntil = priorCursor.LastPullWindowUntil,
+                ConsecutiveFailures = 1
+            };
+            db.OutcomePullCursors.Add(tracked);
+        }
+        else
+        {
+            tracked.ConsecutiveFailures += 1;
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Map a single <see cref="AuthorityDocumentDto"/> from the adapter
+    /// to a <see cref="PostHocOutcomeRecord"/> the writer can persist.
+    /// Adapter-shaped fields live inside <c>PayloadJson</c>; the
+    /// orchestrator-relevant fields (declaration_number, decision_reference,
+    /// decided_at, supersedes_decision_reference, container_id) are
+    /// extracted from the JSON if present, with safe fallbacks so a
+    /// payload that doesn't follow §6.11.5 still produces an attempt at
+    /// persistence rather than a hard error.
+    /// </summary>
+    private static PostHocOutcomeRecord MapDtoToRecord(
+        AuthorityDocumentDto dto,
+        PhaseDescriptor descriptor,
+        DateTimeOffset fallbackDecidedAt)
+    {
+        var p = ParsePayload(dto.PayloadJson);
+
+        var declarationNumber = p?["declaration_number"]?.GetValue<string>()
+            ?? dto.ReferenceNumber;
+        var containerNumber = p?["container_id"]?.GetValue<string>()
+            ?? p?["container_number"]?.GetValue<string>();
+        var decisionReference = p?["decision_reference"]?.GetValue<string>()
+            ?? dto.ReferenceNumber;
+        var supersedes = p?["supersedes_decision_reference"]?.GetValue<string?>();
+        var entryMethod = p?["entry_method"]?.GetValue<string>() ?? "api";
+
+        DateTimeOffset decidedAt = fallbackDecidedAt;
+        var decidedAtRaw = p?["decided_at"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(decidedAtRaw)
+            && DateTimeOffset.TryParse(decidedAtRaw, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
+        {
+            decidedAt = parsed;
+        }
+
+        return new PostHocOutcomeRecord(
+            TenantId: descriptor.TenantId,
+            ExternalSystemInstanceId: descriptor.ExternalSystemInstanceId,
+            AuthorityCode: descriptor.TypeCode,
+            DeclarationNumber: declarationNumber,
+            ContainerNumber: containerNumber,
+            DecidedAt: decidedAt,
+            DecisionReference: decisionReference,
+            SupersedesDecisionReference: supersedes,
+            PayloadJson: dto.PayloadJson,
+            Phase: descriptor.Phase,
+            EntryMethod: entryMethod);
+    }
+
+    private static System.Text.Json.Nodes.JsonObject? ParsePayload(string payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
+        try { return System.Text.Json.Nodes.JsonNode.Parse(payloadJson) as System.Text.Json.Nodes.JsonObject; }
+        catch (System.Text.Json.JsonException) { return null; }
     }
 
     /// <summary>
