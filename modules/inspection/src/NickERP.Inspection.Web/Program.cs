@@ -94,6 +94,13 @@ builder.Services.AddScoped<NickERP.Inspection.ExternalSystems.Abstractions.IIcum
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.IcumsHmacEnvelopeSigner>());
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.IcumsKeyRotationService>();
 
+// Sprint 13 / P2-FU-edge-auth — per-edge-node API key auth handler for
+// /api/edge/replay. Scoped: captures the request-scoped AuditDbContext
+// + ITenantContext. Reads EdgeAuth:HashKey from config (or DataProtection
+// fallback) for HMAC; reads EdgeAuth:AllowLegacyToken for the rollout-
+// window legacy X-Edge-Token compatibility.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.EdgeAuthHandler>();
+
 // ---------------------------------------------------------------------------
 // Track A — Plugins. Loads adapter DLLs from {ContentRoot}/plugins. The
 // inspection module's plugin contracts (IScannerAdapter, etc.) are

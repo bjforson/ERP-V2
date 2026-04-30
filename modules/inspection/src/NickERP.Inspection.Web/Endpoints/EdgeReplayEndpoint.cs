@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Web.Services;
 using NickERP.Platform.Audit.Database;
 using NickERP.Platform.Audit.Database.Entities;
 using NickERP.Platform.Tenancy;
@@ -31,15 +31,17 @@ namespace NickERP.Inspection.Web.Endpoints;
 /// </para>
 ///
 /// <para>
-/// <b>Auth posture.</b> Anonymous endpoint gated by an
-/// <c>X-Edge-Token</c> header that must equal the configured
-/// <c>EdgeNode:SharedSecret</c>. v0 — single shared secret across
-/// edges; rotating the secret invalidates every edge until they're
-/// re-deployed with the new value. Documented as a <b>TODO</b>:
-/// proper edge auth (per-edge mTLS or per-edge JWTs) is a follow-up.
-/// The shared secret is enough to keep this surface from being open
-/// to the internet, but it is NOT enough on its own — it must run
-/// behind a network ACL that limits ingress to known edge addresses.
+/// <b>Auth posture.</b> Anonymous endpoint gated by
+/// <see cref="EdgeAuthHandler"/>, which prefers a per-edge-node API
+/// key in the <c>X-Edge-Api-Key</c> header (or <c>Authorization:
+/// Bearer &lt;key&gt;</c>) and falls back to the legacy Sprint 11
+/// <c>X-Edge-Token</c> shared secret while
+/// <c>EdgeAuth:AllowLegacyToken</c> is truthy in config. Per-node
+/// keys are HMAC-hashed at rest, individually revocable, and
+/// optionally expirable — a strict strengthening over the Sprint 11
+/// single-shared-secret flow. Once every edge has migrated to a
+/// per-node key, ops should flip <c>EdgeAuth:AllowLegacyToken=false</c>
+/// to retire the legacy path entirely.
 /// </para>
 ///
 /// <para>
@@ -69,10 +71,10 @@ namespace NickERP.Inspection.Web.Endpoints;
 /// </summary>
 public static class EdgeReplayEndpoint
 {
-    /// <summary>HTTP header carrying the shared edge token.</summary>
+    /// <summary>HTTP header carrying the legacy shared edge token (Sprint 11; retired post-rollout).</summary>
     public const string TokenHeader = "X-Edge-Token";
 
-    /// <summary>Configuration key the endpoint reads for the expected token.</summary>
+    /// <summary>Configuration key for the legacy Sprint 11 shared secret. Read only when <c>EdgeAuth:AllowLegacyToken</c> is truthy.</summary>
     public const string SharedSecretConfigKey = "EdgeNode:SharedSecret";
 
     /// <summary>Stable hint string for v0 audit-event replay.</summary>
@@ -81,7 +83,7 @@ public static class EdgeReplayEndpoint
     /// <summary>
     /// Map the edge replay endpoint onto <paramref name="app"/>.
     /// Wire from <c>Program.cs</c> after authentication; the endpoint
-    /// itself is anonymous (X-Edge-Token gates instead).
+    /// itself is anonymous (<see cref="EdgeAuthHandler"/> gates).
     /// </summary>
     public static IEndpointRouteBuilder MapEdgeReplayEndpoint(this IEndpointRouteBuilder app)
     {
@@ -102,7 +104,7 @@ public static class EdgeReplayEndpoint
         HttpContext http,
         AuditDbContext db,
         ITenantContext tenant,
-        IConfiguration config,
+        EdgeAuthHandler auth,
         ILoggerFactory loggerFactory,
         EdgeReplayRequestDto body,
         TimeProvider? clock = null,
@@ -110,19 +112,17 @@ public static class EdgeReplayEndpoint
     {
         var logger = loggerFactory.CreateLogger("EdgeReplayEndpoint");
 
-        // ---- 1. Auth: shared-secret token check. ---------------------
-        var expected = config[SharedSecretConfigKey];
-        if (string.IsNullOrEmpty(expected))
+        // ---- 1. Auth: per-node API key (preferred) + legacy fallback.
+        // The handler runs the lookup under SetSystemContext (pre-tenant-
+        // resolution), so by the time we return here either we're
+        // authenticated and the tenant context is in system mode (which
+        // is what the rest of this handler also wants for cross-tenant
+        // batches) or the request is rejected.
+        var authResult = await auth.AuthenticateAsync(http, ct);
+        if (authResult.Outcome is not EdgeAuthOutcome.AuthenticatedPerNode
+                                  and not EdgeAuthOutcome.AuthenticatedLegacy)
         {
-            logger.LogWarning(
-                "EdgeNode:SharedSecret is not configured; rejecting all edge replay attempts as a fail-closed default.");
-            return Results.Unauthorized();
-        }
-
-        var presented = http.Request.Headers[TokenHeader].ToString();
-        if (string.IsNullOrEmpty(presented) || !ConstantTimeEquals(expected, presented))
-        {
-            logger.LogWarning("Edge replay rejected: missing or mismatched {Header}.", TokenHeader);
+            logger.LogWarning("Edge replay rejected: outcome={Outcome}.", authResult.Outcome);
             return Results.Unauthorized();
         }
 
@@ -394,18 +394,6 @@ public static class EdgeReplayEndpoint
         }
         bufferStream.Position = 0;
         return JsonDocument.Parse(bufferStream);
-    }
-
-    /// <summary>
-    /// Constant-time string comparison so a token check can't be
-    /// timing-attacked by an attacker who can submit thousands of
-    /// guesses against a public endpoint.
-    /// </summary>
-    private static bool ConstantTimeEquals(string a, string b)
-    {
-        var aBytes = Encoding.UTF8.GetBytes(a);
-        var bBytes = Encoding.UTF8.GetBytes(b);
-        return CryptographicOperations.FixedTimeEquals(aBytes, bBytes);
     }
 
     private static readonly JsonSerializerOptions JsonOptions =
