@@ -95,10 +95,18 @@ builder.Services.AddScoped<NickERP.Inspection.ExternalSystems.Abstractions.IIcum
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.IcumsKeyRotationService>();
 
 // Sprint 13 / P2-FU-edge-auth — per-edge-node API key auth handler for
-// /api/edge/replay. Scoped: captures the request-scoped AuditDbContext
-// + ITenantContext. Reads EdgeAuth:HashKey from config (or DataProtection
-// fallback) for HMAC; reads EdgeAuth:AllowLegacyToken for the rollout-
-// window legacy X-Edge-Token compatibility.
+// /api/edge/replay + the issuance/revocation service the admin UI in
+// apps/portal calls. The hasher + envelope live in Platform.Audit.Database
+// (alongside the entity) so the portal can use them too without a
+// cross-host project reference.
+//
+// EdgeKeyHasher is scoped because it captures IConfiguration + the
+// envelope; the envelope depends on IDataProtectionProvider so it's
+// registered as a singleton (the DP provider is itself a singleton).
+builder.Services.AddSingleton<NickERP.Platform.Audit.Database.IEdgeKeyHashEnvelope,
+    NickERP.Inspection.Web.Services.DataProtectionEdgeKeyHashEnvelope>();
+builder.Services.AddScoped<NickERP.Platform.Audit.Database.EdgeKeyHasher>();
+builder.Services.AddScoped<NickERP.Platform.Audit.Database.EdgeNodeApiKeyService>();
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.EdgeAuthHandler>();
 
 // ---------------------------------------------------------------------------
