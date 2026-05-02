@@ -2494,6 +2494,58 @@ User-driven scope correction round. Four parallel team-agents under a master coo
 
 Restructured the doc to keep future iterations anchored to image-analysis work. Added a new "Section tiers" block at the top (after Principles, before §1) classifying every numbered section into one of three tiers — **image-analysis-direct** (the actual ML/CV: §3 split student, §4 inference runner, §5 DICOS, §6.1 OCR, §6.2 anomaly, §6.3 manifest↔X-ray, §6.5 thresholds, §6.6 TIP, §6.7 dual-view, §6.8 metal-artifact); **image-analysis-adjacent** (training-data infra: §6.4 active learning, §6.9 threat library, §6.10 HS density); and **supporting-platform** (label plumbing: §6.11 inbound outcome adapter) — with a "How to use this doc" line directing readers to lead with the direct tier. Renamed the §2 priority table's "Tier" column to "Phase" and inserted a new "Tier (D/A/P)" column between Phase and Item, with a single-letter tier marker per row (no row reordering, no other column changes). Added a one-line italics tier callout immediately under each `### 6.x` heading, before any existing blockquote `>` callouts in that section. Added a §7.0 "Tier reminder" paragraph at the top of §7 noting that the cross-cutting open-questions buckets below are purpose-sorted, not tier-sorted, and that prioritisation should weight image-analysis-direct items above adjacent and platform items unless an external dependency forces otherwise. No spec content was modified — only classification metadata was added.
 
+### 2026-05-02 — plan-mode walk: pilot phasing + new commitments
+
+Structured plan-mode walk through ROADMAP.md vision + locked answers + this doc's §6.x. Image-analysis-relevant outcomes:
+
+**Phasing for v2 pilot (locked):**
+
+| § | Section | Pilot scope? | Notes |
+|---|---|---|---|
+| §6.1 | Container OCR (Florence-2 / Donut) | **Pilot** | GPU training arc + new OCR accuracy eval tool. Sequenced in plan-file `~/.claude/plans/tingly-launching-quasar.md` §12. Tesseract stays in v2 until Florence-2 production deploy lands. |
+| §6.2 | HS-conditioned anomaly detection | post-pilot | Heavy ML; depends on §6.11 having real data + §6.10 HS density curated |
+| §6.3 | Manifest ↔ X-ray consistency | post-pilot | Same shape as §6.2; depends on §6.10 |
+| §6.4 | Active learning loop | post-pilot | Depends on §6.11 having real outcome data flowing (currently stub-only) |
+| §6.5 | Threshold calibration | shipped Sprint 12 | Idle until first scanner instance lands |
+| §6.6 | TIP synthetic data | post-pilot | Tooling for §6.2 / 6.3 / 6.4 training |
+| §6.7 | Dual-view registration | deferred | No dual-view scanner in fleet |
+| §6.8 | Beam-hardening / metal-streak | post-pilot | Pre-processing for §6.2; sequenced behind it |
+| §6.9 | Threat library capture | post-pilot | Sequenced with §6.6 / 6.2 / 6.3 / 6.4 ML arc |
+| §6.10 | HS density curation | post-pilot | Sequenced with §6.3 |
+| §6.11 | Post-hoc adapter | shipped Sprint 13 T3 | Manual-entry stub live; awaits real ICUMS adapter |
+
+**New commitment surfaced from §6.1 walk — OCR accuracy eval tool:**
+
+The §6.1 spec locks acceptance bars (≥ 95% exact-match, ≥ 98% check-digit pass, p95 ≤ 200 ms iGPU) but doesn't specify *how* you confirm those numbers in practice. That's a tooling gap. Locked shape:
+
+- **Offline harness** at `tools/inference-evaluation/container-ocr/` — runs both Tesseract (baseline) and Florence-2 (candidate) against the held-out corpus. Reports exact-match, check-digit pass rate, per-failure-mode breakdown, latency stats. Build first to establish v1 Tesseract baseline.
+- **Production drift monitor** — `OcrAccuracyMonitor : BackgroundService` — samples scans where ground truth becomes known (analyst correction, ICUMS declaration confirmed via §6.11 post-hoc). Tracks accuracy over time; alarms on drop.
+- **Admin Razor page** at `/admin/ocr-accuracy` — rolling stats per-container-line / per-port, recent failure samples for re-training.
+- **Sequencing for pilot:** offline harness first (Sprint 19) → v1 baseline measurement → Florence-2 fine-tune (out-of-band GPU) → acceptance validation → production integration → drift monitor + admin UI.
+
+Cost: ~1-2 sprints (planned in `tingly-launching-quasar.md` §12).
+
+**Vision additions affecting this doc indirectly:**
+
+- VP6 (`AnalysisService` N:N) — analysts work for services, not directly for locations. §6.x specs don't change but routing for case-visibility (e.g., who sees which §6.2 anomaly finding) flows through service membership. Sprint 14 work.
+- Locked answer 2 v0 mandatory event set: `scan-captured` + `scanner-status-changed` + audit. Edge buffer must traverse these for degraded-mode operation — `P2-FU-multi-event-types` promoted to must-have-pilot.
+- Hard 6-9 month deadline + all-v1-parity locked. §6.1 OCR is the only §6.x in pilot scope.
+
+**Critical sequencing for §6.1 (mapped to plan-file §10 sprint sequence):**
+
+```
+Sprint 14-18: Other tracks (AnalysisService, NickHR clone, etc.)
+Sprint 19: OCR eval harness offline build + v1 Tesseract baseline measurement
+Sprint 20: Training data prep (curate v1 silver/gold ROIs + synthetic generator)
+Sprint 20-22 (calendar): Florence-2 GPU runs (out-of-band, 5-10 days)
+Sprint 22-23: Acceptance validation against harness
+Sprint 23-25: Production integration (ONNX wiring, replace Tesseract path)
+Sprint 25-26: Drift monitor + admin UI
+Sprint 26-27: Production deployment (location-by-location, feature flag)
+```
+
+OCR pilot-readiness lands ~Sprint 26-27. **GPU box availability is a Sprint 14 prerequisite** — without it, Phase 4 of plan-file §12 can't start, and the OCR arc slips.
+
 ### Next iteration (planned)
 - **Phase 7.1 hardware validation** for Q-E1 (lane-PC iGPU latency for DINOv2-B/14, ≤ 400 ms p95 on Iris Xe — load-bearing for §6.2 acceptance). Validate on actual lane PCs before §6.2 gets implementation effort.
 - **Wire DI for `IInboundOutcomeAdapter`** — host-side concern; small slice adding `OutcomeIngestionOrchestrator` (per §6.11.2) and the `inspection.outcome_admin` role. With ICUMS mode now locked to pull-only, this is simpler than originally scoped.

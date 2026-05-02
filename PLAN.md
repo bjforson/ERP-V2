@@ -2199,3 +2199,47 @@ These were preserved in `stash@{0}` from a prior FU-icums-signing merge window �
 - No force-push to main.
 - `SetSystemContext` register-and-opt-in still applies (no new callers expected this sprint).
 - Plugin singletons + scoped DbContext via `IServiceScopeFactory` (FU-icums-signing pattern).
+
+---
+
+## 22. Plan-mode walk 2026-05-02 — pilot strategy + deadline reframe
+
+A structured plan-mode walk through ROADMAP.md vision + locked answers + image-analysis arc. **Outcome:** material amendments to the plan, all decisions captured in `~/.claude/plans/tingly-launching-quasar.md` (the durable plan file).
+
+### 22.1 Headline locks
+
+- **Vision grew from 5 to 6 points.** New VP6 — `AnalysisService` shape: N:N location↔service, immutable "All Locations" default per tenant, first-claim-wins under shared visibility, configurable case-visibility model + user multi-membership.
+- **External system bindings** extended from binary "single OR shared" to "single OR subset-of-locations OR shared" (junction-table N:N).
+- **v0 mandatory edge-buffer event set** locked: `scan-captured` + `scanner-status-changed` + audit. `P2-FU-multi-event-types` promoted from medium followup to v2 must-have.
+- **PG cluster operationalised:** primary + standby (manual failover), pgbackrest, PG17, no read replicas, single region, no pgBouncer.
+- **Multi-tenant operational details:** platform-admin-only provisioning, soft-delete + retention window, scoped exports on request, first-user invite via email link (requires email service — gap).
+- **Timeline:** **6-9 month internal target** (was "no hard deadline," briefly "hard 3-6 months" mid-walk).
+- **Pilot strategy:** three modules co-deployed (inspection v2-native + NickFinance v1-clone coexisting with G2 + NickHR cloned now). Refactor v1-clones to v2-native post-pilot.
+- **All-v1-parity locked** for inspection module — no v1 features deferred from pilot. ~13-18 sprints across Batches B1-B8.
+- **§6.1 OCR (Florence-2) is pilot scope.** Adds GPU training arc + new OCR accuracy eval tool.
+- **§6.2 / 6.3 / 6.4 / 6.6 / 6.8 / 6.9 / 6.10 are post-pilot.**
+
+### 22.2 Sprint 14+ dispatch shape
+
+Six parallel-safe groups. Critical path = inspection v1 parity (long pole, 13-18 sprints). Other tracks run in parallel.
+
+First 10-sprint sequence: AnalysisService VP6 → NickHR clone → ExternalSystemInstance subset junction → P2-FU-multi-event-types → Tenant lifecycle Pt 1 → OCR eval harness → Inspection parity B1 → Tenant lifecycle Pt 2 → Inspection parity B2 → three-module navigation. Detailed table in plan-file §10.
+
+### 22.3 ML training arc for §6.1
+
+Eight phases — one out-of-band (GPU runs). OCR pilot-readiness lands ~Sprint 26-27. GPU box availability is a Sprint 14 prerequisite. Decision gates after baseline / first GPU run / latency check / drift monitor. Plan-file §12.
+
+### 22.4 Pilot-site decision
+
+Two-step framework (hard gates + weighted scoring). Tentative front-runners: **Kotoka Cargo (KIA) or Takoradi**. Border sites are post-pilot expansion. Final call due by Sprint 22-24. Plan-file §13.
+
+### 22.5 Pre-pilot scope total
+
+**~31-45 sprints.** At sustained 1.5 sprints/week: 5-7.5 months. At 2 sprints/week (peak, unsustainable): 4-6 months. The 6-9 month deadline fits with realistic pace + slack.
+
+### 22.6 Genuinely external (not planned within this session)
+
+- GPU compute runtime for §6.1 fine-tune
+- Final pilot-site pick (needs your input on operator cooperation, contractual constraints, strategic considerations)
+
+Everything else — sprint dispatch, v1 parity sprint breakdown, ML arc sequencing, pilot-site decision framework — is now in plan-file §10-§13.
