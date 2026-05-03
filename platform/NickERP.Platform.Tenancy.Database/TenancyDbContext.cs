@@ -32,6 +32,8 @@ public sealed class TenancyDbContext : DbContext
             e.Property(x => x.Locale).IsRequired().HasMaxLength(20).HasDefaultValue("en-GH");
             e.Property(x => x.Currency).IsRequired().HasMaxLength(3).HasDefaultValue("GHS");
             e.Property(x => x.IsActive).HasDefaultValue(true);
+            e.Property(x => x.CaseVisibilityModel).HasConversion<int>().HasDefaultValue(CaseVisibilityModel.Shared);
+            e.Property(x => x.AllowMultiServiceMembership).HasDefaultValue(true);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             e.HasIndex(x => x.Code).IsUnique().HasDatabaseName("ux_tenants_code");

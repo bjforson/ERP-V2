@@ -36,6 +36,10 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<ScannerThresholdProfile> ScannerThresholdProfiles => Set<ScannerThresholdProfile>();
     public DbSet<OutcomePullCursor> OutcomePullCursors => Set<OutcomePullCursor>();
     public DbSet<PostHocRolloutPhase> PostHocRolloutPhases => Set<PostHocRolloutPhase>();
+    public DbSet<AnalysisService> AnalysisServices => Set<AnalysisService>();
+    public DbSet<AnalysisServiceLocation> AnalysisServiceLocations => Set<AnalysisServiceLocation>();
+    public DbSet<AnalysisServiceUser> AnalysisServiceUsers => Set<AnalysisServiceUser>();
+    public DbSet<CaseClaim> CaseClaims => Set<CaseClaim>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -550,6 +554,113 @@ public sealed class InspectionDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.ExternalSystemInstanceId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- AnalysisService (Sprint 14 / VP6 Phase A) ----------------------------
+        // VP6: image-analysis is organised into one or more services per
+        // tenant. N:N location↔service via AnalysisServiceLocation.
+        // Users join services via AnalysisServiceUser. Built-in immutable
+        // "All Locations" service per tenant via the unique partial index
+        // ux_analysis_services_tenant_built_in WHERE IsBuiltInAllLocations.
+        modelBuilder.Entity<AnalysisService>(e =>
+        {
+            e.ToTable("analysis_services");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Name).IsRequired().HasMaxLength(200);
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.Property(x => x.IsBuiltInAllLocations).HasDefaultValue(false);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.CreatedByUserId);
+            e.Property(x => x.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_analysis_services_tenant");
+            e.HasIndex(x => new { x.TenantId, x.Name })
+                .IsUnique()
+                .HasDatabaseName("ux_analysis_services_tenant_name");
+
+            // Partial unique index: at most one IsBuiltInAllLocations=true row per tenant.
+            e.HasIndex(x => x.TenantId)
+                .IsUnique()
+                .HasFilter("\"IsBuiltInAllLocations\" = TRUE")
+                .HasDatabaseName("ux_analysis_services_tenant_built_in");
+        });
+
+        // ----- AnalysisServiceLocation (Sprint 14 / VP6 Phase A) --------------------
+        modelBuilder.Entity<AnalysisServiceLocation>(e =>
+        {
+            e.ToTable("analysis_service_locations");
+            e.HasKey(x => new { x.AnalysisServiceId, x.LocationId });
+            e.Property(x => x.AddedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_analysis_service_locations_tenant");
+            e.HasIndex(x => x.LocationId).HasDatabaseName("ix_analysis_service_locations_location");
+
+            e.HasOne(x => x.AnalysisService)
+                .WithMany()
+                .HasForeignKey(x => x.AnalysisServiceId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Location)
+                .WithMany()
+                .HasForeignKey(x => x.LocationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- AnalysisServiceUser (Sprint 14 / VP6 Phase A) ------------------------
+        modelBuilder.Entity<AnalysisServiceUser>(e =>
+        {
+            e.ToTable("analysis_service_users");
+            e.HasKey(x => new { x.AnalysisServiceId, x.UserId });
+            e.Property(x => x.AssignedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.AssignedByUserId);
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_analysis_service_users_tenant");
+            e.HasIndex(x => x.UserId).HasDatabaseName("ix_analysis_service_users_user");
+
+            e.HasOne(x => x.AnalysisService)
+                .WithMany()
+                .HasForeignKey(x => x.AnalysisServiceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ----- CaseClaim (Sprint 14 / VP6 Phase A) ----------------------------------
+        // First-claim-wins lock under shared visibility. The unique
+        // partial index ux_case_claims_active_per_case enforces
+        // at-most-one-active-claim per case (WHERE ReleasedAt IS NULL).
+        modelBuilder.Entity<CaseClaim>(e =>
+        {
+            e.ToTable("case_claims");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.AnalysisServiceId).IsRequired();
+            e.Property(x => x.ClaimedByUserId).IsRequired();
+            e.Property(x => x.ClaimedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.ReleasedAt);
+            e.Property(x => x.ReleasedByUserId);
+            e.Property(x => x.TenantId).IsRequired();
+
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_case_claims_tenant");
+            e.HasIndex(x => x.CaseId).HasDatabaseName("ix_case_claims_case");
+            e.HasIndex(x => x.AnalysisServiceId).HasDatabaseName("ix_case_claims_service");
+
+            // At most one active claim per case (ReleasedAt IS NULL).
+            e.HasIndex(x => x.CaseId)
+                .IsUnique()
+                .HasFilter("\"ReleasedAt\" IS NULL")
+                .HasDatabaseName("ux_case_claims_active_per_case");
+
+            e.HasOne(x => x.Case)
+                .WithMany()
+                .HasForeignKey(x => x.CaseId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.AnalysisService)
+                .WithMany()
+                .HasForeignKey(x => x.AnalysisServiceId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

@@ -45,6 +45,22 @@ public sealed class Tenant
     /// <summary><c>false</c> = tenant suspended. Resolver rejects requests for suspended tenants.</summary>
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// VP6 (locked 2026-05-02): how cases route through AnalysisServices that
+    /// share locations. <see cref="CaseVisibilityModel.Shared"/> = case appears
+    /// in every qualifying service (first-claim-wins on open). <see cref="CaseVisibilityModel.Exclusive"/>
+    /// = case routes to exactly one service at intake (most-specific-service-wins).
+    /// </summary>
+    public CaseVisibilityModel CaseVisibilityModel { get; set; } = CaseVisibilityModel.Shared;
+
+    /// <summary>
+    /// VP6 (locked 2026-05-02): when true, a user can join more than one
+    /// AnalysisService and see the union of cases visible to all their
+    /// services. When false, the service-layer guard rejects a second
+    /// membership; switching services is an admin operation.
+    /// </summary>
+    public bool AllowMultiServiceMembership { get; set; } = true;
+
     public DateTimeOffset CreatedAt { get; set; }
 
     /// <summary>The reserved id of the default tenant for single-customer deployments.</summary>
@@ -64,4 +80,27 @@ public interface ITenantOwned
 {
     /// <summary>Owning tenant — set by the interceptor on insert if zero, never overwritten on update.</summary>
     long TenantId { get; set; }
+}
+
+/// <summary>
+/// VP6 (locked 2026-05-02): tenant-configurable case-routing model
+/// across <c>AnalysisService</c>s that share locations.
+/// </summary>
+public enum CaseVisibilityModel
+{
+    /// <summary>
+    /// Default. A case appears in EVERY <c>AnalysisService</c> that
+    /// includes the case's location in its scope. First-claim-wins when
+    /// an analyst opens it (enforced via the unique partial index on
+    /// <c>case_claims (CaseId) WHERE ReleasedAt IS NULL</c>).
+    /// </summary>
+    Shared = 0,
+
+    /// <summary>
+    /// A case routes to exactly one <c>AnalysisService</c> at intake —
+    /// the "most-specific-service-wins" rule (smallest scope wins; ties
+    /// broken by oldest creation). Other qualifying services don't see
+    /// it.
+    /// </summary>
+    Exclusive = 10
 }
