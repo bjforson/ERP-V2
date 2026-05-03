@@ -18,6 +18,11 @@ using NickERP.NickFinance.Web.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Windows Service host integration — required so SCM "service started"
+// signaling works when this binary is hosted as the NSCIM_Portal service.
+// No-op when running interactively (dotnet run / direct .exe invocation).
+builder.Host.UseWindowsService();
+
 // ---------------------------------------------------------------------------
 // Track A — observability foundation. Logs to Seq, traces + metrics over OTLP.
 // ---------------------------------------------------------------------------

@@ -14,6 +14,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\platform\NickERP.Platform.Logging\NickERP.Platform.Logging.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
