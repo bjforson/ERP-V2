@@ -1,8 +1,19 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": null,
-  "currentSprintNote": "Sprint 13 shipped 2026-04-30 (T2 edge auth a5f7344, T3 §6.11 e7cf83d, T1 live-deploy staging 71caeb0; 253/253 tests). **Plan-mode walk 2026-05-02 reframed Sprint 14+ scope:** added VP6 AnalysisService N:N to vision; promoted P2-FU-multi-event-types to must-have-pilot; locked 6-9 month deadline; locked all-v1-parity for inspection module (~13-18 sprints across Batches B1-B8); locked three-module pilot (inspection v2-native + NickFinance v1-clone + NickHR cloned now); §6.1 Florence-2 OCR is pilot scope; §6.2/3/4/6/8/9/10 post-pilot. Sprint 14 = AnalysisService VP6 (per plan-file §10). Detailed dispatch sequence + v1 parity breakdown + ML training arc + pilot-site decision matrix in ~/.claude/plans/tingly-launching-quasar.md §10-§13.",
+  "currentSprint": {
+    "id": "Sprint 14",
+    "name": "VP6 — AnalysisService N:N storage + admin + claim semantics",
+    "dispatchedAt": "2026-05-02",
+    "items": [
+      { "id": "Sprint14-PhaseA", "title": "VP6 storage layer — 4 entities (AnalysisService, AnalysisServiceLocation, AnalysisServiceUser, CaseClaim) + 2 Tenant config columns + 3 migrations (Tenancy Add_TenantVp6Settings, Inspection Add_AnalysisServiceVp6 with RLS + un-deletable trigger, BootstrapAnalysisServicesV0 idempotent seed). 253/253 tests baseline holds — Phase A is additive scaffolding.", "status": "done", "commit": "5ec12be" },
+      { "id": "Sprint14-PhaseA5", "title": "Auto-bootstrap hooks: TenantBootstrapService creates 'All Locations' service for new tenants; LocationService auto-joins new locations to tenant's 'All Locations' service. Wraps the inline-create points in apps/portal Tenants.razor + Inspection.Web Locations.razor.", "status": "queued" },
+      { "id": "Sprint14-PhaseB", "title": "Admin UI — /admin/analysis-services (list) + /admin/analysis-services/{id} (detail with locations + users) + tenant settings page extension for CaseVisibilityModel + AllowMultiServiceMembership.", "status": "queued" },
+      { "id": "Sprint14-PhaseC", "title": "Claim semantics — CaseClaimService (acquire/release with optimistic-lock via unique partial index) + case-visibility query rewrite (shared = JOIN through service membership; exclusive = most-specific-service-wins routing) + 'claimed by [user] in [service]' badge in case-detail view.", "status": "queued" },
+      { "id": "Sprint14-PhaseD", "title": "Tests — ~30-50 covering RLS isolation, un-deletable enforcement (service-layer + trigger), N:N junction, claim races, visibility model behaviour, tenant config toggle effects.", "status": "queued" }
+    ]
+  },
+  "currentSprintNote": "Sprint 14 in flight 2026-05-02. Phase A (VP6 storage layer) shipped at 5ec12be — 4 entities, 3 migrations, RLS + tenant_isolation_* policies, un-deletable trigger for IsBuiltInAllLocations=true, idempotent backfill. Build clean, 253/253 tests. **First sub-agent attempt blocked on harness `dotnet` permission gap; top-level orchestrator took over and shipped Phase A directly.** Phases A.5 (auto-bootstrap hooks), B (admin UI), C (claim semantics + visibility query rewrite), D (~30-50 tests) are queued. Plan-file §10-§13 has detailed dispatch sequence + v1 parity breakdown + ML training arc + pilot-site decision matrix.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
