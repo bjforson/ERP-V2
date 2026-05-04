@@ -2,15 +2,15 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Sprint 22 SHIPPED 2026-05-04 (parallel-master partner of Sprint 19, still in flight). Inspection v1 parity B2 — ICUMS submission queue + download queue + dashboard + loose cargo + BOE lookup + manual pull + JsonPayloadViewer. Branch plan/sprint-22-inspection-parity-b2 (4 commits dccef113/67e54ff6/1733dfbe/579d1d1a). Migration 20260504160000_Add_OutboundSubmissionPriority applied to live nickerp_inspection (also caught up 20260504113030_Add_ExternalSystemSubsetScope marker). Tests grew 371 -> 396 (+25). Sprint 19 (OCR eval harness + v1 Tesseract baseline) running in parallel on plan/sprint-19-ocr-eval — tools/ scope only.",
+  "currentSprintNote": "Sprints 19 + 22 SHIPPED 2026-05-04 (parallel-master pattern). Sprint 19 (OCR eval harness + v1 Tesseract baseline): main d82494fd (6 commits 5bd65aed/9d41b620/dea57d45/3e2d3391/bb6807b9/4d30263f). MAJOR FINDING: v1 Tesseract baseline measures 0% exact-match on 1917 production rows — Tesseract never produces a valid 11-char ISO 6346 candidate from full-container LUT JPEGs. Florence-2 ROI is unbounded; §6.1 pilot scope strongly justified. See runbook 08 + decision-needed entry. Sprint 22 (Inspection v1 parity B2 ICUMS UIs): main 3a32852b (4 commits, +25 tests). Tests at 396/396. Next: Sprint 20+ Batch B3 (background services), Tenant lifecycle Pt 3 (export), or Florence-2 GPU training arc.",
   "prePilotProgress": {
     "asOf": "2026-05-04",
     "deadlineMonthsLow": 6,
     "deadlineMonthsHigh": 9,
-    "shippedSprints": 13,
+    "shippedSprints": 14,
     "totalEstimateLow": 31,
     "totalEstimateHigh": 47,
-    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 13 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprint 22 added 2 — full B2 ICUMS queue UIs). Inspection v1 parity (13-18 sprints) advancing — B1+B2 done (4 of 13-18); B3-B8 remaining. Tenant lifecycle Pt 1+2 done (Pt 3 export queued). Pace at 1.5 sprints/week sustained = 12-23 weeks remaining.",
+    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 14 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprint 19 added 1 — Phase 1+2 of plan §12 ML training arc). Inspection v1 parity (13-18 sprints) advancing — B1+B2 done (4 of 13-18). §6.1 OCR arc (4-6 sprints) started — eval harness + baseline shipped (1 of 4-6). MAJOR FINDING: v1 Tesseract baseline 0% — see decisionsNeeded. Tenant lifecycle Pt 1+2 done. Pace at 1.5 sprints/week sustained = 11-22 weeks remaining.",
     "workstreams": [
       { "name": "AnalysisService VP6", "estimateLow": 2, "estimateHigh": 3, "shipped": 3, "status": "done", "note": "Sprint 14 (5 phases): storage + bootstrap + admin + claim + tests" },
       { "name": "ExternalSystemInstance subset junction", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 16" },
@@ -20,7 +20,7 @@
       { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 4, "status": "in-progress", "note": "Long pole. Per plan §11 — case viewing (B1 SHIPPED Sprint 20: tabs + analyst viewer + multi-scan nav), ICUMS UIs (B2 SHIPPED Sprint 22: submission/download queues + dashboard + loose cargo + BOE lookup + manual pull), BG services (B3), validation rules (B4), completeness (B5), specialised review (B6), monitoring (B7), admin (B8)." },
       { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
       { "name": "Three-module co-deploy navigation", "estimateLow": 1, "estimateHigh": 1, "shipped": 0, "status": "not-started", "note": "Portal links to inspection.web + finance.web + hr.web with shared auth + chrome." },
-      { "name": "§6.1 OCR eval + Florence-2", "estimateLow": 4, "estimateHigh": 6, "shipped": 0, "status": "not-started", "note": "Gated on GPU box availability. Per plan §12 — eval harness + v1 baseline + GPU training (out-of-band) + integration + drift monitor." },
+      { "name": "§6.1 OCR eval + Florence-2", "estimateLow": 4, "estimateHigh": 6, "shipped": 1, "status": "in-progress", "note": "Per plan §12. Phase 1 (eval harness) + Phase 2 (v1 Tesseract baseline) SHIPPED Sprint 19 (2026-05-04). v1 baseline measured 0% exact-match — see decisionsNeeded. Phase 3 (training data prep), Phase 4 (Florence-2 GPU fine-tune, out-of-band), Phase 5+ (validation, integration, drift monitor) remaining." },
       { "name": "Phase V lightweight (security + perf)", "estimateLow": 1, "estimateHigh": 2, "shipped": 0, "status": "not-started", "note": "Pre-pilot validation. Targeted security audit + perf/load test scoped to pilot site." },
       { "name": "Pilot site setup + monitoring", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Final site call due Sprint 22-24. Tentative front-runners: Kotoka or Takoradi per plan §13." }
     ],
@@ -30,7 +30,20 @@
       { "id": "pilot-site-selection", "title": "Pick pilot site (Kotoka / Takoradi / other) per plan §13 decision matrix", "blocking": "Phase V scoping (Sprint 22-24)" }
     ]
   },
-  "decisionsNeeded": [],
+  "decisionsNeeded": [
+    {
+      "id": "ocr-baseline-0pct-followups",
+      "title": "v1 Tesseract OCR measures 0% on 1917 prod rows — what now?",
+      "raisedAt": "2026-05-04",
+      "raisedBy": "Sprint 19 master",
+      "context": "Sprint 19 measured v1's Tesseract container-OCR against 1917 fs6000images rows (imagetype='Main') with truth from fs6000scans.containernumber (FS6000 vendor manifest, scan-time, independent of Tesseract). Result: 0/1917 exact-match, 0/2157 check-digit pass. Tesseract operates on full-container LUT JPEGs (no plate-ROI detector in v1). The painted container number is visually unreadable in the LUT-rendered preview. See docs/runbooks/08-ocr-baseline-2026-05-04.md.",
+      "options": [
+        "Trust the FS6000 vendor manifest as the linkage source (likely what v1 operators rely on today — fs6000scans.containernumber is set at scan time by gate barcode or manual entry). Tesseract was always a redundant verification, not the linkage. Florence-2 + plate-ROI detector becomes a quality enhancement, not a parity blocker. Implication: §6.1 priority drops, can move post-pilot.",
+        "Keep §6.1 pilot-scope as currently locked (Florence-2 + plate-ROI detector). Even if v1 doesn't rely on OCR for primary linkage, getting it working enables (a) container-number cross-check against the vendor manifest, (b) manifest-less workflows (gate-pass barcode failure), (c) §6.3 manifest×X-ray consistency scoring. Implication: maintain plan §12 as-is; GPU box availability remains gating.",
+        "Investigate v1 operationally first. Confirm with users how container linkage works in production today. Decision deferred until investigation completes."
+      ]
+    }
+  ],
   "resolvedDecisions": [
     {
       "id": "G1-3",
@@ -52,6 +65,27 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 19",
+      "name": "OCR eval harness offline + v1 Tesseract baseline (plan §12 Phase 1+2)",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "d82494fd",
+      "itemCount": 6,
+      "items": [
+        { "id": "Sprint19-Phase1-scaffold", "title": "tools/inference-evaluation/container-ocr scaffold (NickERP.Tools.OcrEvaluation.csproj — .NET 10 console app, IContainerNumberRecognizer reference, Microsoft.Extensions.Hosting DI/logging/config).", "commit": "5bd65aed" },
+        { "id": "Sprint19-Phase1-tesseract", "title": "Tesseract engine (5.2.0 — same NuGet version v1 ships, copying v1's exact preprocessing chain Otsu+Gaussian+CLAHE byte-for-byte) + Postgres corpus source (streams fs6000images JOIN fs6000scans, read-only) + JSON output schema per plan §12.3.", "commit": "9d41b620" },
+        { "id": "Sprint19-Phase1-classifier", "title": "Directory corpus source (.png/.jpg/.tiff + .json sidecar pairs) + failure-mode classifier (stylized typography / weathering / oblique / false-positive surfaces).", "commit": "dea57d45" },
+        { "id": "Sprint19-Phase1-pgschema", "title": "Live-probe schema fixes — truth source amended from non-existent containerannotations.type='ocr_correction' to fs6000scans.containernumber (FS6000 vendor manifest, scan-time, non-circular vs Tesseract).", "commit": "3e2d3391" },
+        { "id": "Sprint19-Phase2-baselinerun", "title": "v1 Tesseract baseline run on prod corpus (2157 rows imagetype='Main', 1917 scored after ISO 6346 mod-11 truth filter, 240 truth-invalid). RESULT: 0/1917 exact-match (0.0%), 0/2157 check-digit pass (0.0%). Latency p50/p95/p99 = 666/1306/1750 ms (CPU). Wall-clock 1562s / ~26 min. Result JSON committed.", "commit": "bb6807b9" },
+        { "id": "Sprint19-Phase2-runbook", "title": "docs/runbooks/08-ocr-baseline-2026-05-04.md — narrative report. Decision-gate read: Florence-2 ROI unbounded; §6.1 pilot scope strongly justified. Caveats: input shape (full-container LUT JPEG, no plate-ROI), truth source (FS6000 manifest), no analyst-corrected gold labels available on this prod DB.", "commit": "4d30263f" }
+      ],
+      "ratifications": [
+        { "id": "Sprint19-truth-source-fs6000-manifest", "title": "Truth source = fs6000scans.containernumber (FS6000 vendor manifest field, set at scan time by gate barcode or manual entry, independent of any Tesseract pass). Non-circular. The harvester at tools/inference-training/container-ocr/harvest_plates.py assumes containerannotations.type='ocr_correction' rows that do NOT exist on this prod DB (74 rows total, all bbox-only Rectangle type)." },
+        { "id": "Sprint19-imagetype-main-only", "title": "Filter to imagetype='Main' only. Matches v1's ContainerNumberOcrService production behaviour (FS6000ImagePipeline.GetCompleteContainerDataAsync feeds only Main). HE/LE/Material would inflate miss rate without measuring v1's reality." },
+        { "id": "Sprint19-input-shape-full-jpeg", "title": "Inputs are full-container LUT JPEGs, NOT plate ROIs. v1 has no plate-ROI detector. Florence-2 in §6.1 will be fed cropped 384x384 ROIs — comparison will be Florence-2+ROI-detector vs v1 status quo, not Tesseract-vs-Florence-2 head-to-head." },
+        { "id": "Sprint19-em-zero-is-real", "title": "EM=0% is a measured reality, not a harness bug. Probe images dumped (probe-00-MSNU1427384.jpg etc.) confirm full-container X-ray scans where the painted container number is visually unreadable in the LUT-rendered preview — the §6.1.1 'mistaken-for-text container surfaces' failure mode the spec calls out. Tesseract genuinely cannot produce ANY valid 11-char ISO 6346 candidate." }
+      ]
+    },
     {
       "id": "Sprint 22",
       "name": "Inspection v1 parity Batch B2 — ICUMS submission/download queues + dashboard + loose cargo + BOE lookup + manual pull",
