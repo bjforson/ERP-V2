@@ -73,7 +73,10 @@
                     <th>TZ</th>
                     <th>Currency</th>
                     <th>Active</th>
+                    <th>Visibility</th>
+                    <th>Multi-svc</th>
                     <th>Created</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
@@ -86,8 +89,11 @@
                         <td>@t.BillingPlan</td>
                         <td>@t.TimeZone</td>
                         <td>@t.Currency</td>
-                        <td>@(t.IsActive ? "✅" : "❌")</td>
+                        <td>@(t.IsActive ? "yes" : "no")</td>
+                        <td>@t.CaseVisibilityModel</td>
+                        <td>@(t.AllowMultiServiceMembership ? "yes" : "no")</td>
                         <td>@t.CreatedAt.ToString("yyyy-MM-dd")</td>
+                        <td><a class="portal-button" href="/tenants/@t.Id">Settings</a></td>
                     </tr>
                 }
             </tbody>

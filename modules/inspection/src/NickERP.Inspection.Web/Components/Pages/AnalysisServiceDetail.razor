@@ -1,0 +1,387 @@
+@page "/admin/analysis-services/{ServiceId:guid}"
+@* Sprint 14 / VP6 Phase B — admin detail page for an AnalysisService.
+   Three sections: Properties (Name + Description, Name read-only for the
+   built-in service), Locations (composite N:N membership; built-in
+   service's locations are read-only and "Add" is hidden because
+   auto-join already covers every location), Users (membership +
+   add/remove with raw user-id input — full user search lands when v2
+   identity gets a user-search endpoint).
+
+   Authorization mirrors AnalysisServicesAdmin.razor. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.AnalysisServices
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Platform.Tenancy
+@using NickERP.Platform.Tenancy.Database
+@inject InspectionDbContext Db
+@inject TenancyDbContext TenancyDb
+@inject ITenantContext Tenant
+@inject AnalysisServiceAdminService Admin
+@inject AuthenticationStateProvider AuthState
+@inject Microsoft.AspNetCore.Components.NavigationManager Nav
+
+<PageTitle>Analysis service detail — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Analysis service</h1>
+        <p class="inspection-page-subtitle"><a href="/admin/analysis-services">&larr; Back to list</a></p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_service is null)
+{
+    <p>@(_loadError ?? "Loading…")</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <p class="inspection-form-message">@_message</p>
+    }
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">
+                Properties
+                @if (_service.IsBuiltInAllLocations)
+                {
+                    <span class="inspection-badge" title="Built-in default; cannot be deleted.">All locations</span>
+                }
+            </h2>
+            <EditForm Model="_propsForm" OnValidSubmit="SavePropsAsync" FormName="props" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Name</span>
+                        @if (_service.IsBuiltInAllLocations)
+                        {
+                            <InputText class="inspection-input" @bind-Value="_propsForm.Name" disabled="disabled" />
+                        }
+                        else
+                        {
+                            <InputText class="inspection-input" @bind-Value="_propsForm.Name" />
+                        }
+                    </label>
+                    <label>
+                        <span>Description</span>
+                        <InputText class="inspection-input" @bind-Value="_propsForm.Description" />
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary">Save</button>
+                    @if (!_service.IsBuiltInAllLocations)
+                    {
+                        <button type="button" class="inspection-button" @onclick="DeleteAsync">Delete</button>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Locations</h2>
+            @if (_service.IsBuiltInAllLocations)
+            {
+                <p class="inspection-empty">The built-in service auto-joins every location at creation. Removal is rejected — the unrouted-cases-impossible invariant requires full coverage.</p>
+            }
+            else
+            {
+                <EditForm Model="_locForm" OnValidSubmit="AddLocationAsync" FormName="add-location" class="inspection-form">
+                    <div class="inspection-form-row">
+                        <label>
+                            <span>Add location</span>
+                            <InputSelect class="inspection-input" @bind-Value="_locForm.LocationId">
+                                <option value="">— pick —</option>
+                                @if (_unjoinedLocations is not null)
+                                {
+                                    @foreach (var loc in _unjoinedLocations)
+                                    {
+                                        <option value="@loc.Id">@loc.Code — @loc.Name</option>
+                                    }
+                                }
+                            </InputSelect>
+                        </label>
+                    </div>
+                    <div class="inspection-form-actions">
+                        <button type="submit" class="inspection-button inspection-button-primary">Add</button>
+                    </div>
+                </EditForm>
+            }
+            @if (_joinedLocations is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (_joinedLocations.Count == 0)
+            {
+                <p class="inspection-empty">No locations on this service.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th>Code</th><th>Name</th><th>Joined</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var l in _joinedLocations)
+                        {
+                            <tr>
+                                <td><code>@l.Location.Code</code></td>
+                                <td>@l.Location.Name</td>
+                                <td>@l.AddedAt.ToString("yyyy-MM-dd")</td>
+                                <td>
+                                    @if (!_service.IsBuiltInAllLocations)
+                                    {
+                                        <button type="button" class="inspection-button" @onclick="() => RemoveLocationAsync(l.Location.Id)">Remove</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Users</h2>
+            <EditForm Model="_userForm" OnValidSubmit="AddUserAsync" FormName="add-user" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>User id (Guid)</span>
+                        <InputText class="inspection-input" @bind-Value="_userForm.UserIdRaw" placeholder="00000000-0000-0000-0000-000000000000" />
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary">Add</button>
+                </div>
+            </EditForm>
+            @if (_users is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (_users.Count == 0)
+            {
+                <p class="inspection-empty">No users assigned to this service yet.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th>User id</th><th>Assigned</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var u in _users)
+                        {
+                            <tr>
+                                <td><code>@u.UserId</code></td>
+                                <td>@u.AssignedAt.ToString("yyyy-MM-dd")</td>
+                                <td>
+                                    <button type="button" class="inspection-button" @onclick="() => RemoveUserAsync(u.UserId)">Remove</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid ServiceId { get; set; }
+
+    private AnalysisService? _service;
+    private List<JoinedLocationRow>? _joinedLocations;
+    private List<Location>? _unjoinedLocations;
+    private List<AnalysisServiceUser>? _users;
+    private bool _allowMultiServiceMembership = true;
+    private string _message = string.Empty;
+    private string? _loadError;
+
+    [SupplyParameterFromForm(FormName = "props")] private PropsForm _propsForm { get; set; } = new();
+    [SupplyParameterFromForm(FormName = "add-location")] private LocationForm _locForm { get; set; } = new();
+    [SupplyParameterFromForm(FormName = "add-user")] private UserForm _userForm { get; set; } = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _message = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!Tenant.IsResolved) return;
+
+        _service = await Db.AnalysisServices.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == ServiceId);
+        if (_service is null)
+        {
+            _loadError = "Service not found in this tenant.";
+            return;
+        }
+
+        _propsForm = new PropsForm { Name = _service.Name, Description = _service.Description ?? string.Empty };
+
+        var joinedRaw = await Db.AnalysisServiceLocations.AsNoTracking()
+            .Where(asl => asl.AnalysisServiceId == ServiceId)
+            .ToListAsync();
+        var joinedIds = joinedRaw.Select(j => j.LocationId).ToList();
+        var locsById = await Db.Locations.AsNoTracking()
+            .Where(l => joinedIds.Contains(l.Id))
+            .ToDictionaryAsync(l => l.Id);
+        _joinedLocations = joinedRaw
+            .Where(j => locsById.ContainsKey(j.LocationId))
+            .Select(j => new JoinedLocationRow(locsById[j.LocationId], j.AddedAt))
+            .OrderBy(r => r.Location.Code)
+            .ToList();
+
+        // Locations not yet on this service — for the "Add" dropdown.
+        _unjoinedLocations = await Db.Locations.AsNoTracking()
+            .Where(l => !joinedIds.Contains(l.Id))
+            .OrderBy(l => l.Code)
+            .ToListAsync();
+
+        _users = await Db.AnalysisServiceUsers.AsNoTracking()
+            .Where(u => u.AnalysisServiceId == ServiceId)
+            .OrderBy(u => u.AssignedAt)
+            .ToListAsync();
+
+        // Read the tenant's multi-membership flag to enforce the right
+        // policy on AddUserAsync. Admin must be able to read the row;
+        // tenancy.tenants is the only table not under RLS.
+        var tenantRow = await TenancyDb.Tenants.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == Tenant.TenantId);
+        _allowMultiServiceMembership = tenantRow?.AllowMultiServiceMembership ?? true;
+    }
+
+    private async Task SavePropsAsync()
+    {
+        if (_service is null) return;
+        try
+        {
+            if (!_service.IsBuiltInAllLocations
+                && !string.Equals(_service.Name, _propsForm.Name?.Trim(), StringComparison.Ordinal))
+            {
+                await Admin.RenameAsync(_service.Id, _propsForm.Name!);
+            }
+            await Admin.UpdateDescriptionAsync(_service.Id, _propsForm.Description);
+            _message = "Saved.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_service is null) return;
+        try
+        {
+            await Admin.DeleteAsync(_service.Id);
+            Nav.NavigateTo("/admin/analysis-services");
+        }
+        catch (Exception ex)
+        {
+            _message = $"Delete failed: {ex.Message}";
+        }
+    }
+
+    private async Task AddLocationAsync()
+    {
+        if (_service is null || string.IsNullOrEmpty(_locForm.LocationId)) return;
+        if (!Guid.TryParse(_locForm.LocationId, out var locId))
+        {
+            _message = "Invalid location id.";
+            return;
+        }
+        try
+        {
+            await Admin.AddLocationAsync(_service.Id, locId);
+            _locForm = new LocationForm();
+            _message = "Location added.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Add location failed: {ex.Message}";
+        }
+    }
+
+    private async Task RemoveLocationAsync(Guid locationId)
+    {
+        if (_service is null) return;
+        try
+        {
+            await Admin.RemoveLocationAsync(_service.Id, locationId);
+            _message = "Location removed.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Remove location failed: {ex.Message}";
+        }
+    }
+
+    private async Task AddUserAsync()
+    {
+        if (_service is null) return;
+        if (!Guid.TryParse(_userForm.UserIdRaw, out var userId))
+        {
+            _message = "Invalid user id.";
+            return;
+        }
+        try
+        {
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            var actorIdRaw = auth.User?.FindFirst("nickerp:id")?.Value;
+            Guid? actorId = Guid.TryParse(actorIdRaw, out var g) ? g : null;
+            await Admin.AddUserAsync(_service.Id, userId, actorId, _allowMultiServiceMembership);
+            _userForm = new UserForm();
+            _message = "User added.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Add user failed: {ex.Message}";
+        }
+    }
+
+    private async Task RemoveUserAsync(Guid userId)
+    {
+        if (_service is null) return;
+        try
+        {
+            await Admin.RemoveUserAsync(_service.Id, userId);
+            _message = "User removed.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Remove user failed: {ex.Message}";
+        }
+    }
+
+    private sealed record JoinedLocationRow(Location Location, DateTimeOffset AddedAt);
+
+    public sealed class PropsForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+    }
+
+    public sealed class LocationForm
+    {
+        public string LocationId { get; set; } = string.Empty;
+    }
+
+    public sealed class UserForm
+    {
+        public string UserIdRaw { get; set; } = string.Empty;
+    }
+}

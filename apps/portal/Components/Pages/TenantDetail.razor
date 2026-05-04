@@ -1,0 +1,130 @@
+@page "/tenants/{TenantId:long}"
+@* Sprint 14 / VP6 Phase B — per-tenant settings detail page. Today the
+   page exposes the two VP6 toggles (CaseVisibilityModel + AllowMultiService
+   Membership). Future scope adds soft-delete + retention + module
+   activation toggles (Sprints 18+). *@
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Tenancy
+@using NickERP.Platform.Tenancy.Database
+@using NickERP.Platform.Tenancy.Entities
+@inject TenancyDbContext Db
+@inject Microsoft.AspNetCore.Components.NavigationManager Nav
+
+<PageTitle>Tenant settings — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Tenant settings</h1>
+        <p class="portal-page-subtitle"><a href="/tenants">&larr; Back to list</a></p>
+    </div>
+</header>
+
+@if (_tenant is null)
+{
+    <p>@(_loadError ?? "Loading…")</p>
+}
+else
+{
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">@_tenant.Name <small><code>@_tenant.Code</code></small></h2>
+            <p class="portal-card-subtitle">Tenant id @_tenant.Id — created @_tenant.CreatedAt.ToString("yyyy-MM-dd")</p>
+        </div>
+
+        <div class="portal-card">
+            <h2 class="portal-card-title">VP6 — case routing</h2>
+            <p class="portal-card-subtitle">
+                Pick how cases flow through AnalysisServices that share locations.
+                Default <strong>Shared</strong> is appropriate for most operators;
+                pick <strong>Exclusive</strong> when teams must work strictly within their service scope.
+            </p>
+            <EditForm Model="_form" OnValidSubmit="SaveAsync" FormName="vp6-settings" class="portal-form">
+                <fieldset class="portal-form-row">
+                    <legend>Case visibility model</legend>
+                    <label>
+                        <InputRadioGroup @bind-Value="_form.VisibilityModel">
+                            <label>
+                                <InputRadio Value="@CaseVisibilityModel.Shared" />
+                                Shared <span class="portal-help">— case appears in every qualifying service; first-claim-wins on open.</span>
+                            </label>
+                            <br />
+                            <label>
+                                <InputRadio Value="@CaseVisibilityModel.Exclusive" />
+                                Exclusive <span class="portal-help">— case routes to one service at intake (most-specific-service-wins; ties broken by oldest creation).</span>
+                            </label>
+                        </InputRadioGroup>
+                    </label>
+                </fieldset>
+
+                <fieldset class="portal-form-row">
+                    <legend>Multi-service membership</legend>
+                    <label>
+                        <InputCheckbox @bind-Value="_form.AllowMultiServiceMembership" />
+                        Allow users to join more than one AnalysisService
+                        <span class="portal-help">— union of visible cases across their services. Disable to enforce strict one-service-per-user.</span>
+                    </label>
+                </fieldset>
+
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary">Save</button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="portal-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public long TenantId { get; set; }
+
+    private Tenant? _tenant;
+    private string _message = string.Empty;
+    private string? _loadError;
+
+    [SupplyParameterFromForm] private SettingsForm _form { get; set; } = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _message = string.Empty;
+        _tenant = await Db.Tenants.FirstOrDefaultAsync(t => t.Id == TenantId);
+        if (_tenant is null)
+        {
+            _loadError = $"Tenant {TenantId} not found.";
+            return;
+        }
+        _form = new SettingsForm
+        {
+            VisibilityModel = _tenant.CaseVisibilityModel,
+            AllowMultiServiceMembership = _tenant.AllowMultiServiceMembership,
+        };
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_tenant is null) return;
+        try
+        {
+            // Re-fetch as tracked so SaveChanges captures the update.
+            var tracked = await Db.Tenants.FirstAsync(t => t.Id == TenantId);
+            tracked.CaseVisibilityModel = _form.VisibilityModel;
+            tracked.AllowMultiServiceMembership = _form.AllowMultiServiceMembership;
+            await Db.SaveChangesAsync();
+            _tenant = tracked;
+            _message = "Saved.";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Save failed: {ex.Message}";
+        }
+    }
+
+    public sealed class SettingsForm
+    {
+        public CaseVisibilityModel VisibilityModel { get; set; } = CaseVisibilityModel.Shared;
+        public bool AllowMultiServiceMembership { get; set; } = true;
+    }
+}

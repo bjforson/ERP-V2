@@ -53,4 +53,19 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<AnalysisServiceLocationAutoJoinInterceptor>();
         return services;
     }
+
+    /// <summary>
+    /// Phase B — register <see cref="AnalysisServiceAdminService"/> as
+    /// scoped. Used by the admin Razor pages
+    /// (<c>/admin/analysis-services</c> + <c>/admin/analysis-services/{id}</c>)
+    /// and any direct caller that needs CRUD on the VP6 entities.
+    /// Idempotent (TryAddScoped).
+    /// </summary>
+    public static IServiceCollection AddAnalysisServiceAdmin(
+        this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.TryAddScoped<AnalysisServiceAdminService>();
+        return services;
+    }
 }

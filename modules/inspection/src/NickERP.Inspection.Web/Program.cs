@@ -63,6 +63,10 @@ builder.Services.AddNickErpAuditNotifications(opts =>
 builder.Services.AddAnalysisServiceBootstrap();
 builder.Services.AddAnalysisServiceLocationAutoJoinInterceptor();
 
+// Sprint 14 / VP6 Phase B — admin service for the /admin/analysis-services
+// list + detail Razor pages. Scoped (mirrors the Phase A.5 bootstrap).
+builder.Services.AddAnalysisServiceAdmin();
+
 // Inspection's own DbContext. Phase F1 — wires the tenancy interceptors
 // (push app.tenant_id to Postgres for RLS + stamp TenantId on inserts).
 // Sprint 14 / VP6 Phase A.5 — also wires the AnalysisServiceLocation

@@ -1,0 +1,178 @@
+@page "/admin/analysis-services"
+@* Sprint 14 / VP6 Phase B — admin list of AnalysisServices for the
+   current tenant. Shows the built-in "All Locations" service first
+   (badged), then the rest by name. Each row shows location count + user
+   count + a link into the detail page. The "Create new" form posts to
+   AnalysisServiceAdminService.CreateAsync.
+
+   Authorization mirrors Thresholds.razor — Inspection.Admin role is the
+   most-restrictive existing admin role; a dedicated
+   inspection.analysis_service_admin role is a follow-up. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.AnalysisServices
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+@inject AnalysisServiceAdminService Admin
+@inject AuthenticationStateProvider AuthState
+@inject Microsoft.AspNetCore.Components.NavigationManager Nav
+
+<PageTitle>Analysis services — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Analysis services</h1>
+        <p class="inspection-page-subtitle">Image-analysis is organised into one or more services per tenant. Every tenant has an immutable "All Locations" default; create additional services to scope analyst teams to subsets of locations.</p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_rows is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Create service</h2>
+            <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="add-analysis-service" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Name</span>
+                        <InputText class="inspection-input" @bind-Value="_form.Name" placeholder="Tema cargo team" />
+                    </label>
+                    <label>
+                        <span>Description (optional)</span>
+                        <InputText class="inspection-input" @bind-Value="_form.Description" placeholder="Maritime inbound only" />
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary">Create</button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="inspection-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+        </div>
+
+        @if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No services in this tenant. The "All Locations" default should always be present; if you don't see it, an operator action is needed (see Phase A.5 bootstrap).</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Locations</th>
+                        <th>Users</th>
+                        <th>Created</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr>
+                            <td>
+                                @r.Service.Name
+                                @if (r.Service.IsBuiltInAllLocations)
+                                {
+                                    <span class="inspection-badge" title="Built-in default; cannot be deleted.">All locations</span>
+                                }
+                            </td>
+                            <td>@(r.Service.Description ?? string.Empty)</td>
+                            <td>@r.LocationCount</td>
+                            <td>@r.UserCount</td>
+                            <td>@r.Service.CreatedAt.ToString("yyyy-MM-dd")</td>
+                            <td>
+                                <a class="inspection-button" href="/admin/analysis-services/@r.Service.Id">Open</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private List<ServiceRow>? _rows;
+    private string _message = string.Empty;
+
+    [SupplyParameterFromForm] private CreateForm _form { get; set; } = new();
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        if (!Tenant.IsResolved) return;
+
+        var services = await Db.AnalysisServices.AsNoTracking()
+            .OrderByDescending(s => s.IsBuiltInAllLocations)
+            .ThenBy(s => s.Name)
+            .ToListAsync();
+        var serviceIds = services.Select(s => s.Id).ToList();
+
+        var locCounts = await Db.AnalysisServiceLocations.AsNoTracking()
+            .Where(asl => serviceIds.Contains(asl.AnalysisServiceId))
+            .GroupBy(asl => asl.AnalysisServiceId)
+            .Select(g => new { ServiceId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ServiceId, x => x.Count);
+
+        var userCounts = await Db.AnalysisServiceUsers.AsNoTracking()
+            .Where(asu => serviceIds.Contains(asu.AnalysisServiceId))
+            .GroupBy(asu => asu.AnalysisServiceId)
+            .Select(g => new { ServiceId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ServiceId, x => x.Count);
+
+        _rows = services.Select(s => new ServiceRow(
+            Service: s,
+            LocationCount: locCounts.TryGetValue(s.Id, out var lc) ? lc : 0,
+            UserCount: userCounts.TryGetValue(s.Id, out var uc) ? uc : 0)).ToList();
+    }
+
+    private async Task CreateAsync()
+    {
+        _message = string.Empty;
+        if (string.IsNullOrWhiteSpace(_form.Name))
+        {
+            _message = "Name is required.";
+            return;
+        }
+
+        try
+        {
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            var actorIdRaw = auth.User?.FindFirst("nickerp:id")?.Value;
+            Guid actorId = Guid.TryParse(actorIdRaw, out var g) ? g : Guid.Empty;
+
+            var newId = await Admin.CreateAsync(_form.Name, _form.Description, actorId);
+            _form = new CreateForm();
+            _message = $"Created service {newId}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Create failed: {ex.Message}";
+        }
+    }
+
+    private sealed record ServiceRow(AnalysisService Service, int LocationCount, int UserCount);
+
+    public sealed class CreateForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+    }
+}
