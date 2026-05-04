@@ -2,7 +2,7 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Sprints 14 + 15 SHIPPED 2026-05-04. Sprint 14 (VP6 storage + bootstrap + admin UI + claim/visibility + tests): 5ec12be -> ceea095 -> 5962835 -> b309f6d -> 2a84b0b. Sprint 15 (NickHR v1->v2 clone): 60fb0e1 (v2) + ff514d7 (V1_BANNER on v1 origin). Tests grew 253 -> 286 (+33). Next dispatch: Sprint 16 (ExternalSystemInstance subset junction) or Sprint 17 (P2-FU-multi-event-types) per plan-file §10.3.",
+  "currentSprintNote": "Sprints 16 + 17 SHIPPED 2026-05-04. Sprint 16 (ExternalSystemInstance subset-of-locations scope): 2c1f65b (feature) + 00d2507 (merge). Sprint 17 (edge replay multi-event-type fan-out — scan-captured + scanner-status-changed beyond v0 audit-only): 712bc15 (feature) + b2ef228 (merge). Tests grew 286 -> 317 (+31; Sprint 16 = 16, Sprint 17 = 15). Followups resolved: FU-external-system-subset-junction + P2-FU-multi-event-types. Next dispatch per plan-file §10.3: Sprint 18 (Tenant lifecycle Pt 1 — state + soft-delete + hard-purge admin) or Sprint 19 (OCR eval harness offline + v1 Tesseract baseline).",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -25,6 +25,41 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 17",
+      "name": "Edge replay multi-event-type fan-out (P2-FU-multi-event-types)",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "b2ef228",
+      "itemCount": 3,
+      "items": [
+        { "id": "Sprint17-server-dispatch", "title": "EdgeReplayEndpoint.HandleAsync refactored from single-hint (audit.event.replay only) to per-EventTypeHint dispatcher. ProcessOneAsync now: common pre-checks (auth + future-timestamp) -> ResolveAuditMetadata(hint, payload) -> common audit-row write. Three supported hints: audit.event.replay (Sprint 11; payload=DomainEvent shape), inspection.scan.captured (Sprint 17; EventType fixed, EntityType=ScanArtifact, EntityId=sourcePath), inspection.scanner.status.changed (Sprint 17; EventType fixed, EntityType=ScannerDeviceInstance, EntityId=scannerId).", "commit": "712bc15" },
+        { "id": "Sprint17-edge-typed-helpers", "title": "IEdgeEventCapture gained 3 typed helpers — CaptureAuditEventAsync (Sprint 11 path), CaptureScanCapturedAsync, CaptureScannerStatusChangedAsync. New EdgeScanCaptured + EdgeScannerStatusChanged payload records map 1:1 to the server's resolvers. Edge-side argument validation rejects empty scannerId/sourcePath/status before SQLite write. New EdgeEventTypes static class centralises hint constants.", "commit": "712bc15" },
+        { "id": "Sprint17-tests", "title": "+15 tests: 8 server-side multi-event dispatch (scan-captured happy path + missing-scannerId reject; scanner-status-changed happy path + missing-status reject; mixed-batch with all 3 hints in one /api/edge/replay; unsupported-hint enumerates all 3 supported; ResolveAuditMetadata unit tests for null/failed cases) + 7 edge-side typed helpers (each hint writes the right discriminator; FIFO order preserved across mixed types; argument validation rejects missing fields). Total now 317/317 (was 302). Existing Unsupported_eventTypeHint_rejected_per_entry switched to voucher.disbursed (genuinely unsupported now).", "commit": "712bc15" }
+      ],
+      "ratifications": [
+        { "id": "Sprint17-inspection-projector-deferred", "title": "scan-captured handler does NOT call CaseWorkflowService.IngestRawArtifactAsync and scanner-status-changed handler does NOT update ScannerDeviceInstance.LastReportedStatus — the audit.events row IS the durable record, an inspection-side projector consuming the audit rows lands in a follow-on sprint. EdgeReplayEndpoint takes only AuditDbContext today; cross-DB writes from this entry point would force a second context registration that's better deferred." },
+        { "id": "Sprint17-system-context-unchanged", "title": "EdgeReplayEndpoint.HandleAsync still writes to audit.events only (existing register entry, existing OR app.tenant_id = '-1' opt-in clause). No new system-context callers; no new RLS policies needed." },
+        { "id": "Sprint17-error-message-enumerates-supported", "title": "Unsupported-hint per-entry error now lists all 3 supported hints in the message so an edge node operator running a stale build sees what changed without grepping the server source." }
+      ]
+    },
+    {
+      "id": "Sprint 16",
+      "name": "ExternalSystemInstance subset-of-locations scope (FU-external-system-subset-junction)",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "00d2507",
+      "itemCount": 4,
+      "items": [
+        { "id": "Sprint16-enum-extension", "title": "ExternalSystemBindingScope extended from PerLocation/Shared to PerLocation/Shared/SubsetOfLocations. Existing rows keep their integer values (0/1); new SubsetOfLocations = 2. Storage no-op — the scope column is already integer NOT NULL via HasConversion<int>(). Empty marker migration Add_ExternalSystemSubsetScope (20260504113030) for deployment-history breadcrumb. New ExternalSystemBindingScopeValidation static class enforces per-scope cardinality: PerLocation = 1 binding, SubsetOfLocations >= 2 bindings, Shared = 0 bindings.", "commit": "2c1f65b" },
+        { "id": "Sprint16-admin-service", "title": "New ExternalSystemAdminService in NickERP.Inspection.Application/ExternalSystems/ centralises per-scope validation + Locations FK existence check + atomic binding writes. ResolveServingInstancesAsync(locationId) is the canonical 'which external systems serve this location?' lookup — three-scope dispatch via UNION (Shared instances always match + bound instances match for PerLocation/SubsetOfLocations).", "commit": "2c1f65b" },
+        { "id": "Sprint16-admin-ui", "title": "/external-systems Razor page exposes the third Subset option with checkbox multi-select for locations. Page delegates to ExternalSystemAdminService.RegisterAsync so validation errors surface cleanly. Bindings count column added to the existing-instances table.", "commit": "2c1f65b" },
+        { "id": "Sprint16-tests", "title": "+16 tests: 4 pure-function validation (PerLocation requires 1, Subset requires >=2, Shared requires 0, negative count rejected) + 7 RegisterAsync paths (each scope happy path; per-scope mismatch rejects; unknown location rejects; duplicate location rejects) + 4 ResolveServingInstancesAsync (PerLocation match-only-its-location, Subset match-its-members, Shared match-every-location, inactive excluded) + 1 mixed. Total now 302/302 (was 286).", "commit": "2c1f65b" }
+      ],
+      "ratifications": [
+        { "id": "Sprint16-storage-noop", "title": "No DDL change required because the existing ExternalSystemBinding junction table already supported many-to-many; the only thing that grew was the discriminator + per-scope rules. Empty migration is intentional — kept so the InspectionDbContextModelSnapshot stays in sync with the post-extension model." },
+        { "id": "Sprint16-validation-application-layer", "title": "Per-scope cardinality is enforced in the application service, not as a DB CHECK constraint, because the rule is 'count of binding rows' which Postgres can't express as a per-row CHECK without a trigger; the trigger would not buy anything stronger than the application-layer guard." },
+        { "id": "Sprint16-manual-pseudo-instance-comment-fix", "title": "PostHocOutcomeManualEntryService doc-comment was outdated ('Scope=PerLocation but bound to no specific location' — actually creates Shared); updated to match." }
+      ]
+    },
     {
       "id": "Sprint 15",
       "name": "NickHR v1->v2 clone (three-module pilot prep)",
@@ -242,7 +277,7 @@
     { "id": "G2-FU-e2e-tests", "title": "NickFinance E2E test suite running against a live host", "from": "G2 / Sprint 10", "severity": "low (Core/DB/Web unit tests in place)" },
     { "id": "G2-FU-bl0008-sweep", "title": "Refactor [SupplyParameterFromForm] initializer pattern (4+5 BL0008 warnings)", "from": "G2 / Sprint 10", "severity": "low (cosmetic)" },
     { "id": "G2-FU-sequence-promotion", "title": "Promote per-box voucher sequence_number from MAX+1 to a real Postgres sequence under multi-writer load", "from": "G2 / Sprint 10", "severity": "low (single-writer path safe today)" },
-    { "id": "P2-FU-multi-event-types", "title": "Edge replay multi-handler fan-out (scan-captured + scanner-status-changed minimum, plus voucher-disbursed etc.) beyond v0's audit.event.replay only", "from": "P2 / Sprint 11", "severity": "must-have-pilot (promoted 2026-05-02 in plan-mode walk; v0 mandatory event set locked under ROADMAP LA2)" },
+    { "id": "P2-FU-multi-event-types", "title": "Edge replay multi-handler fan-out (scan-captured + scanner-status-changed minimum, plus voucher-disbursed etc.) beyond v0's audit.event.replay only. SHIPPED Sprint 17 (2026-05-04): per-EventTypeHint dispatcher in EdgeReplayEndpoint with 3 supported hints + typed edge helpers + 15 tests. Voucher-disbursed and other future hints land additively as new resolvers.", "from": "P2 / Sprint 11", "severity": "shipped (Sprint 17)" },
     { "id": "P2-FU-sqlite-migrations-script", "title": "dotnet ef migrations script --idempotent doesn't yet support SQLite in 10.0.7 — manually maintained DDL in tools/edge-sqlite/ until upstream lands", "from": "P2 / Sprint 11", "severity": "low (cosmetic; works today via manual file)" },
     { "id": "FU-posthoc-idempotency-column", "title": "Lift PostHocOutcomeWriter idempotency dedup from JSON-path lookup to a real idempotency_key column on authority_documents + unique index on (ExternalSystemInstanceId, IdempotencyKey); backfill expression extracts the JSON value for existing rows", "from": "T3 §6.11 / Sprint 13", "severity": "medium (write-path performance + integrity)" },
     { "id": "FU-posthoc-container-window-fallback", "title": "Implement §6.11.6 step 1 case-lookup path 2 (scanner_serial + ±4h capture window + container_number) — only declaration-number lookup paths land in v0", "from": "T3 §6.11 / Sprint 13", "severity": "low (unblocks declaration-less authorities + v1-cutover edge cases)" },
@@ -257,7 +292,7 @@
     { "id": "FU-analysis-service-vp6", "title": "AnalysisService VP6 — N:N location↔service entity + junction + immutable 'All Locations' default + first-claim-wins under shared visibility + admin UI. Tenant-configurable case visibility (shared/exclusive) and user multi-membership (allowed/one-only).", "from": "Plan-mode walk 2026-05-02 / VP6", "severity": "must-have-pilot (Sprint 14; blocks v1 parity touching case visibility)" },
     { "id": "FU-nickhr-clone", "title": "Clone NickHR from v1 into ERP V2 tree using NickFinance v1-clone pattern. SHIPPED Sprint 15 (2026-05-04): v1-clone/nickhr/ (8 src + 1 test) + v1-clone/platform/NickERP.Platform.Tenancy/ + banners on both sides. Build clean. Post-pilot refactor (~6-10 sprints) still queued.", "from": "Plan-mode walk 2026-05-02 / LA7", "severity": "shipped (Sprint 15)" },
     { "id": "FU-nickhr-refactor-v2-native", "title": "Post-pilot: refactor cloned NickHR (currently in v1-clone/nickhr/) into v2-native architecture — fold into the greenfield platform stack (RLS via TenantConnectionInterceptor + ITenantOwned + app.tenant_id session var + audit register + SetSystemContext sentinel). ~6-10 sprints displaced.", "from": "Sprint 15 / NickHR clone landing", "severity": "post-pilot" },
-    { "id": "FU-external-system-subset-junction", "title": "Extend ExternalSystemInstance binding from binary 'single OR shared' to 'single OR subset-of-locations OR shared' via junction table. Mirrors VP6 N:N pattern. Admin UI exposes the choice at onboarding.", "from": "Plan-mode walk 2026-05-02 / LA1 extension", "severity": "must-have-pilot (Sprint 16; locked 2026-05-02)" },
+    { "id": "FU-external-system-subset-junction", "title": "Extend ExternalSystemInstance binding from binary 'single OR shared' to 'single OR subset-of-locations OR shared' via junction table. Mirrors VP6 N:N pattern. Admin UI exposes the choice at onboarding. SHIPPED Sprint 16 (2026-05-04): enum extended (PerLocation/Shared/SubsetOfLocations), per-scope cardinality validation in ExternalSystemBindingScopeValidation, ExternalSystemAdminService for atomic write + ResolveServingInstancesAsync lookup, /external-systems Razor page with multi-select for Subset, 16 tests. Storage no-op — junction table already supported the shape.", "from": "Plan-mode walk 2026-05-02 / LA1 extension", "severity": "shipped (Sprint 16)" },
     { "id": "FU-ocr-accuracy-eval", "title": "OCR accuracy eval tool: offline harness (establishes v1 Tesseract baseline) + production drift-monitor + admin Razor page at /admin/ocr-accuracy. Gates Florence-2 (§6.1) production deployment.", "from": "Plan-mode walk 2026-05-02 / §6.1 walk", "severity": "must-have-pilot (Sprint 19; ~1-2 sprints; per plan-file §12)" },
     { "id": "FU-tenant-lifecycle", "title": "Tenant lifecycle: state field + soft-delete with retention window + hard-purge admin action + scoped export tooling + email service for first-user invite via one-time link. Email service does not exist in v2 today.", "from": "Plan-mode walk 2026-05-02 / LA4", "severity": "must-have-pilot (Sprints 18 + 21; ~3-5 sprints)" },
     { "id": "FU-ha-pgbackrest-pg17", "title": "Operationalise central Postgres cluster: primary + streaming standby with manual failover, pgbackrest backups (full + incremental + PITR), lock to PostgreSQL 17. Single-host dev stays single-host until this lands.", "from": "Plan-mode walk 2026-05-02 / LA3", "severity": "must-have-pilot (~2-3 sprints)" },
