@@ -11,8 +11,10 @@
 @using NickERP.Platform.Tenancy.Entities
 @inject TenancyDbContext Db
 @inject ITenantLifecycleService Lifecycle
+@inject ITenantExportService Exports
 @inject AuthenticationStateProvider AuthState
 @inject Microsoft.AspNetCore.Components.NavigationManager Nav
+@implements IDisposable
 
 <PageTitle>Tenant settings — NickERP Portal</PageTitle>
 
@@ -179,6 +181,104 @@ else
             }
         </div>
 
+        @* Sprint 25 / Tenant lifecycle Pt 3 — scoped exports. The card
+           is shown for every state including SoftDeleted (the export
+           is the *point* of the retention window). PendingHardPurge
+           tenants can still be exported until the actual purge runs. *@
+        <div class="portal-card">
+            <h2 class="portal-card-title">Exports</h2>
+            <p class="portal-card-subtitle">
+                Generate a scoped export bundle of this tenant's data. Bundles
+                expire after the configured retention window (default 7 days)
+                and can be revoked manually.
+            </p>
+            <EditForm Model="_exportForm" OnValidSubmit="RequestExportAsync" FormName="request-export" class="portal-form">
+                <fieldset class="portal-form-row">
+                    <legend>Request a new export</legend>
+                    <label>
+                        <span>Format</span>
+                        <InputSelect class="portal-input" @bind-Value="_exportForm.Format">
+                            <option value="@TenantExportFormat.JsonBundle">JSON bundle (default)</option>
+                            <option value="@TenantExportFormat.CsvFlat">CSV flat (per-table)</option>
+                            <option value="@TenantExportFormat.Sql">SQL inserts</option>
+                        </InputSelect>
+                    </label>
+                    <label>
+                        <span>Scope</span>
+                        <InputSelect class="portal-input" @bind-Value="_exportForm.Scope">
+                            <option value="@TenantExportScope.All">All — full tenant data</option>
+                            <option value="@TenantExportScope.InspectionOnly">Inspection only</option>
+                            <option value="@TenantExportScope.FinanceOnly">NickFinance only</option>
+                            <option value="@TenantExportScope.IdentityAndAudit">Identity + audit</option>
+                        </InputSelect>
+                    </label>
+                </fieldset>
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary">Request export</button>
+                </div>
+            </EditForm>
+
+            @if (_exportRows is null)
+            {
+                <p class="portal-card-subtitle">Loading recent exports…</p>
+            }
+            else if (_exportRows.Count == 0)
+            {
+                <p class="portal-card-subtitle">No exports requested yet.</p>
+            }
+            else
+            {
+                <table class="portal-table">
+                    <thead>
+                        <tr>
+                            <th>Requested</th>
+                            <th>Format</th>
+                            <th>Scope</th>
+                            <th>Status</th>
+                            <th>Size</th>
+                            <th>Expires</th>
+                            <th>Downloads</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _exportRows)
+                        {
+                            <tr>
+                                <td>@row.RequestedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@row.Format</td>
+                                <td>@row.Scope</td>
+                                <td><span class="portal-state-badge portal-state-@(row.Status.ToString().ToLowerInvariant())">@row.Status</span></td>
+                                <td>@(row.ArtifactSizeBytes is null ? "—" : FormatSize(row.ArtifactSizeBytes.Value))</td>
+                                <td>@(row.ExpiresAt is null ? "—" : row.ExpiresAt.Value.ToString("yyyy-MM-dd HH:mm"))</td>
+                                <td>@row.DownloadCount</td>
+                                <td>
+                                    @if (row.Status == TenantExportStatus.Completed
+                                        && row.RevokedAt is null
+                                        && (row.ExpiresAt is null || row.ExpiresAt > DateTimeOffset.UtcNow))
+                                    {
+                                        <a class="portal-button" href="/api/tenant-exports/@row.Id/download">Download</a>
+                                    }
+                                    @if (row.Status == TenantExportStatus.Completed
+                                        || row.Status == TenantExportStatus.Pending
+                                        || row.Status == TenantExportStatus.Running)
+                                    {
+                                        <button type="button" class="portal-button portal-button-danger"
+                                                @onclick="() => RevokeAsync(row.Id)">Revoke</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            @if (!string.IsNullOrEmpty(_exportMessage))
+            {
+                <p class="portal-form-message">@_exportMessage</p>
+            }
+        </div>
+
         @* Existing VP6 settings — only meaningful while the tenant is
            Active or Suspended. Hide for deleted-but-retained tenants
            since editing them while pending purge is meaningless. *@
@@ -241,6 +341,13 @@ else
 
     [SupplyParameterFromForm] private SettingsForm _form { get; set; } = new();
     [SupplyParameterFromForm] private LifecycleForm _lifecycleForm { get; set; } = new();
+    [SupplyParameterFromForm(FormName = "request-export")] private ExportForm _exportForm { get; set; } = new();
+
+    private IReadOnlyList<TenantExportRequest>? _exportRows;
+    private string _exportMessage = string.Empty;
+    // Auto-refresh: every 10 s while at least one row is Pending or
+    // Running. Cleared on dispose / when no live rows remain.
+    private System.Threading.Timer? _refreshTimer;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -270,6 +377,97 @@ else
         {
             RetentionDays = _tenant.RetentionDays,
         };
+        await ReloadExportsAsync();
+    }
+
+    private async Task ReloadExportsAsync()
+    {
+        _exportRows = await Exports.ListExportsAsync(TenantId);
+        // Wire / unwire the auto-refresh timer based on whether any
+        // exports are still in flight. 10 s cadence per the brief.
+        var hasLive = _exportRows.Any(r =>
+            r.Status == TenantExportStatus.Pending || r.Status == TenantExportStatus.Running);
+        if (hasLive && _refreshTimer is null)
+        {
+            _refreshTimer = new System.Threading.Timer(
+                async _ => await InvokeAsync(async () =>
+                {
+                    try
+                    {
+                        await ReloadExportsAsync();
+                        StateHasChanged();
+                    }
+                    catch
+                    {
+                        // Swallow to avoid tearing down the timer on a
+                        // transient DB blip.
+                    }
+                }),
+                state: null,
+                dueTime: TimeSpan.FromSeconds(10),
+                period: TimeSpan.FromSeconds(10));
+        }
+        else if (!hasLive && _refreshTimer is not null)
+        {
+            await _refreshTimer.DisposeAsync();
+            _refreshTimer = null;
+        }
+    }
+
+    private async Task RequestExportAsync()
+    {
+        if (_tenant is null) return;
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            if (actor is null || actor == Guid.Empty)
+            {
+                _exportMessage = "Could not resolve the requesting user id from the auth state.";
+                return;
+            }
+            await Exports.RequestExportAsync(
+                _tenant.Id, _exportForm.Format, _exportForm.Scope, actor.Value);
+            _exportMessage = "Export request queued.";
+            await ReloadExportsAsync();
+        }
+        catch (Exception ex)
+        {
+            _exportMessage = $"Request failed: {ex.Message}";
+        }
+    }
+
+    private async Task RevokeAsync(Guid exportId)
+    {
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            if (actor is null || actor == Guid.Empty)
+            {
+                _exportMessage = "Could not resolve the revoking user id.";
+                return;
+            }
+            await Exports.RevokeExportAsync(exportId, actor.Value);
+            _exportMessage = "Export revoked.";
+            await ReloadExportsAsync();
+        }
+        catch (Exception ex)
+        {
+            _exportMessage = $"Revoke failed: {ex.Message}";
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+        _refreshTimer = null;
     }
 
     private async Task SaveAsync()
@@ -424,5 +622,11 @@ else
         public string? DeleteReason { get; set; }
         public int RetentionDays { get; set; } = 90;
         public string? PurgeConfirmation { get; set; }
+    }
+
+    public sealed class ExportForm
+    {
+        public TenantExportFormat Format { get; set; } = TenantExportFormat.JsonBundle;
+        public TenantExportScope Scope { get; set; } = TenantExportScope.All;
     }
 }
