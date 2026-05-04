@@ -2,15 +2,15 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Sprints 19 + 22 SHIPPED 2026-05-04 (parallel-master pattern). Sprint 19 (OCR eval harness + v1 Tesseract baseline): main d82494fd (6 commits 5bd65aed/9d41b620/dea57d45/3e2d3391/bb6807b9/4d30263f). MAJOR FINDING: v1 Tesseract baseline measures 0% exact-match on 1917 production rows — Tesseract never produces a valid 11-char ISO 6346 candidate from full-container LUT JPEGs. Florence-2 ROI is unbounded; §6.1 pilot scope strongly justified. See runbook 08 + decision-needed entry. Sprint 22 (Inspection v1 parity B2 ICUMS UIs): main 3a32852b (4 commits, +25 tests). Tests at 396/396. Next: Sprint 20+ Batch B3 (background services), Tenant lifecycle Pt 3 (export), or Florence-2 GPU training arc.",
+  "currentSprintNote": "Sprint 27 SHIPPED 2026-05-04 (3-way parallel master pattern: Sprint 24 + 25 + 27 dispatched together; 27 returned first). Sprint 27 (HA + pgbackrest + PG17 ops runbooks): main 130787fe (5 commits 335a6d9a/4b438903/b78d4fe0/a7083181/f6a3fad5). Three deployment runbooks landed (~2200 lines): runbook 09 Postgres HA setup (primary + streaming standby + manual failover/failback/reverse); runbook 10 pgbackrest backup + restore (full + incremental + PITR + quarterly drill); runbook 11 PG17 version lock + pg_upgrade procedure. Pure docs; no code; tests untouched at 396/396. Deploy.ps1 gained a 32-line HA-awareness docstring (parse-verified, DryRun-verified). Sprint 24 (B3 BG services) + Sprint 25 (Tenant Pt 3 export) still running. Pre-pilot at 14/27-41 (34-52%).",
   "prePilotProgress": {
     "asOf": "2026-05-04",
     "deadlineMonthsLow": 6,
     "deadlineMonthsHigh": 9,
-    "shippedSprints": 13,
+    "shippedSprints": 14,
     "totalEstimateLow": 27,
     "totalEstimateHigh": 41,
-    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md), reduced 2026-05-04 after §6.1 OCR moved to post-pilot. 13 sprint-equivalents shipped against an estimated 27-41 sprint pre-pilot scope. §6.1 OCR (4-6 sprints) deferred to post-pilot — operational probe found v1's OCR is a broken verification check that doesn't gate pilot. Inspection v1 parity (13-18 sprints) advancing — B1+B2 done (4 of 13-18). Tenant lifecycle Pt 1+2 done. Pace at 1.5 sprints/week sustained = 9-19 weeks remaining.",
+    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md), reduced 2026-05-04 after §6.1 OCR moved to post-pilot. 14 sprint-equivalents shipped against an estimated 27-41 sprint pre-pilot scope. §6.1 OCR (4-6 sprints) deferred to post-pilot — operational probe found v1's OCR is a broken verification check that doesn't gate pilot. Inspection v1 parity (13-18 sprints) advancing — B1+B2 done (4 of 13-18). Tenant lifecycle Pt 1+2 done. HA + pgbackrest + PG17 runbooks shipped Sprint 27 (deploy-time stand-up remaining is operator work). Pace at 1.5 sprints/week sustained = 9-19 weeks remaining.",
     "workstreams": [
       { "name": "AnalysisService VP6", "estimateLow": 2, "estimateHigh": 3, "shipped": 3, "status": "done", "note": "Sprint 14 (5 phases): storage + bootstrap + admin + claim + tests" },
       { "name": "ExternalSystemInstance subset junction", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 16" },
@@ -18,7 +18,7 @@
       { "name": "NickHR v1->v2 clone", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 15. Refactor to v2-native is post-pilot (~6-10 sprints)." },
       { "name": "Tenant lifecycle (Pt 1+2+3)", "estimateLow": 3, "estimateHigh": 5, "shipped": 2, "status": "in-progress", "note": "Pt 1 shipped Sprint 18 (state + soft-delete + hard-purge). Pt 2 shipped Sprint 21 (IEmailSender + InviteToken + first-user invite + AcceptInvite page). Pt 3 (scoped export) still queued." },
       { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 4, "status": "in-progress", "note": "Long pole. Per plan §11 — case viewing (B1 SHIPPED Sprint 20: tabs + analyst viewer + multi-scan nav), ICUMS UIs (B2 SHIPPED Sprint 22: submission/download queues + dashboard + loose cargo + BOE lookup + manual pull), BG services (B3), validation rules (B4), completeness (B5), specialised review (B6), monitoring (B7), admin (B8)." },
-      { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
+      { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 1, "status": "in-progress", "note": "Sprint 27 SHIPPED runbooks 09 (HA setup + manual failover) + 10 (pgbackrest full/incremental/PITR + quarterly drill) + 11 (PG17 lock + pg_upgrade). Deploy.ps1 HA-awareness docstring landed. Actual deploy-time stand-up is operator work (see operatorActions: provision-standby-box, install-pgbackrest, wire-backup-cadence). Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
       { "name": "Three-module co-deploy navigation", "estimateLow": 1, "estimateHigh": 1, "shipped": 0, "status": "not-started", "note": "Portal links to inspection.web + finance.web + hr.web with shared auth + chrome." },
       { "name": "§6.1 OCR eval + Florence-2 (DEFERRED to post-pilot 2026-05-04)", "estimateLow": 0, "estimateHigh": 0, "shipped": 0, "status": "deferred-to-post-pilot", "note": "Moved out of pre-pilot scope 2026-05-04 after operational probe revealed v1 OCR is a verification check, not the linkage source — broken for years without affecting operations. Sprint 19 shipped Phase 1 (eval harness) + Phase 2 (baseline measurement; result: 0% exact-match on 1917 prod rows) which remain in tree as diagnostic tooling. Phases 3-7 (training data prep / GPU fine-tune / validation / integration / drift monitor) all post-pilot. Original estimate 4-6 sprints, now removed from pre-pilot totals." },
       { "name": "Phase V lightweight (security + perf)", "estimateLow": 1, "estimateHigh": 2, "shipped": 0, "status": "not-started", "note": "Pre-pilot validation. Targeted security audit + perf/load test scoped to pilot site." },
@@ -26,8 +26,12 @@
     ],
     "operatorActions": [
       { "id": "live-deploy-staged-migrations", "title": "Apply Sprint 13 T1 staged SQL scripts to live nickerp_platform + nickerp_nickfinance (32 migrations)", "blocking": "any prod cutover" },
-      { "id": "gpu-box-availability", "title": "Confirm GPU box (A100 / H100 / 4090, 24 GB+ VRAM) for Florence-2 fine-tune", "blocking": "Sprint 19+ §6.1 work" },
-      { "id": "pilot-site-selection", "title": "Pick pilot site (Kotoka / Takoradi / other) per plan §13 decision matrix", "blocking": "Phase V scoping (Sprint 22-24)" }
+      { "id": "gpu-box-availability", "title": "Confirm GPU box (A100 / H100 / 4090, 24 GB+ VRAM) for Florence-2 fine-tune", "blocking": "post-pilot §6.1 work" },
+      { "id": "pilot-site-selection", "title": "Pick pilot site (Kotoka / Takoradi / other) per plan §13 decision matrix", "blocking": "Phase V scoping (Sprint 22-24)" },
+      { "id": "provision-standby-box", "title": "Provision second physical box / VM for streaming-standby Postgres (per runbook 09 §3)", "blocking": "production HA cutover" },
+      { "id": "install-pgbackrest", "title": "Install pgbackrest 2.50+ on primary + choose repo location (local-disk for v0; S3/Azure recommended) per runbook 10 §5", "blocking": "production backup posture" },
+      { "id": "wire-backup-cadence", "title": "Wire cron / scheduled-task for pgbackrest cadence (Sunday 02:00 full + 6-hourly incrementals + WAL archiving) + schedule first quarterly restore drill (runbook 10 §6+§8)", "blocking": "production backup posture" },
+      { "id": "wire-ha-alerts", "title": "Wire HA + backup alerts into Seq / alerting layer (replication lag > 60s, slot disk-fill, standby-disconnected, backup-lag, archive-failure, repo-disk) per runbooks 09 §10 + 10 §10", "blocking": "production HA monitoring" }
     ]
   },
   "decisionsNeeded": [],
@@ -68,6 +72,34 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 27",
+      "name": "HA + pgbackrest + PG17 ops runbooks (deploy-time stand-up surfaced as operator actions)",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "130787fe",
+      "itemCount": 5,
+      "items": [
+        { "id": "Sprint27-runbook-09-ha", "title": "docs/runbooks/09-postgres-ha-setup.md (760 lines) — primary configure (wal_level=replica, max_wal_senders, archive_command), pg_hba.conf replication line, nickerp_repl role + physical replication slot, pg_basebackup -R standby init, manual failover §7 (capture LSN, pg_ctl promote, repoint connection strings via NSSM AppEnvironmentExtra), failback §8 (Path A rebuild old primary as standby = canonical; Path B reverse failover; Path C unrecoverable old primary), monitoring (lag > 60s, slot disk-fill, standby-disconnected). Patroni explicitly deferred per ROADMAP §1.", "commit": "335a6d9a" },
+        { "id": "Sprint27-runbook-10-pgbackrest", "title": "docs/runbooks/10-pgbackrest-backup-restore.md (807 lines) — install (apt/dnf, WSL2 caveat for Windows), v0 stanza (repo1-retention-full=12, archive=14, start-fast=y, delta=y), optional S3/Azure cloud-backed repo with repo1-cipher-pass, cadence (Sunday 02:00 full + 6-hourly incrementals + WAL via cron), PITR §7 (--type=time --target-action=promote), quarterly drill §8 (sandbox host, real restore, sanity queries, drill log), retention 90+30+14, monitoring (backup-lag P1, archive-failure P2, repo-disk P2/P1, weekly pgbackrest verify cron P1).", "commit": "4b438903" },
+        { "id": "Sprint27-runbook-11-pg17", "title": "docs/runbooks/11-postgres-version-lock-pg17.md (625 lines) — lock rationale §2 (MERGE/pgcrypto/pg_stat_io features, LTS to Nov 2029, tooling support, complexity-budget), per-node sweep, pg_upgrade flow (--copy vs --link tradeoff, mandatory --check + backup, --jobs=4, post-upgrade hand-off scripts in order, extension restore, pgbackrest re-stanza), v2 compatibility checklist (pgcrypto only; catalog views unchanged PG14-17; RLS syntax unchanged; Npgsql 9.x compatible), rollback shape (no pg_downgrade — restore-from-backup into fresh older-PG cluster).", "commit": "b78d4fe0" },
+        { "id": "Sprint27-deploy-ps1-docstring", "title": "Deploy.ps1 +32-line HA-awareness docstring block (script is HA-agnostic, Host= segment lives in NSSM AppEnvironmentExtra, post-failover repointing per runbook 09 §7, all-reads-from-primary lock, sister-runbook pointers). Verified parse OK ([PSParser]::Tokenize); -DryRun produces identical phase plan. No em-dashes (PowerShell 5.1 quirk respected).", "commit": "a7083181" },
+        { "id": "Sprint27-readme-decision-tree", "title": "docs/runbooks/README.md +35 lines — index extends with rows 09/10/11; planned-change entries (HA stand-up, pgbackrest configure, drill, PG17 upgrade); incident-branch entries (primary down, replication-lag, backup-failed, PITR for data loss); deferred-action list adjusted (drops 'Multi-host failover'; adds 'Auto-failover Patroni' + 'Cross-region DR' matching ROADMAP §1 answer 3); footnote on slots 07+08 (analytical, not symptom-driven).", "commit": "f6a3fad5" }
+      ],
+      "ratifications": [
+        { "id": "Sprint27-no-code-changes", "title": "Sprint produced documentation only — no .cs / .razor / .csproj / migration changes. Test floor 396/396 preserved by construction. Brief explicitly drew the line at runbook-side; HA stand-up itself is deploy-time operator work, not Sprint scope." },
+        { "id": "Sprint27-deploy-ps1-additive-only", "title": "Deploy.ps1 docstring touch-up was permitted only because edit was small + additive (no behaviour change). Parse + DryRun verified post-edit. Brief had this as 'optional'; landed because the docstring is the on-disk explanation operators read first." },
+        { "id": "Sprint27-readme-extended-not-rewritten", "title": "README index updated, not rewritten — kept slots 07 (incident-only Sprint 13 deploy) and 08 (analytical OCR baseline) intact with footnote explaining their non-decision-tree posture. Decision tree extended for symptomatic scenarios only." },
+        { "id": "Sprint27-operator-actions-flagged", "title": "Master surfaced 7 deploy-time operator actions (provision standby box / pgbackrest install / repo location choice / cadence wiring / quarterly drill / alert wiring / pre-pg_upgrade source-version sweep). Tracker operatorActions[] gained 4 of these (provision-standby-box, install-pgbackrest, wire-backup-cadence, wire-ha-alerts) — the others are sub-tasks within these." }
+      ],
+      "deferredFollowups": [
+        { "id": "FU-patroni-pg-auto-failover", "title": "Patroni / pg_auto_failover evaluation post-pilot if operator team grows past one person (auto-failover MTTR vs split-brain trade-off shifts).", "from": "Sprint 27 master report" },
+        { "id": "FU-cross-region-dr", "title": "Cross-region DR — single-region locked v0; full DR with hot standby in second region post-pilot. Runbook 09+10 primitives compose; missing piece is separate region's repo + standby box.", "from": "Sprint 27 master report" },
+        { "id": "FU-runbook-07-pgbackrest-swap", "title": "Runbook 07 §4.5 backup step references pg_dump -Fc; once pgbackrest is in production, swap to pgbackrest --type=full backup. Trivial doc edit, not done in Sprint 27 to avoid touching unrelated prose.", "from": "Sprint 27 master report" },
+        { "id": "FU-windows-pgbackrest-posture", "title": "Runbook 10 §5.1 documents WSL2 path as v0-acceptable but flags it as best-effort. Long-term cleaner shape: Postgres on Windows + pgbackrest on separate Linux backup host via SSH.", "from": "Sprint 27 master report" },
+        { "id": "FU-audit-events-partitioning", "title": "audit.events partitioning — runbook 11 §2.1 mentions PG14+ partition pruning improvements as latent value; actual partitioning migration is on deferred-action list and benefits from PG17 lock.", "from": "Sprint 27 master report" },
+        { "id": "FU-nickfinance-runbook", "title": "NickFinance runbook (G2 has shipped Sprint 10) — README 'what's not yet in this tree' lists module-specific runbooks as out-of-scope; finance-specific runbook may be worth adding next sprint.", "from": "Sprint 27 master report" }
+      ]
+    },
     {
       "id": "Sprint 19",
       "name": "OCR eval harness offline + v1 Tesseract baseline (plan §12 Phase 1+2)",
