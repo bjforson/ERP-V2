@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MailKit removed 2026-04-27: zero `using MailKit` references in codebase
+         (NickHR sends all email/SMS via NickComms.Gateway). -->
+    <PackageReference Include="HtmlSanitizer" Version="9.0.892" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
+    <PackageReference Include="QuestPDF" Version="2024.12.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickHR.Core\NickHR.Core.csproj" />
+    <ProjectReference Include="..\NickHR.Infrastructure\NickHR.Infrastructure.csproj" />
+    <ProjectReference Include="..\NickHR.Services.Payroll\NickHR.Services.Payroll.csproj" />
+    <ProjectReference Include="..\NickHR.Services.Recruitment\NickHR.Services.Recruitment.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,521 @@
+@page "/wellness"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Wellness Dashboard</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.HealthAndSafety" Class="mr-2" />Wellness Dashboard
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+
+<!-- Summary Cards -->
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="6" md="3">
+        <MudCard Elevation="2">
+            <MudCardContent Class="text-center pa-4">
+                <MudIcon Icon="@Icons.Material.Filled.MoreTime" Size="Size.Large" Color="Color.Warning" />
+                <MudText Typo="Typo.h4" Color="Color.Warning" Class="mt-1">@_avgMonthlyOvertime.ToString("N1")</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Avg Monthly Overtime (hrs)</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <MudCard Elevation="2">
+            <MudCardContent Class="text-center pa-4">
+                <MudIcon Icon="@Icons.Material.Filled.BeachAccess" Size="Size.Large" Color="Color.Info" />
+                <MudText Typo="Typo.h4" Color="Color.Info" Class="mt-1">@_avgLeaveUtilization.ToString("N0")%</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Leave Utilization</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <MudCard Elevation="2">
+            <MudCardContent Class="text-center pa-4">
+                <MudIcon Icon="@Icons.Material.Filled.PersonOff" Size="Size.Large" Color="Color.Error" />
+                <MudText Typo="Typo.h4" Color="Color.Error" Class="mt-1">@_noLeaveCount</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">No Leave in 6+ Months</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <MudCard Elevation="2">
+            <MudCardContent Class="text-center pa-4">
+                <MudIcon Icon="@Icons.Material.Filled.Warning" Size="Size.Large" Color="Color.Error" />
+                <MudText Typo="Typo.h4" Color="Color.Error" Class="mt-1">@_burnoutRiskCount</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Burnout Risk Employees</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+<MudGrid>
+    <!-- Burnout Risk Table -->
+    <MudItem xs="12">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.LocalFireDepartment" Class="mr-1" Color="Color.Error" />
+                        Burnout Risk Analysis
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent Class="pa-0">
+                <MudTable Items="_burnoutRisks" Dense="false" Hover="true" Breakpoint="Breakpoint.Md"
+                          Elevation="0" Loading="_loading">
+                    <HeaderContent>
+                        <MudTh>Employee</MudTh>
+                        <MudTh>Department</MudTh>
+                        <MudTh>Avg Monthly Overtime (hrs)</MudTh>
+                        <MudTh>Leave Taken / Entitled</MudTh>
+                        <MudTh>Risk Level</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Employee">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                <MudAvatar Size="Size.Small" Color="@GetRiskAvatarColor(context.RiskLevel)">
+                                    @context.FirstName[0]@context.LastName[0]
+                                </MudAvatar>
+                                <MudText>@context.FirstName @context.LastName</MudText>
+                            </MudStack>
+                        </MudTd>
+                        <MudTd DataLabel="Department">@context.Department</MudTd>
+                        <MudTd DataLabel="Avg Monthly Overtime">
+                            <MudText Color="@(context.AvgMonthlyOvertime > 30 ? Color.Error : Color.Warning)">
+                                @context.AvgMonthlyOvertime.ToString("N1") hrs
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Leave Taken/Entitled">
+                            @context.LeaveTaken.ToString("N1") / @context.LeaveEntitled.ToString("N1") days
+                            <MudProgressLinear Value="@(context.LeaveEntitled > 0 ? (double)(context.LeaveTaken / context.LeaveEntitled * 100) : 0.0)"
+                                              Color="@(context.LeaveUtilization < 20 ? Color.Error : Color.Warning)"
+                                              Size="Size.Small" Rounded="true" Class="mt-1" />
+                        </MudTd>
+                        <MudTd DataLabel="Risk Level">
+                            <MudChip T="string" Size="Size.Small" Color="@GetRiskColor(context.RiskLevel)">
+                                @context.RiskLevel
+                            </MudChip>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Color="Color.Success">No burnout risk employees identified.</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Overtime by Department -->
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Overtime by Department</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @foreach (var dept in _overtimeByDept.OrderByDescending(d => d.TotalHours))
+                {
+                    var pct = _overtimeByDept.Any() ? dept.TotalHours / _overtimeByDept.Max(d => d.TotalHours) * 100 : 0;
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                        <MudText Typo="Typo.body2" Style="min-width:120px;max-width:160px">@dept.DepartmentName</MudText>
+                        <MudProgressLinear Value="@((double)pct)" Color="Color.Warning" Size="Size.Medium"
+                                          Rounded="true" Style="flex:1" />
+                        <MudText Typo="Typo.caption" Style="width:60px">@dept.TotalHours.ToString("N1")h</MudText>
+                    </MudStack>
+                }
+                @if (!_overtimeByDept.Any())
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">No overtime data.</MudText>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Monthly Overtime Trend -->
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Monthly Overtime Trend (Last 6 Months)</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @foreach (var month in _monthlyTrend)
+                {
+                    var pct = _monthlyTrend.Any(m => m.TotalHours > 0)
+                        ? month.TotalHours / _monthlyTrend.Max(m => m.TotalHours) * 100
+                        : 0;
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                        <MudText Typo="Typo.body2" Style="width:80px">@month.MonthLabel</MudText>
+                        <MudProgressLinear Value="@((double)pct)" Color="Color.Info" Size="Size.Medium"
+                                          Rounded="true" Style="flex:1" />
+                        <MudText Typo="Typo.caption" Style="width:60px">@month.TotalHours.ToString("N1")h</MudText>
+                    </MudStack>
+                }
+                @if (!_monthlyTrend.Any())
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">No overtime trend data.</MudText>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Leave Utilization Distribution -->
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Leave Utilization Distribution</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @{
+                    var bands = new[] {
+                        ("0-25%", _leaveDistribution.band0_25, Color.Error),
+                        ("25-50%", _leaveDistribution.band25_50, Color.Warning),
+                        ("50-75%", _leaveDistribution.band50_75, Color.Info),
+                        ("75-100%", _leaveDistribution.band75_100, Color.Success)
+                    };
+                    var total = bands.Sum(b => b.Item2);
+                }
+                @foreach (var band in bands)
+                {
+                    var pct = total > 0 ? (double)band.Item2 / total * 100 : 0;
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                        <MudText Typo="Typo.body2" Style="width:60px">@band.Item1</MudText>
+                        <MudProgressLinear Value="@pct" Color="@band.Item3" Size="Size.Medium"
+                                          Rounded="true" Style="flex:1" />
+                        <MudText Typo="Typo.caption" Style="width:70px">@band.Item2 emp (@pct.ToString("N0")%)</MudText>
+                    </MudStack>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- No Leave Alert -->
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.NotificationsActive" Class="mr-1" Color="Color.Error" />
+                        No Leave Alert (6+ Months)
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (!_noLeaveEmployees.Any())
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Success" Align="Align.Center">
+                        All employees have taken leave recently.
+                    </MudText>
+                }
+                else
+                {
+                    <MudList T="NoLeaveEmployee" Dense="true">
+                        @foreach (var emp in _noLeaveEmployees)
+                        {
+                            <MudListItem T="NoLeaveEmployee" Icon="@Icons.Material.Filled.Warning" IconColor="Color.Warning">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.body2">@emp.FirstName @emp.LastName</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@emp.Department — No leave since @emp.LastLeaveDate?.ToString("MMM yyyy") or longer</MudText>
+                                </MudStack>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private bool _loading = true;
+    private decimal _avgMonthlyOvertime = 0;
+    private decimal _avgLeaveUtilization = 0;
+    private int _noLeaveCount = 0;
+    private int _burnoutRiskCount = 0;
+
+    private List<BurnoutRiskEntry> _burnoutRisks = new();
+    private List<DeptOvertimeEntry> _overtimeByDept = new();
+    private List<MonthlyTrendEntry> _monthlyTrend = new();
+    private LeaveDistribution _leaveDistribution = new();
+    private List<NoLeaveEmployee> _noLeaveEmployees = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Reports", href: null, disabled: true),
+        new BreadcrumbItem("Wellness Dashboard", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var now = DateTime.UtcNow;
+            var sixMonthsAgo = now.AddMonths(-6);
+            var currentYear = now.Year;
+
+            // All active employees
+            var employees = await db.Employees
+                .Include(e => e.Department)
+                .Where(e => e.EmploymentStatus != EmploymentStatus.Terminated
+                            && e.EmploymentStatus != EmploymentStatus.Resigned
+                            && !e.IsDeleted)
+                .ToListAsync();
+
+            var employeeIds = employees.Select(e => e.Id).ToList();
+
+            // Approved overtime last 6 months
+            var recentOvertime = await db.OvertimeRequests
+                .Where(o => !o.IsDeleted
+                            && o.Status == OvertimeRequestStatus.Approved
+                            && o.Date >= sixMonthsAgo.Date
+                            && employeeIds.Contains(o.EmployeeId))
+                .ToListAsync();
+
+            // Monthly overtime totals per employee
+            var overtimePerEmployee = recentOvertime
+                .GroupBy(o => o.EmployeeId)
+                .ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var months = g.Select(o => new { o.Date.Year, o.Date.Month }).Distinct().Count();
+                        return months > 0 ? (decimal)g.Sum(o => (double)(o.ActualHours ?? o.PlannedHours)) / months : 0m;
+                    }
+                );
+
+            // Leave balances for current year
+            var leaveBalances = await db.LeaveBalances
+                .Where(lb => !lb.IsDeleted && lb.Year == currentYear && employeeIds.Contains(lb.EmployeeId))
+                .ToListAsync();
+
+            var leavePerEmployee = leaveBalances
+                .GroupBy(lb => lb.EmployeeId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => new { Entitled = g.Sum(lb => lb.Entitled), Taken = g.Sum(lb => lb.Taken) }
+                );
+
+            // Average monthly overtime
+            _avgMonthlyOvertime = overtimePerEmployee.Any()
+                ? Math.Round(overtimePerEmployee.Values.Average(), 1)
+                : 0;
+
+            // Average leave utilization
+            var utilizations = employees
+                .Where(e => leavePerEmployee.ContainsKey(e.Id) && leavePerEmployee[e.Id].Entitled > 0)
+                .Select(e => leavePerEmployee[e.Id].Taken / leavePerEmployee[e.Id].Entitled * 100)
+                .ToList();
+            _avgLeaveUtilization = utilizations.Any() ? Math.Round((decimal)utilizations.Average(), 1) : 0;
+
+            // Leave utilization distribution
+            var allUtils = employees.Select(e =>
+            {
+                if (!leavePerEmployee.ContainsKey(e.Id) || leavePerEmployee[e.Id].Entitled <= 0) return 0m;
+                return leavePerEmployee[e.Id].Taken / leavePerEmployee[e.Id].Entitled * 100m;
+            }).ToList();
+
+            _leaveDistribution = new LeaveDistribution
+            {
+                band0_25 = allUtils.Count(u => u < 25),
+                band25_50 = allUtils.Count(u => u >= 25 && u < 50),
+                band50_75 = allUtils.Count(u => u >= 50 && u < 75),
+                band75_100 = allUtils.Count(u => u >= 75)
+            };
+
+            // Burnout risk: high overtime (>20 hrs/mo avg) AND low leave usage (<30%)
+            _burnoutRisks = employees
+                .Where(e =>
+                {
+                    var avgOT = overtimePerEmployee.GetValueOrDefault(e.Id, 0);
+                    if (avgOT <= 20) return false;
+
+                    decimal leaveUtil = 0;
+                    if (leavePerEmployee.ContainsKey(e.Id) && leavePerEmployee[e.Id].Entitled > 0)
+                        leaveUtil = leavePerEmployee[e.Id].Taken / leavePerEmployee[e.Id].Entitled * 100;
+
+                    return leaveUtil < 30;
+                })
+                .Select(e =>
+                {
+                    var avgOT = overtimePerEmployee.GetValueOrDefault(e.Id, 0);
+                    decimal entitled = 0, taken = 0, leaveUtil = 0;
+                    if (leavePerEmployee.ContainsKey(e.Id))
+                    {
+                        entitled = leavePerEmployee[e.Id].Entitled;
+                        taken = leavePerEmployee[e.Id].Taken;
+                        if (entitled > 0) leaveUtil = taken / entitled * 100;
+                    }
+
+                    string risk = (avgOT > 30 && leaveUtil < 20) ? "High"
+                                : "Medium";
+
+                    return new BurnoutRiskEntry
+                    {
+                        EmployeeId = e.Id,
+                        FirstName = e.FirstName,
+                        LastName = e.LastName,
+                        Department = e.Department?.Name ?? "N/A",
+                        AvgMonthlyOvertime = avgOT,
+                        LeaveEntitled = entitled,
+                        LeaveTaken = taken,
+                        LeaveUtilization = leaveUtil,
+                        RiskLevel = risk
+                    };
+                })
+                .OrderByDescending(e => e.RiskLevel == "High" ? 1 : 0)
+                .ThenByDescending(e => e.AvgMonthlyOvertime)
+                .ToList();
+
+            _burnoutRiskCount = _burnoutRisks.Count;
+
+            // Overtime by department
+            var deptIds = employees.Select(e => new { e.Id, DeptName = e.Department?.Name ?? "No Department" })
+                .ToDictionary(x => x.Id, x => x.DeptName);
+
+            _overtimeByDept = recentOvertime
+                .GroupBy(o => deptIds.GetValueOrDefault(o.EmployeeId, "No Department"))
+                .Select(g => new DeptOvertimeEntry
+                {
+                    DepartmentName = g.Key,
+                    TotalHours = (decimal)g.Sum(o => (double)(o.ActualHours ?? o.PlannedHours))
+                })
+                .OrderByDescending(d => d.TotalHours)
+                .ToList();
+
+            // Monthly trend last 6 months
+            _monthlyTrend = new();
+            for (int i = 5; i >= 0; i--)
+            {
+                var monthDate = now.AddMonths(-i);
+                var monthTotal = recentOvertime
+                    .Where(o => o.Date.Year == monthDate.Year && o.Date.Month == monthDate.Month)
+                    .Sum(o => (double)(o.ActualHours ?? o.PlannedHours));
+
+                _monthlyTrend.Add(new MonthlyTrendEntry
+                {
+                    MonthLabel = monthDate.ToString("MMM yy"),
+                    TotalHours = (decimal)monthTotal
+                });
+            }
+
+            // No leave in 6+ months
+            var recentLeaveRequests = await db.LeaveRequests
+                .Where(lr => !lr.IsDeleted
+                             && lr.Status == LeaveRequestStatus.Approved
+                             && lr.StartDate >= sixMonthsAgo.Date
+                             && employeeIds.Contains(lr.EmployeeId))
+                .Select(lr => lr.EmployeeId)
+                .Distinct()
+                .ToListAsync();
+
+            _noLeaveEmployees = employees
+                .Where(e => !recentLeaveRequests.Contains(e.Id))
+                .Select(e => new NoLeaveEmployee
+                {
+                    EmployeeId = e.Id,
+                    FirstName = e.FirstName,
+                    LastName = e.LastName,
+                    Department = e.Department?.Name ?? "N/A",
+                    LastLeaveDate = null
+                })
+                .OrderBy(e => e.LastName)
+                .ToList();
+
+            _noLeaveCount = _noLeaveEmployees.Count;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading wellness data: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static Color GetRiskColor(string risk) => risk switch
+    {
+        "High" => Color.Error,
+        "Medium" => Color.Warning,
+        _ => Color.Success
+    };
+
+    private static Color GetRiskAvatarColor(string risk) => risk switch
+    {
+        "High" => Color.Error,
+        "Medium" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private class BurnoutRiskEntry
+    {
+        public int EmployeeId { get; set; }
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string Department { get; set; } = string.Empty;
+        public decimal AvgMonthlyOvertime { get; set; }
+        public decimal LeaveEntitled { get; set; }
+        public decimal LeaveTaken { get; set; }
+        public decimal LeaveUtilization { get; set; }
+        public string RiskLevel { get; set; } = "Low";
+    }
+
+    private class DeptOvertimeEntry
+    {
+        public string DepartmentName { get; set; } = string.Empty;
+        public decimal TotalHours { get; set; }
+    }
+
+    private class MonthlyTrendEntry
+    {
+        public string MonthLabel { get; set; } = string.Empty;
+        public decimal TotalHours { get; set; }
+    }
+
+    private class LeaveDistribution
+    {
+        public int band0_25 { get; set; }
+        public int band25_50 { get; set; }
+        public int band50_75 { get; set; }
+        public int band75_100 { get; set; }
+    }
+
+    private class NoLeaveEmployee
+    {
+        public int EmployeeId { get; set; }
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string Department { get; set; } = string.Empty;
+        public DateTime? LastLeaveDate { get; set; }
+    }
+}

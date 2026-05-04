@@ -1,0 +1,145 @@
+@page "/analytics/turnover"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+@using NickHR.Services.Analytics
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Turnover Prediction</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.TrendingDown" Class="mr-2" />Turnover Prediction Dashboard
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else
+{
+    <MudGrid>
+        <!-- Summary Cards -->
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent Class="text-center">
+                    <MudText Typo="Typo.h3" Color="Color.Error">@_risks.Count(r => r.RiskLevel == "High")</MudText>
+                    <MudText Typo="Typo.subtitle1">High Risk</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent Class="text-center">
+                    <MudText Typo="Typo.h3" Color="Color.Warning">@_risks.Count(r => r.RiskLevel == "Medium")</MudText>
+                    <MudText Typo="Typo.subtitle1">Medium Risk</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent Class="text-center">
+                    <MudText Typo="Typo.h3" Color="Color.Success">@_risks.Count(r => r.RiskLevel == "Low")</MudText>
+                    <MudText Typo="Typo.subtitle1">Low Risk</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Department Heatmap -->
+        <MudItem xs="12">
+            <MudCard Elevation="2" Class="mb-4">
+                <MudCardHeader>
+                    <MudText Typo="Typo.h6">Department Risk Heatmap</MudText>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudTable Items="_heatmap" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Department</MudTh><MudTh>Total</MudTh>
+                            <MudTh Style="color:#f44336">High</MudTh>
+                            <MudTh Style="color:#ff9800">Medium</MudTh>
+                            <MudTh Style="color:#4caf50">Low</MudTh>
+                            <MudTh>Avg Score</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Department</MudTd>
+                            <MudTd>@context.TotalEmployees</MudTd>
+                            <MudTd><MudText Color="Color.Error">@context.HighRisk</MudText></MudTd>
+                            <MudTd><MudText Color="Color.Warning">@context.MediumRisk</MudText></MudTd>
+                            <MudTd><MudText Color="Color.Success">@context.LowRisk</MudText></MudTd>
+                            <MudTd>
+                                <MudProgressLinear Value="@context.AverageScore" Max="100"
+                                    Color="@(context.AverageScore >= 50 ? Color.Error : context.AverageScore >= 25 ? Color.Warning : Color.Success)"
+                                    Style="min-width:100px" />
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Risk Table -->
+        <MudItem xs="12">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <MudText Typo="Typo.h6">Employee Risk Assessment</MudText>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudTextField @bind-Value="_searchText" Placeholder="Search employees..." Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-3" Immediate="true" />
+                    <MudTable Items="FilteredRisks" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Employee</MudTh><MudTh>Code</MudTh><MudTh>Department</MudTh>
+                            <MudTh>Risk Level</MudTh><MudTh>Score</MudTh><MudTh>Contributing Factors</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.EmployeeName</MudTd>
+                            <MudTd>@context.EmployeeCode</MudTd>
+                            <MudTd>@context.Department</MudTd>
+                            <MudTd>
+                                <MudChip T="string" Size="Size.Small"
+                                    Color="@(context.RiskLevel == "High" ? Color.Error : context.RiskLevel == "Medium" ? Color.Warning : Color.Success)">
+                                    @context.RiskLevel
+                                </MudChip>
+                            </MudTd>
+                            <MudTd>@context.RiskScore.ToString("F0")</MudTd>
+                            <MudTd>
+                                @foreach (var f in context.Factors)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@f</MudChip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private List<TurnoverRiskResult> _risks = new();
+    private List<DepartmentRiskSummary> _heatmap = new();
+    private bool _loading = true;
+    private string _searchText = "";
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new("Home", "/"), new("Analytics", null), new("Turnover Prediction", null, true)
+    };
+
+    private IEnumerable<TurnoverRiskResult> FilteredRisks => string.IsNullOrEmpty(_searchText)
+        ? _risks
+        : _risks.Where(r => r.EmployeeName.Contains(_searchText, StringComparison.OrdinalIgnoreCase)
+            || r.Department.Contains(_searchText, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<TurnoverAnalyticsService>();
+        _risks = await svc.GetTurnoverRiskAsync();
+        _heatmap = await svc.GetDepartmentHeatmapAsync();
+        _loading = false;
+    }
+}

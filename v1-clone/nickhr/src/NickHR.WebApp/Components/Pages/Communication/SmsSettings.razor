@@ -1,0 +1,78 @@
+@page "/admin/sms-settings"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SuperAdminOnly)]
+@rendermode InteractiveServer
+
+@using NickHR.Services.Communication
+@using NickHR.Core.Constants
+
+@inject ISmsService SmsService
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — SMS Settings</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Sms" Class="mr-2" />SMS Notification Settings
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="2">
+            <MudCardHeader><MudText Typo="Typo.h6">Configuration</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudAlert Severity="Severity.Info" Class="mb-3">
+                    SMS is currently in log-only mode. Configure API credentials in appsettings.json to enable actual sending.
+                </MudAlert>
+                <MudTextField Label="Provider" Value="@("Hubtel/Arkesel")" ReadOnly="true" />
+                <MudTextField Label="API Key" Value="@("Not Configured")" ReadOnly="true" Class="mt-3" />
+                <MudTextField Label="Sender ID" Value="@("NickHR")" ReadOnly="true" Class="mt-3" />
+            </MudCardContent>
+        </MudCard>
+
+        <MudCard Elevation="2" Class="mt-4">
+            <MudCardHeader><MudText Typo="Typo.h6">Test SMS</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudTextField @bind-Value="_testPhone" Label="Phone Number" Placeholder="+233xxxxxxxxx" />
+                <MudTextField @bind-Value="_testMessage" Label="Message" Lines="3" Class="mt-3" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-4"
+                           OnClick="SendTest" Disabled="@(string.IsNullOrEmpty(_testPhone))">
+                    Send Test SMS
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="8">
+        <MudCard Elevation="2">
+            <MudCardHeader><MudText Typo="Typo.h6">Message Log</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudTable Items="_logs" Dense="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh>Time</MudTh><MudTh>Phone</MudTh><MudTh>Message</MudTh><MudTh>Status</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.SentAt.ToString("HH:mm:ss")</MudTd>
+                        <MudTd>@context.PhoneNumber</MudTd>
+                        <MudTd>@context.Message</MudTd>
+                        <MudTd><MudChip T="string" Size="Size.Small" Color="Color.Warning">@context.Status</MudChip></MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private string _testPhone = "", _testMessage = "Test message from NickHR";
+    private List<SmsLogEntry> _logs = new();
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Admin", null), new("SMS Settings", null, true) };
+
+    protected override void OnInitialized() => _logs = SmsService.GetRecentLogs();
+
+    private async Task SendTest()
+    {
+        await SmsService.SendAsync(_testPhone, _testMessage);
+        _logs = SmsService.GetRecentLogs();
+        Snackbar.Add("Test SMS logged", Severity.Success);
+    }
+}

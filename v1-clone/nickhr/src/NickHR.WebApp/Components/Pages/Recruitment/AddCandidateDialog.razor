@@ -1,0 +1,151 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.PersonAdd" Class="mr-2" />
+            Add Candidate
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.FirstName"
+                                  Label="First Name *"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="First name is required"
+                                  MaxLength="100"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.LastName"
+                                  Label="Last Name *"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Last name is required"
+                                  MaxLength="100"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Email"
+                                  Label="Email *"
+                                  Variant="Variant.Outlined"
+                                  InputType="InputType.Email"
+                                  Required="true"
+                                  RequiredError="Email is required"
+                                  MaxLength="200"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Phone"
+                                  Label="Phone"
+                                  Variant="Variant.Outlined"
+                                  MaxLength="20" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Add Candidate
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public int RequisitionId { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private CandidateFormModel _model = new();
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            // Check if candidate already exists by email
+            var existing = await db.Candidates.FirstOrDefaultAsync(c => c.Email == _model.Email);
+            int candidateId;
+
+            if (existing != null)
+            {
+                candidateId = existing.Id;
+            }
+            else
+            {
+                var candidate = new Candidate
+                {
+                    FirstName = _model.FirstName,
+                    LastName = _model.LastName,
+                    Email = _model.Email,
+                    Phone = _model.Phone
+                };
+                db.Candidates.Add(candidate);
+                await db.SaveChangesAsync();
+                candidateId = candidate.Id;
+            }
+
+            // Check for duplicate application
+            var dupApp = await db.Applications.FirstOrDefaultAsync(
+                a => a.JobRequisitionId == RequisitionId && a.CandidateId == candidateId);
+            if (dupApp != null)
+            {
+                Snackbar.Add("This candidate has already applied to this requisition.", Severity.Warning);
+                return;
+            }
+
+            var application = new Application
+            {
+                JobRequisitionId = RequisitionId,
+                CandidateId = candidateId,
+                ApplicationDate = DateTime.UtcNow,
+                Stage = ApplicationStage.Applied
+            };
+            db.Applications.Add(application);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add($"{_model.FirstName} {_model.LastName} added as a candidate.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error adding candidate: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class CandidateFormModel
+    {
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string? Phone { get; set; }
+    }
+}

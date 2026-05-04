@@ -1,0 +1,362 @@
+@page "/attendance/shifts"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Shift Management</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.Schedule" Class="mr-2" />Shift Management
+</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <!-- Shifts Table -->
+    <div class="d-flex align-center justify-space-between mb-2">
+        <MudText Typo="Typo.h6">Shifts</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenAddShiftDialog">Add Shift</MudButton>
+    </div>
+
+    <MudTable Items="_shifts" Dense="true" Hover="true" Elevation="2" Class="mb-6">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Start Time</MudTh>
+            <MudTh>End Time</MudTh>
+            <MudTh>Grace (min)</MudTh>
+            <MudTh>Night Shift</MudTh>
+            <MudTh>Active</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.Name</MudTd>
+            <MudTd>@context.StartTime.ToString(@"hh\:mm")</MudTd>
+            <MudTd>@context.EndTime.ToString(@"hh\:mm")</MudTd>
+            <MudTd>@context.GracePeriodMinutes</MudTd>
+            <MudTd>@(context.IsNightShift ? "Yes" : "No")</MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="@(context.IsActive ? Color.Success : Color.Default)">
+                    @(context.IsActive ? "Active" : "Inactive")
+                </MudChip>
+            </MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                               OnClick="@(() => OpenEditShiftDialog(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                               OnClick="@(() => DeleteShiftAsync(context))" />
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText>No shifts configured yet.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+
+    <!-- Shift Assignments -->
+    <MudText Typo="Typo.h6" Class="mb-2">Shift Assignments</MudText>
+
+    <MudPaper Elevation="2" Class="pa-4 mb-4">
+        <MudText Typo="Typo.subtitle2" Class="mb-3">Assign Employee to Shift</MudText>
+        <MudGrid>
+            <MudItem xs="12" md="3">
+                <MudSelect @bind-Value="_assignEmployeeId" Label="Employee" Variant="Variant.Outlined" Dense="true">
+                    @foreach (var e in _employees)
+                    {
+                        <MudSelectItem Value="e.Id">@e.FirstName @e.LastName</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="3">
+                <MudSelect @bind-Value="_assignShiftId" Label="Shift" Variant="Variant.Outlined" Dense="true">
+                    @foreach (var s in _shifts.Where(s => s.IsActive))
+                    {
+                        <MudSelectItem Value="s.Id">@s.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="2">
+                <MudDatePicker @bind-Date="_assignFrom" Label="Effective From" Variant="Variant.Outlined" Dense="true" />
+            </MudItem>
+            <MudItem xs="12" md="2">
+                <MudDatePicker @bind-Date="_assignTo" Label="Effective To (optional)" Variant="Variant.Outlined" Dense="true" />
+            </MudItem>
+            <MudItem xs="12" md="2" Class="d-flex align-end">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                           OnClick="AssignShiftAsync" Disabled="_assigning">Assign</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudTable Items="_assignments" Dense="true" Hover="true" Elevation="2">
+        <HeaderContent>
+            <MudTh>Employee</MudTh>
+            <MudTh>Shift</MudTh>
+            <MudTh>Effective From</MudTh>
+            <MudTh>Effective To</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.Employee?.FirstName @context.Employee?.LastName</MudTd>
+            <MudTd>@context.Shift?.Name</MudTd>
+            <MudTd>@context.EffectiveFrom.ToString("dd MMM yyyy")</MudTd>
+            <MudTd>@(context.EffectiveTo?.ToString("dd MMM yyyy") ?? "Ongoing")</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                               OnClick="@(() => DeleteAssignmentAsync(context))" />
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText>No shift assignments yet.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+}
+
+<!-- Add/Edit Shift Dialog -->
+<MudDialog @bind-IsVisible="_shiftDialogOpen" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_editingShift?.Id > 0 ? "Edit Shift" : "Add Shift")</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_editingShift != null)
+        {
+            <MudGrid>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_editingShift.Name" Label="Shift Name" Required="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="6">
+                    <MudTimePicker @bind-Time="_shiftStart" Label="Start Time" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="6">
+                    <MudTimePicker @bind-Time="_shiftEnd" Label="End Time" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="6">
+                    <MudNumericField @bind-Value="_editingShift.GracePeriodMinutes" Label="Grace Period (minutes)" Variant="Variant.Outlined" Min="0" />
+                </MudItem>
+                <MudItem xs="6" Class="d-flex align-center gap-4">
+                    <MudCheckBox @bind-Value="_editingShift.IsNightShift" Label="Night Shift" />
+                    <MudCheckBox @bind-Value="_editingShift.IsActive" Label="Active" />
+                </MudItem>
+            </MudGrid>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _shiftDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveShiftAsync" Disabled="_saving">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private bool _saving = false;
+    private bool _assigning = false;
+
+    private List<Shift> _shifts = new();
+    private List<ShiftAssignment> _assignments = new();
+    private List<Employee> _employees = new();
+
+    // Shift dialog
+    private bool _shiftDialogOpen = false;
+    private Shift? _editingShift;
+    private TimeSpan? _shiftStart;
+    private TimeSpan? _shiftEnd;
+
+    // Assignment form
+    private int _assignEmployeeId;
+    private int _assignShiftId;
+    private DateTime? _assignFrom = DateTime.Today;
+    private DateTime? _assignTo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _shifts = await db.Shifts.OrderBy(s => s.Name).ToListAsync();
+            _assignments = await db.ShiftAssignments
+                .Include(a => a.Employee)
+                .Include(a => a.Shift)
+                .OrderByDescending(a => a.EffectiveFrom)
+                .ToListAsync();
+            _employees = await db.Employees
+                .Where(e => e.EmploymentStatus == NickHR.Core.Enums.EmploymentStatus.Active ||
+                            e.EmploymentStatus == NickHR.Core.Enums.EmploymentStatus.Confirmed)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading data: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OpenAddShiftDialog()
+    {
+        _editingShift = new Shift { IsActive = true };
+        _shiftStart = TimeSpan.FromHours(8);
+        _shiftEnd = TimeSpan.FromHours(17);
+        _shiftDialogOpen = true;
+    }
+
+    private void OpenEditShiftDialog(Shift shift)
+    {
+        _editingShift = new Shift
+        {
+            Id = shift.Id,
+            Name = shift.Name,
+            StartTime = shift.StartTime,
+            EndTime = shift.EndTime,
+            GracePeriodMinutes = shift.GracePeriodMinutes,
+            IsNightShift = shift.IsNightShift,
+            IsActive = shift.IsActive
+        };
+        _shiftStart = shift.StartTime;
+        _shiftEnd = shift.EndTime;
+        _shiftDialogOpen = true;
+    }
+
+    private async Task SaveShiftAsync()
+    {
+        if (_editingShift == null) return;
+        _editingShift.StartTime = _shiftStart ?? TimeSpan.Zero;
+        _editingShift.EndTime = _shiftEnd ?? TimeSpan.Zero;
+
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (_editingShift.Id == 0)
+                db.Shifts.Add(_editingShift);
+            else
+                db.Shifts.Update(_editingShift);
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Shift saved.", Severity.Success);
+            _shiftDialogOpen = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving shift: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteShiftAsync(Shift shift)
+    {
+        var confirm = await DialogService.ShowMessageBox("Confirm Delete",
+            $"Delete shift '{shift.Name}'?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Shifts.FindAsync(shift.Id);
+            if (entity != null)
+            {
+                entity.IsDeleted = true;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Shift deleted.", Severity.Success);
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error deleting shift: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task AssignShiftAsync()
+    {
+        if (_assignEmployeeId == 0 || _assignShiftId == 0 || _assignFrom == null)
+        {
+            Snackbar.Add("Please select employee, shift and effective date.", Severity.Warning);
+            return;
+        }
+        _assigning = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var assignment = new ShiftAssignment
+            {
+                EmployeeId = _assignEmployeeId,
+                ShiftId = _assignShiftId,
+                EffectiveFrom = _assignFrom.Value,
+                EffectiveTo = _assignTo
+            };
+            db.ShiftAssignments.Add(assignment);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Shift assigned.", Severity.Success);
+            _assignEmployeeId = 0;
+            _assignShiftId = 0;
+            _assignFrom = DateTime.Today;
+            _assignTo = null;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error assigning shift: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _assigning = false;
+        }
+    }
+
+    private async Task DeleteAssignmentAsync(ShiftAssignment assignment)
+    {
+        var confirm = await DialogService.ShowMessageBox("Confirm Delete",
+            "Remove this shift assignment?", yesText: "Remove", cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.ShiftAssignments.FindAsync(assignment.Id);
+            if (entity != null)
+            {
+                entity.IsDeleted = true;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Assignment removed.", Severity.Success);
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error removing assignment: {ex.Message}", Severity.Error);
+        }
+    }
+}

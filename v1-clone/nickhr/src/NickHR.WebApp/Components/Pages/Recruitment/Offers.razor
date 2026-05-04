@@ -1,0 +1,322 @@
+@page "/recruitment/offers"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Offer Letters</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Offer Letters</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Offers
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_offers.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreateDialog">
+                Create Offer
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_offers" Dense="true" Hover="true" Striped="true" T="OfferRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<OfferRow, object>(x => x.CandidateName)">Candidate Name</MudTableSortLabel></MudTh>
+                    <MudTh>Position</MudTh>
+                    <MudTh>Offered Salary</MudTh>
+                    <MudTh>Start Date</MudTh>
+                    <MudTh>Expiry Date</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<OfferRow, object>(x => x.Status)">Status</MudTableSortLabel></MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Candidate Name">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.CandidateName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Position">@context.RequisitionTitle</MudTd>
+                    <MudTd DataLabel="Offered Salary">GH₵ @context.OfferedSalary.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Start Date">@context.StartDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Expiry Date">
+                        @context.ExpiryDate.ToString("dd MMM yyyy")
+                        @if (context.Status == "Sent" && context.ExpiryDate < DateTime.Today)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error" Class="ml-1">Expired</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)" Variant="Variant.Filled">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        @if (context.Status == "Draft")
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning"
+                                           title="Edit" OnClick="@(() => OpenEditDialog(context.Id))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Send" Size="Size.Small" Color="Color.Info"
+                                           title="Send Offer" OnClick="@(() => SendOffer(context))" />
+                        }
+                        else if (context.Status == "Sent")
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Color="Color.Success"
+                                           title="Mark Accepted" OnClick="@(() => UpdateOfferStatus(context, "Accepted"))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Cancel" Size="Size.Small" Color="Color.Error"
+                                           title="Mark Rejected" OnClick="@(() => UpdateOfferStatus(context, "Rejected"))" />
+                        }
+                        else if (context.Status == "Accepted")
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                       StartIcon="@Icons.Material.Filled.PersonAdd"
+                                       OnClick="@(() => InitiateOnboarding(context))">
+                                Initiate Onboarding
+                            </MudButton>
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No offer letters found. Click "Create Offer" to begin.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<OfferRow> _offers = new();
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _offers = await db.OfferLetters
+                .Include(o => o.Application).ThenInclude(a => a.Candidate)
+                .Include(o => o.Application).ThenInclude(a => a.JobRequisition)
+                .OrderByDescending(o => o.CreatedAt)
+                .Select(o => new OfferRow
+                {
+                    Id = o.Id,
+                    ApplicationId = o.ApplicationId,
+                    CandidateName = o.Application.Candidate.FirstName + " " + o.Application.Candidate.LastName,
+                    RequisitionTitle = o.Application.JobRequisition.Title,
+                    OfferedSalary = o.OfferedSalary,
+                    StartDate = o.StartDate,
+                    ExpiryDate = o.ExpiryDate,
+                    Status = o.Status,
+                    CandidateId = o.Application.CandidateId,
+                    RequisitionId = o.Application.JobRequisitionId
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading offers: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private Color GetStatusColor(string status) => status switch
+    {
+        "Draft" => Color.Default,
+        "Sent" => Color.Info,
+        "Accepted" => Color.Success,
+        "Rejected" => Color.Error,
+        "Withdrawn" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private async Task OpenCreateDialog()
+    {
+        var parameters = new DialogParameters<OfferDialog>
+        {
+            { x => x.OfferId, null }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<OfferDialog>("Create Offer Letter", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadData();
+    }
+
+    private async Task OpenEditDialog(int id)
+    {
+        var parameters = new DialogParameters<OfferDialog>
+        {
+            { x => x.OfferId, id }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<OfferDialog>("Edit Offer Letter", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadData();
+    }
+
+    private async Task SendOffer(OfferRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox("Send Offer",
+            $"Send offer letter to {row.CandidateName}?", yesText: "Send", cancelText: "Cancel");
+        if (confirmed != true) return;
+        await SetStatus(row.Id, "Sent", $"Offer sent to {row.CandidateName}.");
+    }
+
+    private async Task UpdateOfferStatus(OfferRow row, string newStatus)
+    {
+        var verb = newStatus == "Accepted" ? "mark as Accepted" : "mark as Rejected";
+        var confirmed = await DialogService.ShowMessageBox($"Confirm",
+            $"Do you want to {verb} the offer for {row.CandidateName}?", yesText: "Confirm", cancelText: "Cancel");
+        if (confirmed != true) return;
+        await SetStatus(row.Id, newStatus, $"Offer {newStatus.ToLower()} for {row.CandidateName}.");
+
+        if (newStatus == "Accepted")
+        {
+            // Move application to Offer stage if not already there
+            try
+            {
+                using var scope = ServiceProvider.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+                var app = await db.Applications.FindAsync(row.ApplicationId);
+                if (app != null && app.Stage != ApplicationStage.Offer)
+                {
+                    app.Stage = ApplicationStage.Offer;
+                    await db.SaveChangesAsync();
+                }
+            }
+            catch { }
+        }
+    }
+
+    private async Task SetStatus(int id, string newStatus, string successMessage)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.OfferLetters.FindAsync(id);
+            if (entity == null) { Snackbar.Add("Offer not found.", Severity.Warning); return; }
+            entity.Status = newStatus;
+            if (newStatus == "Sent") entity.SentAt = DateTime.UtcNow;
+            if (newStatus == "Accepted" || newStatus == "Rejected") entity.RespondedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            Snackbar.Add(successMessage, Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task InitiateOnboarding(OfferRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox("Initiate Onboarding",
+            $"This will create an employee record for {row.CandidateName} and move them to onboarding. Continue?",
+            yesText: "Create Employee & Onboard", cancelText: "Cancel");
+        if (confirmed != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            // Load offer details
+            var offer = await db.OfferLetters
+                .Include(o => o.Application).ThenInclude(a => a.Candidate)
+                .Include(o => o.Application).ThenInclude(a => a.JobRequisition)
+                .FirstOrDefaultAsync(o => o.Id == row.Id);
+
+            if (offer == null) { Snackbar.Add("Offer not found.", Severity.Warning); return; }
+
+            var candidate = offer.Application.Candidate;
+            var requisition = offer.Application.JobRequisition;
+
+            // Generate employee code
+            var empCount = await db.Employees.CountAsync();
+            var empCode = $"EMP{(empCount + 1):D4}";
+
+            var employee = new Employee
+            {
+                FirstName = candidate.FirstName,
+                LastName = candidate.LastName,
+                PersonalEmail = candidate.Email,
+                PrimaryPhone = candidate.Phone,
+                EmployeeCode = empCode,
+                HireDate = offer.StartDate,
+                DepartmentId = requisition.DepartmentId,
+                DesignationId = requisition.DesignationId,
+                GradeId = requisition.GradeId,
+                BasicSalary = offer.OfferedSalary,
+                EmploymentStatus = EmploymentStatus.OnProbation,
+                EmploymentType = EmploymentType.FullTime,
+                ProbationEndDate = offer.StartDate.AddMonths(3)
+            };
+            db.Employees.Add(employee);
+
+            // Move application to Hired
+            var app = await db.Applications.FindAsync(offer.ApplicationId);
+            if (app != null) app.Stage = ApplicationStage.Hired;
+
+            await db.SaveChangesAsync();
+
+            Snackbar.Add($"Employee record created for {candidate.FirstName} {candidate.LastName} (Code: {empCode}).", Severity.Success);
+            Navigation.NavigateTo("/recruitment/onboarding");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error creating employee: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private class OfferRow
+    {
+        public int Id { get; set; }
+        public int ApplicationId { get; set; }
+        public int CandidateId { get; set; }
+        public int RequisitionId { get; set; }
+        public string CandidateName { get; set; } = string.Empty;
+        public string RequisitionTitle { get; set; } = string.Empty;
+        public decimal OfferedSalary { get; set; }
+        public DateTime StartDate { get; set; }
+        public DateTime ExpiryDate { get; set; }
+        public string Status { get; set; } = "Draft";
+    }
+}

@@ -1,0 +1,97 @@
+@page "/handbook"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Employee Handbook</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.MenuBook" Class="mr-2" />Employee Handbook
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else
+{
+    <MudGrid>
+        <!-- Chapter navigation -->
+        <MudItem xs="12" md="3">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Chapters</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudNavMenu Dense="true">
+                        @foreach (var category in _categories)
+                        {
+                            <MudNavLink OnClick="@(() => SelectCategory(category))"
+                                        Icon="@Icons.Material.Filled.Article"
+                                        Match="NavLinkMatch.All"
+                                        Style="@(_selectedCategory == category ? "background-color:rgba(25,118,210,0.1)" : "")">
+                                @category (@_documents.Count(d => d.Category == category))
+                            </MudNavLink>
+                        }
+                    </MudNavMenu>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Content -->
+        <MudItem xs="12" md="9">
+            @if (!string.IsNullOrEmpty(_selectedCategory))
+            {
+                <MudText Typo="Typo.h6" Class="mb-3">@_selectedCategory</MudText>
+            }
+            @foreach (var doc in _filteredDocs)
+            {
+                <MudExpansionPanel Text="@doc.Title" Class="mb-2">
+                    <MudText Typo="Typo.body2" Class="mb-2"><strong>Version:</strong> @doc.Version | <strong>Effective:</strong> @doc.EffectiveDate.ToString("dd MMM yyyy")</MudText>
+                    <MudText Typo="Typo.body1">@doc.Description</MudText>
+                    @if (!string.IsNullOrEmpty(doc.FilePath))
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Class="mt-2"
+                                   StartIcon="@Icons.Material.Filled.Download" Href="@doc.FilePath">
+                            Download Document
+                        </MudButton>
+                    }
+                </MudExpansionPanel>
+            }
+            @if (!_filteredDocs.Any())
+            {
+                <MudAlert Severity="Severity.Info">No handbook documents found. Upload policies with Category = "Handbook" to display them here.</MudAlert>
+            }
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private List<PolicyDocument> _documents = new();
+    private List<string> _categories = new();
+    private string _selectedCategory = "";
+    private bool _loading = true;
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Handbook", null, true) };
+
+    private List<PolicyDocument> _filteredDocs => string.IsNullOrEmpty(_selectedCategory)
+        ? _documents : _documents.Where(d => d.Category == _selectedCategory).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _documents = await db.PolicyDocuments
+            .Where(d => d.IsActive && d.Category == "Handbook")
+            .OrderBy(d => d.Title)
+            .ToListAsync();
+        _categories = _documents.Select(d => d.Category).Distinct().ToList();
+        if (_categories.Any()) _selectedCategory = _categories.First();
+        _loading = false;
+    }
+
+    private void SelectCategory(string category) => _selectedCategory = category;
+}

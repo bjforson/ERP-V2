@@ -1,0 +1,433 @@
+@page "/loans/apply"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Apply for Loan</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Apply for Loan</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_employeeId == null && !_isLoadingEligibility)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+else
+{
+<MudGrid>
+    <!-- Eligibility Card -->
+    <MudItem xs="12">
+        <MudCard Elevation="2" Class="mb-2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.VerifiedUser" Class="mr-1" Style="vertical-align:middle;" />
+                        Loan Eligibility
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (_isLoadingEligibility)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else
+                {
+                    <MudGrid>
+                        <MudItem xs="12" sm="4">
+                            <div class="d-flex flex-column align-center pa-2">
+                                <MudText Typo="Typo.overline" Color="Color.Secondary">Maximum Loan Amount</MudText>
+                                <MudText Typo="Typo.h5" Color="Color.Primary">GH₵ @_maxLoanAmount.ToString("N2")</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">3x Basic Salary</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <div class="d-flex flex-column align-center pa-2">
+                                <MudText Typo="Typo.overline" Color="Color.Secondary">Active Loans</MudText>
+                                <MudText Typo="Typo.h5" Color="@(_activeLoansCount > 0 ? Color.Warning : Color.Success)">@_activeLoansCount</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Currently Outstanding</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <div class="d-flex flex-column align-center pa-2">
+                                <MudText Typo="Typo.overline" Color="Color.Secondary">Eligibility Status</MudText>
+                                <MudChip T="string" Color="@(_isEligible ? Color.Success : Color.Error)"
+                                         Icon="@(_isEligible ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Cancel)">
+                                    @(_isEligible ? "Eligible" : "Not Eligible")
+                                </MudChip>
+                                @if (!_isEligible)
+                                {
+                                    <MudText Typo="Typo.caption" Color="Color.Error">@_ineligibilityReason</MudText>
+                                }
+                            </div>
+                        </MudItem>
+                    </MudGrid>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Application Form -->
+    <MudItem xs="12" md="7">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Loan Application Form</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <EditForm Model="_model" OnValidSubmit="HandleSubmit">
+                    <DataAnnotationsValidator />
+                    <MudGrid>
+                        <MudItem xs="12">
+                            <MudSelect T="LoanApplicationType" @bind-Value="_model.LoanType" Label="Loan Type *"
+                                       Variant="Variant.Outlined" Required="true">
+                                <MudSelectItem Value="LoanApplicationType.SalaryAdvance">Salary Advance</MudSelectItem>
+                                <MudSelectItem Value="LoanApplicationType.StaffLoan">Staff Loan</MudSelectItem>
+                                <MudSelectItem Value="LoanApplicationType.EmergencyLoan">Emergency Loan</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField T="decimal" @bind-Value="_model.RequestedAmount"
+                                             Label="Requested Amount (GH₵) *" Variant="Variant.Outlined"
+                                             Min="100" Max="@_maxLoanAmount"
+                                             Format="N2" Adornment="Adornment.Start" AdornmentText="GH₵"
+                                             OnBlur="RecalculateInstallment" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudText Typo="Typo.body2" Class="mb-1">Repayment Period: <strong>@_model.RepaymentMonths months</strong></MudText>
+                            <MudSlider T="int" @bind-Value="_model.RepaymentMonths" Min="1" Max="36" Step="1"
+                                       Color="Color.Primary" ValueLabel="true" Immediate="true"
+                                       @oninput="OnRepaymentMonthsChanged" />
+                            <div class="d-flex justify-space-between">
+                                <MudText Typo="Typo.caption">1 month</MudText>
+                                <MudText Typo="Typo.caption">36 months</MudText>
+                            </div>
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_model.Purpose" Label="Purpose *" Variant="Variant.Outlined"
+                                          Lines="3" Required="true" MaxLength="500"
+                                          HelperText="Briefly describe the purpose of this loan" />
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudSelect T="int?" @bind-Value="_model.GuarantorEmployeeId"
+                                       Label="Guarantor (Optional)" Variant="Variant.Outlined" Clearable="true">
+                                <MudSelectItem T="int?" Value="null">-- No Guarantor --</MudSelectItem>
+                                @foreach (var emp in _employees)
+                                {
+                                    <MudSelectItem T="int?" Value="@((int?)emp.Id)">@emp.FirstName @emp.LastName - @emp.EmployeeCode</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+
+                        <MudItem xs="12" Class="d-flex justify-end gap-2 mt-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/loans/my-applications">Cancel</MudButton>
+                            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                                       Disabled="@(!_isEligible || _isSubmitting)"
+                                       StartIcon="@Icons.Material.Filled.Send">
+                                @if (_isSubmitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+                                Submit Application
+                            </MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </EditForm>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Summary Sidebar -->
+    <MudItem xs="12" md="5">
+        <MudCard Elevation="2" Class="mb-3">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Repayment Summary</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudGrid>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Monthly Installment</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_monthlyInstallment.ToString("N2")</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Repayable</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Warning">GH₵ @_totalRepayable.ToString("N2")</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Principal</MudText>
+                        <MudText Typo="Typo.body1">GH₵ @_model.RequestedAmount.ToString("N2")</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Interest (@(_interestRate * 100)% p.a.)</MudText>
+                        <MudText Typo="Typo.body1">GH₵ @((_totalRepayable - _model.RequestedAmount).ToString("N2"))</MudText>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+
+        <!-- Repayment Schedule Preview -->
+        @if (_scheduleRows.Any())
+        {
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Repayment Schedule Preview</MudText>
+                    </CardHeaderContent>
+                    <CardHeaderActions>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">First 6 months shown</MudText>
+                    </CardHeaderActions>
+                </MudCardHeader>
+                <MudCardContent Class="pa-0">
+                    <MudSimpleTable Dense="true" Striped="true" Bordered="false">
+                        <thead>
+                            <tr>
+                                <th>Month</th>
+                                <th>Installment</th>
+                                <th>Balance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _scheduleRows.Take(6))
+                            {
+                                <tr>
+                                    <td>@row.Month</td>
+                                    <td>GH₵ @row.Installment.ToString("N2")</td>
+                                    <td>GH₵ @row.Balance.ToString("N2")</td>
+                                </tr>
+                            }
+                            @if (_scheduleRows.Count > 6)
+                            {
+                                <tr>
+                                    <td colspan="3" class="text-center">
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">...and @(_scheduleRows.Count - 6) more months</MudText>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                </MudCardContent>
+            </MudCard>
+        }
+    </MudItem>
+</MudGrid>
+}
+
+@code {
+    private LoanApplicationFormModel _model = new();
+    private bool _isSubmitting = false;
+    private bool _isLoadingEligibility = true;
+    private bool _isEligible = false;
+    private string _ineligibilityReason = "";
+    private decimal _maxLoanAmount = 0;
+    private int _activeLoansCount = 0;
+    private decimal _monthlyInstallment = 0;
+    private decimal _totalRepayable = 0;
+    private decimal _interestRate = 0.18m; // 18% per annum
+    private int? _employeeId;
+    private List<Employee> _employees = new();
+    private List<ScheduleRow> _scheduleRows = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Loans", href: "/loans/my-applications"),
+        new BreadcrumbItem("Apply", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoadingEligibility = true;
+        try
+        {
+            _employeeId = await GetCurrentEmployeeIdAsync();
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _employees = await db.Employees
+                .Where(e => e.EmploymentStatus != EmploymentStatus.Terminated)
+                .OrderBy(e => e.FirstName)
+                .ToListAsync();
+
+            if (_employeeId != null)
+            {
+                _activeLoansCount = await db.LoanApplications
+                    .CountAsync(la => la.EmployeeId == _employeeId.Value &&
+                                      (la.Status == LoanApplicationStatus.Disbursed ||
+                                       la.Status == LoanApplicationStatus.FinanceApproved));
+
+                // Retrieve basic salary from employee record
+                decimal basicSalary = await db.Employees
+                    .Where(e => e.Id == _employeeId.Value)
+                    .Select(e => (decimal?)e.BasicSalary)
+                    .FirstOrDefaultAsync() ?? 3000m;
+
+                _maxLoanAmount = basicSalary * 3;
+                _isEligible = _activeLoansCount == 0;
+                _ineligibilityReason = _activeLoansCount > 0 ? "You have an active loan. Repay existing loan first." : "";
+            }
+        }
+        finally
+        {
+            _isLoadingEligibility = false;
+        }
+
+        RecalculateInstallment();
+    }
+
+    private void OnRepaymentMonthsChanged(ChangeEventArgs e)
+    {
+        RecalculateInstallment();
+    }
+
+    private void RecalculateInstallment()
+    {
+        if (_model.RequestedAmount <= 0 || _model.RepaymentMonths <= 0)
+        {
+            _monthlyInstallment = 0;
+            _totalRepayable = 0;
+            _scheduleRows.Clear();
+            return;
+        }
+
+        // Simple reducing balance calculation
+        decimal monthlyRate = _interestRate / 12;
+        if (monthlyRate == 0)
+        {
+            _monthlyInstallment = _model.RequestedAmount / _model.RepaymentMonths;
+        }
+        else
+        {
+            var pow = (double)Math.Pow((double)(1 + monthlyRate), _model.RepaymentMonths);
+            _monthlyInstallment = _model.RequestedAmount * monthlyRate * (decimal)pow / ((decimal)pow - 1);
+        }
+
+        _monthlyInstallment = Math.Round(_monthlyInstallment, 2);
+        _totalRepayable = Math.Round(_monthlyInstallment * _model.RepaymentMonths, 2);
+        _model.MonthlyInstallment = _monthlyInstallment;
+        _model.TotalRepayable = _totalRepayable;
+
+        // Build schedule
+        _scheduleRows.Clear();
+        decimal balance = _model.RequestedAmount;
+        for (int i = 1; i <= _model.RepaymentMonths; i++)
+        {
+            decimal interest = Math.Round(balance * monthlyRate, 2);
+            decimal principal = _monthlyInstallment - interest;
+            balance = Math.Max(0, balance - principal);
+            _scheduleRows.Add(new ScheduleRow
+            {
+                Month = i,
+                Installment = _monthlyInstallment,
+                Balance = balance
+            });
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (_employeeId == null)
+        {
+            Snackbar.Add("Your account is not linked to an employee record. Contact HR.", Severity.Warning);
+            return;
+        }
+        if (!_isEligible)
+        {
+            Snackbar.Add(_ineligibilityReason, Severity.Warning);
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var application = new LoanApplication
+            {
+                EmployeeId = _employeeId.Value,
+                LoanType = _model.LoanType,
+                RequestedAmount = _model.RequestedAmount,
+                Purpose = _model.Purpose,
+                RepaymentMonths = _model.RepaymentMonths,
+                MonthlyInstallment = _monthlyInstallment,
+                TotalRepayable = _totalRepayable,
+                InterestRate = _interestRate,
+                GuarantorEmployeeId = _model.GuarantorEmployeeId,
+                Status = LoanApplicationStatus.Pending,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.LoanApplications.Add(application);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Loan application submitted successfully!", Severity.Success);
+            Navigation.NavigateTo("/loans/my-applications");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error submitting application: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    public class LoanApplicationFormModel
+    {
+        public LoanApplicationType LoanType { get; set; } = LoanApplicationType.StaffLoan;
+        public decimal RequestedAmount { get; set; } = 1000;
+        public string Purpose { get; set; } = "";
+        public int RepaymentMonths { get; set; } = 12;
+        public int? GuarantorEmployeeId { get; set; }
+        public decimal MonthlyInstallment { get; set; }
+        public decimal TotalRepayable { get; set; }
+    }
+
+    public class ScheduleRow
+    {
+        public int Month { get; set; }
+        public decimal Installment { get; set; }
+        public decimal Balance { get; set; }
+    }
+}

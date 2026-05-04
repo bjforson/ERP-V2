@@ -1,0 +1,188 @@
+@page "/timesheets"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Services.Project
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Timesheets</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Timer" Class="mr-2" />Weekly Timesheet
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudStack Row="true" AlignItems="AlignItems.Center">
+                        <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" OnClick="PrevWeek" />
+                        <MudText Typo="Typo.h6">Week of @_weekStart.ToString("dd MMM yyyy")</MudText>
+                        <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" OnClick="NextWeek" />
+                    </MudStack>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="@(() => _showAddEntry = true)">Add Entry</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Send"
+                               OnClick="SubmitWeek" Class="ml-2">Submit Week</MudButton>
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (_loading)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true">
+                        <thead>
+                            <tr>
+                                <th>Project</th>
+                                @for (int i = 0; i < 7; i++)
+                                {
+                                    var d = _weekStart.AddDays(i);
+                                    <th style="text-align:center">@d.ToString("ddd")<br/>@d.ToString("dd")</th>
+                                }
+                                <th>Total</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var proj in _entriesByProject)
+                            {
+                                <tr>
+                                    <td>@proj.Key</td>
+                                    @for (int i = 0; i < 7; i++)
+                                    {
+                                        var d = _weekStart.AddDays(i);
+                                        var entry = proj.Value.FirstOrDefault(e => e.Date.Date == d.Date);
+                                        <td style="text-align:center">@(entry?.Hours.ToString("F1") ?? "-")</td>
+                                    }
+                                    <td><strong>@proj.Value.Sum(e => e.Hours).ToString("F1")</strong></td>
+                                    <td><MudChip T="string" Size="Size.Small">@(proj.Value.FirstOrDefault()?.Status ?? "Draft")</MudChip></td>
+                                </tr>
+                            }
+                            @if (!_entriesByProject.Any())
+                            {
+                                <tr><td colspan="10"><MudText Align="Align.Center">No timesheet entries for this week.</MudText></td></tr>
+                            }
+                            <tr style="font-weight:bold; background:#f5f5f5">
+                                <td>Daily Total</td>
+                                @for (int i = 0; i < 7; i++)
+                                {
+                                    var d = _weekStart.AddDays(i);
+                                    var total = _entries.Where(e => e.Date.Date == d.Date).Sum(e => e.Hours);
+                                    <td style="text-align:center">@total.ToString("F1")</td>
+                                }
+                                <td>@_entries.Sum(e => e.Hours).ToString("F1")</td>
+                                <td></td>
+                            </tr>
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@if (_showAddEntry)
+{
+    <MudDialog @bind-Visible="_showAddEntry">
+        <TitleContent>Add Timesheet Entry</TitleContent>
+        <DialogContent>
+            <MudSelect T="int?" @bind-Value="_newProjectId" Label="Project" Required="true">
+                @foreach (var p in _projects)
+                {
+                    <MudSelectItem T="int?" Value="@p.Id">@p.Name (@p.Code)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudDatePicker Label="Date" @bind-Date="_newDate" Class="mt-3" />
+            <MudNumericField T="decimal" @bind-Value="_newHours" Label="Hours" Min="0.5m" Max="24m" Step="0.5m" Class="mt-3" />
+            <MudTextField @bind-Value="_newDescription" Label="Description" Class="mt-3" />
+            <MudCheckBox T="bool" @bind-Value="_newBillable" Label="Billable" Class="mt-3" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showAddEntry = false)">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddEntry">Add</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<NickHR.Core.Entities.Core.TimesheetEntry> _entries = new();
+    private List<NickHR.Core.Entities.Core.Project> _projects = new();
+    private Dictionary<string, List<NickHR.Core.Entities.Core.TimesheetEntry>> _entriesByProject = new();
+    private DateTime _weekStart;
+    private bool _loading = true, _showAddEntry;
+    private int? _newProjectId;
+    private DateTime? _newDate;
+    private decimal _newHours = 8;
+    private string _newDescription = "";
+    private bool _newBillable = true;
+    private int _currentEmployeeId;
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Timesheets", null, true) };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _weekStart = DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek + 1);
+        _newDate = DateTime.Today;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _projects = await db.Set<NickHR.Core.Entities.Core.Project>().Where(p => p.Status == ProjectStatus.Active).ToListAsync();
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var username = authState.User?.Identity?.Name;
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == username || e.PersonalEmail == username);
+        _currentEmployeeId = emp?.Id ?? 0;
+
+        await LoadEntries();
+    }
+
+    private async Task LoadEntries()
+    {
+        _loading = true;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ProjectService>();
+        _entries = await svc.GetTimesheetsAsync(_currentEmployeeId, _weekStart);
+        _entriesByProject = _entries.GroupBy(e => e.Project?.Name ?? "Unknown").ToDictionary(g => g.Key, g => g.ToList());
+        _loading = false;
+    }
+
+    private async Task PrevWeek() { _weekStart = _weekStart.AddDays(-7); await LoadEntries(); }
+    private async Task NextWeek() { _weekStart = _weekStart.AddDays(7); await LoadEntries(); }
+
+    private async Task AddEntry()
+    {
+        if (!_newProjectId.HasValue || !_newDate.HasValue) return;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ProjectService>();
+        await svc.CreateTimesheetEntryAsync(new NickHR.Core.Entities.Core.TimesheetEntry
+        {
+            EmployeeId = _currentEmployeeId, ProjectId = _newProjectId.Value,
+            Date = _newDate.Value, Hours = _newHours, Description = _newDescription, IsBillable = _newBillable
+        });
+        _showAddEntry = false;
+        Snackbar.Add("Entry added", Severity.Success);
+        await LoadEntries();
+    }
+
+    private async Task SubmitWeek()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ProjectService>();
+        await svc.SubmitWeekAsync(_currentEmployeeId, _weekStart);
+        Snackbar.Add("Week submitted for approval", Severity.Success);
+        await LoadEntries();
+    }
+}

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NickHR — Offline</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            background: #F5F5F5;
+            color: #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+
+        .container {
+            background: #fff;
+            border-radius: 12px;
+            padding: 2.5rem 2rem;
+            max-width: 420px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+        }
+
+        .icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            background: #E3F2FD;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .icon svg {
+            width: 40px;
+            height: 40px;
+            fill: #1565C0;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1565C0;
+            margin-bottom: 0.75rem;
+        }
+
+        p {
+            font-size: 1rem;
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+        }
+
+        .btn {
+            display: inline-block;
+            background: #1565C0;
+            color: #fff;
+            padding: 0.75rem 2rem;
+            border-radius: 8px;
+            border: none;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background: #0D47A1; }
+
+        .badge {
+            display: inline-block;
+            background: #1565C0;
+            color: #fff;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            letter-spacing: 0.05em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M24 8.1l-7.2-7.2c-.4-.4-1-.4-1.4 0L12 4.3 8.6.9C8.2.5 7.6.5 7.2.9L0 8.1c-.4.4-.4 1 0 1.4L3.4 13 0 16.5c-.4.4-.4 1 0 1.4l7.2 7.2c.4.4 1 .4 1.4 0L12 21.7l3.4 3.4c.4.4 1 .4 1.4 0l7.2-7.2c.4-.4.4-1 0-1.4L20.6 13l3.4-3.5c.4-.4.4-1 0-1.4zm-12 5.7c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
+            </svg>
+        </div>
+        <span class="badge">NickHR</span>
+        <h1>You're Offline</h1>
+        <p>
+            NickHR requires an internet connection to function.<br>
+            Please check your connection and try again.
+        </p>
+        <button class="btn" onclick="window.location.reload()">Try Again</button>
+    </div>
+</body>
+</html>

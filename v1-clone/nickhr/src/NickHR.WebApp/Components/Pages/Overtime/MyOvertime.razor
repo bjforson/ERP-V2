@@ -1,0 +1,219 @@
+@page "/overtime/my-requests"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+
+<PageTitle>NICKSCAN ERP — NickHR — My Overtime Requests</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">My Overtime Requests</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="4">
+                <MudSelect T="int" @bind-Value="_filterMonth" Label="Month" Variant="Variant.Outlined"
+                           Dense="true" @bind-Value:after="LoadData">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var month = m;
+                        <MudSelectItem Value="@month">@(new DateTime(2000, month, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="int" @bind-Value="_filterYear" Label="Year" Variant="Variant.Outlined"
+                           Dense="true" @bind-Value:after="LoadData">
+                    @for (int y = DateTime.Today.Year - 1; y <= DateTime.Today.Year + 1; y++)
+                    {
+                        var year = y;
+                        <MudSelectItem Value="@year">@year</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" Class="d-flex align-center">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Add" Href="/overtime/request">
+                    New Request
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else if (!_requests.Any())
+        {
+            <div class="d-flex flex-column align-center pa-6">
+                <MudIcon Icon="@Icons.Material.Filled.MoreTime" Size="Size.Large" Color="Color.Secondary" Class="mb-2" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary">No overtime requests for this period.</MudText>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="_requests" Dense="true" Striped="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Date</MudTh>
+                    <MudTh>Time Range</MudTh>
+                    <MudTh>Hours</MudTh>
+                    <MudTh>Rate</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Pay Amount</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Date.ToString("dd/MM/yyyy (ddd)")</MudTd>
+                    <MudTd>@DateTime.Today.Add(context.StartTime).ToString("HH:mm") – @DateTime.Today.Add(context.EndTime).ToString("HH:mm")</MudTd>
+                    <MudTd>@context.PlannedHours.ToString("F1")h</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small"
+                                  Color="@(context.Rate >= 2.0m ? Color.Warning : Color.Info)">
+                            @context.Rate.ToString("F1")x
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        @if (context.PayAmount.HasValue)
+                        {
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">GHS @context.PayAmount.Value.ToString("N2")</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Pending</MudText>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        @if (context.Status == OvertimeRequestStatus.Pending)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                           Color="Color.Error" Title="Cancel"
+                                           OnClick="() => CancelRequest(context.Id)" />
+                        }
+                        @if (!string.IsNullOrEmpty(context.Notes))
+                        {
+                            <MudTooltip Text="@context.Notes">
+                                <MudIconButton Icon="@Icons.Material.Filled.Info" Size="Size.Small" />
+                            </MudTooltip>
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd colspan="2"><strong>Total</strong></MudTd>
+                    <MudTd><strong>@_requests.Sum(r => r.PlannedHours).ToString("F1")h</strong></MudTd>
+                    <MudTd colspan="2"></MudTd>
+                    <MudTd>
+                        @if (_requests.Any(r => r.PayAmount.HasValue))
+                        {
+                            <strong>GHS @_requests.Where(r => r.PayAmount.HasValue).Sum(r => r.PayAmount!.Value).ToString("N2")</strong>
+                        }
+                    </MudTd>
+                    <MudTd></MudTd>
+                </FooterContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<OvertimeRequest> _requests = new();
+    private bool _isLoading = true;
+    private int? _employeeId;
+    private int _filterMonth = DateTime.Today.Month;
+    private int _filterYear = DateTime.Today.Year;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Overtime", href: null, disabled: true),
+        new BreadcrumbItem("My Requests", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        if (_employeeId == null) return;
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _requests = await db.OvertimeRequests
+                .Where(r => r.EmployeeId == _employeeId.Value
+                    && r.Date.Month == _filterMonth
+                    && r.Date.Year == _filterYear)
+                .OrderByDescending(r => r.Date)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task CancelRequest(int id)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var req = await db.OvertimeRequests.FindAsync(id);
+            if (req == null || req.Status != OvertimeRequestStatus.Pending) return;
+            req.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Request cancelled.", Severity.Info);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private Color GetStatusColor(OvertimeRequestStatus status) => status switch
+    {
+        OvertimeRequestStatus.Pending => Color.Warning,
+        OvertimeRequestStatus.Approved => Color.Success,
+        OvertimeRequestStatus.Rejected => Color.Error,
+        OvertimeRequestStatus.Completed => Color.Primary,
+        _ => Color.Default
+    };
+}

@@ -1,0 +1,182 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudGrid>
+            <MudItem xs="12">
+                <MudSelect T="int" @bind-Value="_employeeId" Label="Employee *"
+                           Variant="Variant.Outlined" Required="true"
+                           @bind-Value:after="UpdateEMI">
+                    @foreach (var emp in Employees)
+                    {
+                        <MudSelectItem Value="@emp.Id">
+                            @emp.FirstName @emp.LastName (@emp.EmployeeCode)
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudTextField @bind-Value="_loanType" Label="Loan Type *"
+                              Variant="Variant.Outlined" Required="true"
+                              HelperText="e.g. Staff Loan, Salary Advance, Emergency Loan" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" @bind-Value="_amount" Label="Principal Amount (GH₵) *"
+                                 Variant="Variant.Outlined" Min="0" Format="N2"
+                                 @bind-Value:after="UpdateEMI" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" @bind-Value="_interestRate" Label="Interest Rate (%) *"
+                                 Variant="Variant.Outlined" Min="0" Max="100" Format="N2"
+                                 HelperText="Annual interest rate e.g. 12 for 12%"
+                                 @bind-Value:after="UpdateEMI" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="int" @bind-Value="_repaymentMonths" Label="Repayment (Months) *"
+                                 Variant="Variant.Outlined" Min="1" Max="120"
+                                 @bind-Value:after="UpdateEMI" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker @bind-Date="_startDate" Label="Start Date *"
+                               Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                               Required="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudPaper Elevation="0" Class="pa-3" Style="background:#f5f5f5;border-radius:4px">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Calculated Monthly EMI</MudText>
+                    <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_calculatedEMI.ToString("N2")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Total Repayable: GH₵ @_totalRepayable.ToString("N2")</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_notes" Label="Notes" Variant="Variant.Outlined" Lines="2" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync"
+                   Disabled="_saving">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Create Loan
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter] public List<Employee> Employees { get; set; } = new();
+
+    private int _employeeId;
+    private string _loanType = string.Empty;
+    private decimal _amount;
+    private decimal _interestRate;
+    private int _repaymentMonths = 12;
+    private DateTime? _startDate = DateTime.Today;
+    private string? _notes;
+    private decimal _calculatedEMI;
+    private decimal _totalRepayable;
+    private bool _saving = false;
+
+    protected override void OnInitialized()
+    {
+        if (Employees.Any())
+            _employeeId = Employees.First().Id;
+        UpdateEMI();
+    }
+
+    private void UpdateEMI()
+    {
+        if (_amount <= 0 || _repaymentMonths <= 0)
+        {
+            _calculatedEMI = 0;
+            _totalRepayable = 0;
+            return;
+        }
+
+        if (_interestRate == 0)
+        {
+            _calculatedEMI = Math.Round(_amount / _repaymentMonths, 2);
+            _totalRepayable = _amount;
+        }
+        else
+        {
+            // Standard EMI formula: EMI = P * r * (1+r)^n / ((1+r)^n - 1)
+            decimal monthlyRate = _interestRate / 100m / 12m;
+            var pow = (double)(1 + monthlyRate);
+            var powN = (decimal)Math.Pow(pow, _repaymentMonths);
+            _calculatedEMI = Math.Round(_amount * monthlyRate * powN / (powN - 1), 2);
+            _totalRepayable = Math.Round(_calculatedEMI * _repaymentMonths, 2);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_employeeId == 0)
+        {
+            Snackbar.Add("Please select an employee.", Severity.Warning);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_loanType))
+        {
+            Snackbar.Add("Loan type is required.", Severity.Warning);
+            return;
+        }
+        if (_amount <= 0)
+        {
+            Snackbar.Add("Amount must be greater than zero.", Severity.Warning);
+            return;
+        }
+        if (!_startDate.HasValue)
+        {
+            Snackbar.Add("Start date is required.", Severity.Warning);
+            return;
+        }
+
+        UpdateEMI();
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var loan = new Loan
+            {
+                EmployeeId = _employeeId,
+                LoanType = _loanType.Trim(),
+                Amount = _amount,
+                InterestRate = _interestRate,
+                TotalRepayable = _totalRepayable > 0 ? _totalRepayable : _amount,
+                MonthlyInstallment = _calculatedEMI > 0 ? _calculatedEMI : _amount / _repaymentMonths,
+                StartDate = _startDate.Value,
+                EndDate = _startDate.Value.AddMonths(_repaymentMonths),
+                BalanceRemaining = _totalRepayable > 0 ? _totalRepayable : _amount,
+                LoanStatus = LoanStatus.Active,
+                Notes = _notes?.Trim()
+            };
+
+            db.Loans.Add(loan);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Loan created successfully!", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

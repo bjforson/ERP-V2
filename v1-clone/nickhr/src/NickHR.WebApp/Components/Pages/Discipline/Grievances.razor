@@ -1,0 +1,309 @@
+@page "/discipline/grievances"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Discipline
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Grievances</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Grievances</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Grievances
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_grievances.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenFileDialog">
+                File Grievance
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_grievances" Dense="true" Hover="true" Striped="true" T="GrievanceRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<GrievanceRow, object>(x => x.Subject)">Subject</MudTableSortLabel></MudTh>
+                    <MudTh>Filed By</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<GrievanceRow, object>(x => x.FiledDate)">Filed Date</MudTableSortLabel></MudTh>
+                    <MudTh>Assigned To</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Subject">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.Subject</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Filed By">
+                        @if (context.IsAnonymous)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default">Anonymous</MudChip>
+                        }
+                        else
+                        {
+                            @context.FiledByName
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Filed Date">@context.FiledDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Assigned To">@(context.AssignedToName ?? "—")</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)" Variant="Variant.Filled">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                   OnClick="@(() => OpenAssign(context.Id))"
+                                   Disabled="@(context.Status is "Resolved" or "Closed")">
+                            Assign
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
+                                   Class="ml-1" OnClick="@(() => OpenResolve(context.Id))"
+                                   Disabled="@(context.Status is "Resolved" or "Closed")">
+                            Resolve
+                        </MudButton>
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       Class="ml-1" OnClick="@(() => DeleteGrievance(context.Id))" />
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Class="pa-4 mud-text-secondary">No grievances found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@* Assign dialog *@
+@if (_showAssignDialog)
+{
+    <MudDialog @bind-IsVisible="_showAssignDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent><MudText Typo="Typo.h6">Assign Investigator</MudText></TitleContent>
+        <DialogContent>
+            <MudSelect T="int?" @bind-Value="_assignToId" Label="Investigator" Variant="Variant.Outlined" Clearable="true">
+                @foreach (var e in _employees)
+                {
+                    <MudSelectItem T="int?" Value="@((int?)e.Id)">@e.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showAssignDialog = false)" Variant="Variant.Text">Cancel</MudButton>
+            <MudButton OnClick="SaveAssign" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">Assign</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@* Resolve dialog *@
+@if (_showResolveDialog)
+{
+    <MudDialog @bind-IsVisible="_showResolveDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent><MudText Typo="Typo.h6">Resolve Grievance</MudText></TitleContent>
+        <DialogContent>
+            <MudTextField @bind-Value="_resolution" Label="Resolution *" Variant="Variant.Outlined"
+                          Lines="5" Required="true" MaxLength="2000"
+                          Placeholder="Describe how this grievance was resolved..." />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showResolveDialog = false)" Variant="Variant.Text">Cancel</MudButton>
+            <MudButton OnClick="SaveResolve" Color="Color.Success" Variant="Variant.Filled" Disabled="@_isSaving">Mark Resolved</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private List<GrievanceRow> _grievances = new();
+    private List<EmpOption> _employees = new();
+
+    // Assign dialog
+    private bool _showAssignDialog;
+    private int _activeGrievanceId;
+    private int? _assignToId;
+
+    // Resolve dialog
+    private bool _showResolveDialog;
+    private string _resolution = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadEmployees();
+        await LoadGrievances();
+    }
+
+    private async Task LoadEmployees()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task LoadGrievances()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _grievances = await db.Grievances
+                .Include(g => g.Employee)
+                .Include(g => g.AssignedTo)
+                .OrderByDescending(g => g.FiledDate)
+                .Select(g => new GrievanceRow
+                {
+                    Id = g.Id,
+                    Subject = g.Subject,
+                    // Anonymous grievances carry a NULL Employee FK (privacy);
+                    // the row template renders an "Anonymous" chip in that case.
+                    FiledByName = g.Employee != null ? g.Employee.FirstName + " " + g.Employee.LastName : "",
+                    IsAnonymous = g.IsAnonymous,
+                    FiledDate = g.FiledDate,
+                    AssignedToName = g.AssignedTo != null ? g.AssignedTo.FirstName + " " + g.AssignedTo.LastName : null,
+                    Status = g.Status
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task OpenFileDialog()
+    {
+        var dialog = await DialogService.ShowAsync<GrievanceDialog>("File Grievance",
+            new DialogParameters(),
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadGrievances();
+    }
+
+    private void OpenAssign(int id)
+    {
+        _activeGrievanceId = id;
+        var row = _grievances.First(g => g.Id == id);
+        _assignToId = null;
+        _showAssignDialog = true;
+    }
+
+    private async Task SaveAssign()
+    {
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Grievances.FindAsync(_activeGrievanceId);
+            if (entity == null) return;
+            entity.AssignedToId = _assignToId;
+            entity.Status = "UnderInvestigation";
+            await db.SaveChangesAsync();
+            Snackbar.Add("Investigator assigned.", Severity.Success);
+            _showAssignDialog = false;
+            await LoadGrievances();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void OpenResolve(int id)
+    {
+        _activeGrievanceId = id;
+        _resolution = "";
+        _showResolveDialog = true;
+    }
+
+    private async Task SaveResolve()
+    {
+        if (string.IsNullOrWhiteSpace(_resolution))
+        {
+            Snackbar.Add("Resolution text is required.", Severity.Warning);
+            return;
+        }
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Grievances.FindAsync(_activeGrievanceId);
+            if (entity == null) return;
+            entity.Resolution = _resolution;
+            entity.Status = "Resolved";
+            entity.ResolvedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Grievance resolved.", Severity.Success);
+            _showResolveDialog = false;
+            await LoadGrievances();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private async Task DeleteGrievance(int id)
+    {
+        bool? confirmed = await DialogService.ShowMessageBox("Delete Grievance",
+            "Delete this grievance?", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Grievances.FindAsync(id);
+            if (entity == null) return;
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Grievance deleted.", Severity.Success);
+            await LoadGrievances();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private Color GetStatusColor(string status) => status switch
+    {
+        "Filed" => Color.Warning,
+        "UnderInvestigation" => Color.Info,
+        "Resolved" => Color.Success,
+        "Closed" => Color.Default,
+        _ => Color.Default
+    };
+
+    private class GrievanceRow
+    {
+        public int Id { get; set; }
+        public string Subject { get; set; } = "";
+        public string FiledByName { get; set; } = "";
+        public bool IsAnonymous { get; set; }
+        public DateTime FiledDate { get; set; }
+        public string? AssignedToName { get; set; }
+        public string Status { get; set; } = "Filed";
+    }
+
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

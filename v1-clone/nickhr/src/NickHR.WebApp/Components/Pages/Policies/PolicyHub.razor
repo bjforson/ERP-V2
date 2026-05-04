@@ -1,0 +1,280 @@
+@page "/policies"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using NickHR.Core.Interfaces
+@using NickHR.Core.Constants
+@inject IPolicyDocumentService PolicyService
+@inject ICurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Policy Document Hub</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    <MudIcon Icon="@Icons.Material.Filled.Policy" Class="mr-2" />
+    Policy Document Hub
+</MudText>
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.body1" Color="Color.Secondary">@_policies.Count active policy document(s)</MudText>
+    <AuthorizeView Roles="@RoleSets.HRStaff">
+        <Authorized>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreateDialog">
+                Add Policy
+            </MudButton>
+        </Authorized>
+    </AuthorizeView>
+</div>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_policies.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No policy documents available.</MudAlert>
+}
+else
+{
+    @foreach (var group in _policies.GroupBy(p => p.Category).OrderBy(g => g.Key))
+    {
+        <MudText Typo="Typo.h6" Class="mb-2 mt-4">
+            <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small" Class="mr-1" />
+            @group.Key
+        </MudText>
+        <MudGrid Class="mb-2">
+            @foreach (var policy in group)
+            {
+                var hasAcked = _acknowledgedIds.Contains(policy.Id);
+                <MudItem xs="12" sm="6" md="4">
+                    <MudCard Elevation="2" Class="h-100" Style="@(!policy.IsActive ? "opacity:0.6;" : "")">
+                        <MudCardContent>
+                            <div class="d-flex justify-space-between align-start">
+                                <MudText Typo="Typo.subtitle1"><strong>@policy.Title</strong></MudText>
+                                @if (!policy.IsActive)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error">Inactive</MudChip>
+                                }
+                            </div>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Version @policy.Version | Effective @policy.EffectiveDate.ToString("dd MMM yyyy")</MudText>
+                            @if (!string.IsNullOrWhiteSpace(policy.Description))
+                            {
+                                <MudText Typo="Typo.body2" Class="mt-2">@policy.Description</MudText>
+                            }
+                            @if (policy.RequiresAcknowledgement)
+                            {
+                                <div class="mt-2 d-flex align-center gap-2">
+                                    <MudChip T="string" Size="Size.Small"
+                                             Color="@(hasAcked ? Color.Success : Color.Warning)">
+                                        @(hasAcked ? "Acknowledged" : "Requires Acknowledgement")
+                                    </MudChip>
+                                </div>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                                    @policy.AcknowledgedCount of @policy.TotalEmployees employees acknowledged
+                                </MudText>
+                            }
+                        </MudCardContent>
+                        <MudCardActions>
+                            @if (!string.IsNullOrWhiteSpace(policy.FilePath))
+                            {
+                                <MudButton Variant="Variant.Text" Color="Color.Primary" Href="@policy.FilePath" Target="_blank"
+                                           StartIcon="@Icons.Material.Filled.OpenInNew" Size="Size.Small">
+                                    View Document
+                                </MudButton>
+                            }
+                            @if (policy.RequiresAcknowledgement && !hasAcked)
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                                           OnClick="() => AcknowledgeAsync(policy.Id)"
+                                           StartIcon="@Icons.Material.Filled.CheckCircle">
+                                    Acknowledge
+                                </MudButton>
+                            }
+                            <AuthorizeView Roles="@RoleSets.HRStaff">
+                                <Authorized>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                                   Title="Edit" OnClick="() => OpenEditDialog(policy)" />
+                                </Authorized>
+                            </AuthorizeView>
+                        </MudCardActions>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+}
+
+<!-- Create / Edit Dialog -->
+<MudDialog @bind-IsVisible="_showFormDialog">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_editTarget == null ? "Add Policy Document" : "Edit Policy Document")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_formValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_fTitle" Label="Title" Variant="Variant.Outlined"
+                                  Required="true" RequiredError="Title is required." />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="string" @bind-Value="_fCategory" Label="Category" Variant="Variant.Outlined">
+                        @foreach (var cat in _categories)
+                        {
+                            <MudSelectItem Value="@cat">@cat</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_fVersion" Label="Version" Variant="Variant.Outlined"
+                                  Placeholder="e.g. 1.0" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_fEffectiveDate" Label="Effective Date" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_fFilePath" Label="File Path (optional)" Variant="Variant.Outlined"
+                                  Placeholder="/uploads/policies/policy.pdf" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_fDescription" Label="Description (optional)" Variant="Variant.Outlined" Lines="2" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudCheckBox @bind-Value="_fRequiresAck" Label="Requires Acknowledgement" Color="Color.Primary" />
+                </MudItem>
+                @if (_editTarget != null)
+                {
+                    <MudItem xs="12" sm="6">
+                        <MudCheckBox @bind-Value="_fIsActive" Label="Active" Color="Color.Primary" />
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _showFormDialog = false">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SavePolicyAsync"
+                   Disabled="_isSaving">
+            @if (_isSaving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _isLoading = true;
+    private List<PolicyDocumentDto> _policies = new();
+    private HashSet<int> _acknowledgedIds = new();
+    private int? _employeeId;
+
+    private MudForm? _form;
+    private bool _formValid;
+    private bool _showFormDialog;
+    private bool _isSaving;
+    private PolicyDocumentDto? _editTarget;
+
+    private string _fTitle = string.Empty;
+    private string _fCategory = "Company Policy";
+    private string _fVersion = "1.0";
+    private DateTime? _fEffectiveDate = DateTime.Today;
+    private string? _fFilePath;
+    private string? _fDescription;
+    private bool _fRequiresAck;
+    private bool _fIsActive = true;
+
+    private readonly List<string> _categories = new()
+    {
+        "Company Policy", "Safety", "HR", "IT", "Finance", "Other"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employeeId = CurrentUser.EmployeeId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _policies = await PolicyService.GetActiveAsync();
+            if (_employeeId.HasValue)
+            {
+                _acknowledgedIds.Clear();
+                foreach (var p in _policies.Where(p => p.RequiresAcknowledgement))
+                {
+                    if (await PolicyService.HasAcknowledgedAsync(p.Id, _employeeId.Value))
+                        _acknowledgedIds.Add(p.Id);
+                }
+            }
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task AcknowledgeAsync(int policyId)
+    {
+        if (_employeeId == null) return;
+        try
+        {
+            await PolicyService.AcknowledgeAsync(policyId, _employeeId.Value);
+            _acknowledgedIds.Add(policyId);
+            Snackbar.Add("Policy acknowledged.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private void OpenCreateDialog()
+    {
+        _editTarget = null;
+        _fTitle = string.Empty;
+        _fCategory = "Company Policy";
+        _fVersion = "1.0";
+        _fEffectiveDate = DateTime.Today;
+        _fFilePath = null;
+        _fDescription = null;
+        _fRequiresAck = false;
+        _fIsActive = true;
+        _showFormDialog = true;
+    }
+
+    private void OpenEditDialog(PolicyDocumentDto doc)
+    {
+        _editTarget = doc;
+        _fTitle = doc.Title;
+        _fCategory = doc.Category;
+        _fVersion = doc.Version;
+        _fEffectiveDate = doc.EffectiveDate;
+        _fFilePath = doc.FilePath;
+        _fDescription = doc.Description;
+        _fRequiresAck = doc.RequiresAcknowledgement;
+        _fIsActive = doc.IsActive;
+        _showFormDialog = true;
+    }
+
+    private async Task SavePolicyAsync()
+    {
+        if (_form != null) await _form.Validate();
+        if (!_formValid) return;
+
+        _isSaving = true;
+        try
+        {
+            if (_editTarget == null)
+                await PolicyService.CreateAsync(_fTitle, _fCategory, _fVersion, _fEffectiveDate ?? DateTime.Today, _fDescription, _fFilePath, _fRequiresAck);
+            else
+                await PolicyService.UpdateAsync(_editTarget.Id, _fTitle, _fCategory, _fVersion, _fEffectiveDate ?? DateTime.Today, _fDescription, _fFilePath, _fRequiresAck, _fIsActive);
+
+            Snackbar.Add(_editTarget == null ? "Policy created." : "Policy updated.", Severity.Success);
+            _showFormDialog = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+}

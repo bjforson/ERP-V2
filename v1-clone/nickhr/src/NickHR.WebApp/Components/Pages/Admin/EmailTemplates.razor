@@ -1,0 +1,147 @@
+@page "/admin/email-templates"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SuperAdminOnly)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Email Templates</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Email Templates</MudText>
+
+<!-- Merge Fields Reference -->
+<MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Icon="@Icons.Material.Filled.Code">
+    <MudText Typo="Typo.body2">
+        <strong>Available Merge Fields:</strong>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{EmployeeName}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{CompanyName}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{LeaveType}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{StartDate}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{EndDate}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{ManagerName}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{Department}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{Position}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{Amount}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{Date}}</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">{{Link}}</MudChip>
+    </MudText>
+</MudAlert>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else
+{
+    <MudCard Elevation="2">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">
+                    Email Templates
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_templates.Count</MudChip>
+                </MudText>
+            </CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@_templates" Dense="true" Hover="true" Striped="true" T="EmailTemplate">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmailTemplate, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
+                    <MudTh>Code</MudTh>
+                    <MudTh>Subject</MudTh>
+                    <MudTh>Active</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Name"><strong>@context.Name</strong></MudTd>
+                    <MudTd DataLabel="Code">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">@context.Code</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Subject">
+                        <MudText Typo="Typo.body2">@(context.Subject.Length > 60 ? context.Subject[..60] + "…" : context.Subject)</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Active">
+                        @if (context.IsActive)
+                        { <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip> }
+                        else
+                        { <MudChip T="string" Size="Size.Small" Color="Color.Default">Inactive</MudChip> }
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning"
+                                       title="Edit Template" OnClick="@(() => OpenEditDialog(context))" />
+                        <MudIconButton Icon="@(context.IsActive ? Icons.Material.Filled.ToggleOff : Icons.Material.Filled.ToggleOn)"
+                                       Size="Size.Small" Color="@(context.IsActive ? Color.Default : Color.Success)"
+                                       title="@(context.IsActive ? "Deactivate" : "Activate")"
+                                       OnClick="@(() => ToggleActive(context))" />
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No email templates found. Templates are loaded via database seeding.
+                    </MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isLoading = true;
+    private List<EmailTemplate> _templates = new();
+
+    protected override async Task OnInitializedAsync() => await LoadTemplates();
+
+    private async Task LoadTemplates()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _templates = await db.EmailTemplates.OrderBy(t => t.Name).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading templates: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenEditDialog(EmailTemplate template)
+    {
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Large, FullWidth = true };
+        var parameters = new DialogParameters<EmailTemplateDialog> { { x => x.Template, template } };
+        var dialog = await DialogService.ShowAsync<EmailTemplateDialog>("Edit Email Template", parameters, options);
+        if (!(await dialog.Result)?.Canceled ?? false) await LoadTemplates();
+    }
+
+    private async Task ToggleActive(EmailTemplate template)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmailTemplates.FindAsync(template.Id);
+            if (entity == null) return;
+            entity.IsActive = !entity.IsActive;
+            await db.SaveChangesAsync();
+            Snackbar.Add($"Template '{template.Name}' {(entity.IsActive ? "activated" : "deactivated")}.", Severity.Success);
+            await LoadTemplates();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+}

@@ -1,0 +1,295 @@
+@page "/employees"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Employees</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Employee Management</MudText>
+
+<!-- Filters -->
+<MudCard Elevation="1" Class="mb-4">
+    <MudCardContent>
+        <MudGrid>
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="_searchTerm" Label="Search name, code, email..." Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                              Clearable="true" Immediate="true" DebounceInterval="300"
+                              OnDebounceIntervalElapsed="@((string v) => { _searchTerm = v; _ = LoadEmployees(); })" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="int?" Value="_selectedDepartment" Label="Department" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true"
+                           ValueChanged="@((int? v) => { _selectedDepartment = v; _ = LoadEmployees(); })">
+                    @foreach (var dept in _departments)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)dept.Id)">@dept.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="EmploymentStatus?" Value="_selectedStatus" Label="Status" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true"
+                           ValueChanged="@((EmploymentStatus? v) => { _selectedStatus = v; _ = LoadEmployees(); })">
+                    @foreach (var status in Enum.GetValues<EmploymentStatus>())
+                    {
+                        <MudSelectItem T="EmploymentStatus?" Value="@((EmploymentStatus?)status)">@status.ToString()</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="EmploymentType?" Value="_selectedType" Label="Type" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true"
+                           ValueChanged="@((EmploymentType? v) => { _selectedType = v; _ = LoadEmployees(); })">
+                    @foreach (var type in Enum.GetValues<EmploymentType>())
+                    {
+                        <MudSelectItem T="EmploymentType?" Value="@((EmploymentType?)type)">@type.ToString()</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2" Class="d-flex align-end">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadEmployees" StartIcon="@Icons.Material.Filled.FilterAlt">
+                    Filter
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+<!-- Employee Table -->
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">Employees (@_totalCount)</MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/employees/create"
+                       StartIcon="@Icons.Material.Filled.PersonAdd" Size="Size.Small">
+                Add Employee
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_employees" Dense="true" Hover="true" Bordered="false" Striped="true"
+                      T="EmployeeRow" OnRowClick="@(args => Navigation.NavigateTo($"/employees/{args.Item.Id}"))">
+                <HeaderContent>
+                    <MudTh>Photo</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeRow, object>(x => x.EmployeeCode)">Code</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeRow, object>(x => x.FullName)">Name</MudTableSortLabel></MudTh>
+                    <MudTh>Email</MudTh>
+                    <MudTh>Department</MudTh>
+                    <MudTh>Designation</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Hire Date</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudAvatar Size="Size.Small" Color="Color.Primary">
+                            @if (context.HasPhoto)
+                            {
+                                <MudImage Src="@($"/employee-photo/{context.Id}")" Style="width:100%;height:100%;object-fit:cover;" />
+                            }
+                            else
+                            {
+                                @context.FullName[..1]
+                            }
+                        </MudAvatar>
+                    </MudTd>
+                    <MudTd DataLabel="Code">
+                        <MudText Typo="Typo.body2" Style="font-weight: 600;">@context.EmployeeCode</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Name">@context.FullName</MudTd>
+                    <MudTd DataLabel="Email">@context.Email</MudTd>
+                    <MudTd DataLabel="Department">@context.Department</MudTd>
+                    <MudTd DataLabel="Designation">@context.Designation</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Hire Date">@(context.HireDate?.ToString("dd MMM yyyy") ?? "N/A")</MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Color="Color.Info"
+                                       OnClick="@(() => Navigation.NavigateTo($"/employees/{context.Id}"))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning"
+                                       OnClick="@(() => Navigation.NavigateTo($"/employees/{context.Id}/edit"))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       OnClick="@(() => DeleteEmployee(context))" />
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 20, 50, 100 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No employees found matching your filters.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<EmployeeRow> _employees = new();
+    private List<DeptItem> _departments = new();
+    private bool _isLoading = true;
+    private int _totalCount = 0;
+    private string? _searchTerm;
+    private int? _selectedDepartment;
+    private EmploymentStatus? _selectedStatus;
+    private EmploymentType? _selectedType;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDepartments();
+        await LoadEmployees();
+    }
+
+    private async Task LoadDepartments()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _departments = await db.Departments
+                .Where(d => !d.IsDeleted && d.IsActive)
+                .OrderBy(d => d.Name)
+                .Select(d => new DeptItem { Id = d.Id, Name = d.Name })
+                .ToListAsync();
+        }
+        catch { }
+    }
+
+    private async Task LoadEmployees()
+    {
+        _isLoading = true;
+        StateHasChanged();
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var query = db.Employees
+                .Include(e => e.Department)
+                .Include(e => e.Designation)
+                .Where(e => !e.IsDeleted);
+
+            if (!string.IsNullOrWhiteSpace(_searchTerm))
+            {
+                var term = _searchTerm.ToLower();
+                query = query.Where(e =>
+                    e.FirstName.ToLower().Contains(term) ||
+                    e.LastName.ToLower().Contains(term) ||
+                    e.EmployeeCode.ToLower().Contains(term) ||
+                    (e.WorkEmail != null && e.WorkEmail.ToLower().Contains(term)));
+            }
+
+            if (_selectedDepartment.HasValue)
+                query = query.Where(e => e.DepartmentId == _selectedDepartment.Value);
+
+            if (_selectedStatus.HasValue)
+                query = query.Where(e => e.EmploymentStatus == _selectedStatus.Value);
+
+            if (_selectedType.HasValue)
+                query = query.Where(e => e.EmploymentType == _selectedType.Value);
+
+            _totalCount = await query.CountAsync();
+
+            _employees = await query
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmployeeRow
+                {
+                    Id = e.Id,
+                    EmployeeCode = e.EmployeeCode,
+                    FullName = e.FirstName + " " + e.LastName,
+                    Email = e.WorkEmail,
+                    Department = e.Department != null ? e.Department.Name : null,
+                    Designation = e.Designation != null ? e.Designation.Title : null,
+                    Status = e.EmploymentStatus,
+                    HireDate = e.HireDate,
+                    HasPhoto = e.PhotoData != null
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading employees: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteEmployee(EmployeeRow employee)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Confirm Delete",
+            $"Are you sure you want to delete {employee.FullName}?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (result == true)
+        {
+            try
+            {
+                using var scope = ServiceProvider.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+                var entity = await db.Employees.FindAsync(employee.Id);
+                if (entity != null)
+                {
+                    entity.IsDeleted = true;
+                    entity.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync();
+                    Snackbar.Add("Employee deleted", Severity.Success);
+                    await LoadEmployees();
+                }
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            }
+        }
+    }
+
+    private Color GetStatusColor(EmploymentStatus status) => status switch
+    {
+        EmploymentStatus.Active => Color.Success,
+        EmploymentStatus.OnProbation => Color.Info,
+        EmploymentStatus.Confirmed => Color.Success,
+        EmploymentStatus.Suspended => Color.Warning,
+        EmploymentStatus.Terminated => Color.Error,
+        EmploymentStatus.Resigned => Color.Default,
+        EmploymentStatus.Retired => Color.Default,
+        _ => Color.Default
+    };
+
+    private class EmployeeRow
+    {
+        public int Id { get; set; }
+        public string EmployeeCode { get; set; } = "";
+        public string FullName { get; set; } = "";
+        public string? Email { get; set; }
+        public string? Department { get; set; }
+        public string? Designation { get; set; }
+        public EmploymentStatus Status { get; set; }
+        public DateTime? HireDate { get; set; }
+        public bool HasPhoto { get; set; }
+    }
+
+    private class DeptItem { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

@@ -1,0 +1,164 @@
+@page "/travel/request"
+@page "/travel/my-requests"
+@page "/travel/approvals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Services.Travel
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Travel Requests</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Flight" Class="mr-2" />
+    @(_isApprovals ? "Travel Approvals" : _isNewRequest ? "New Travel Request" : "My Travel Requests")
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_isNewRequest)
+{
+    <MudCard Elevation="2">
+        <MudCardContent>
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_newRequest.Destination" Label="Destination" Required="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_newRequest.Purpose" Label="Purpose" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudDatePicker Label="Departure" @bind-Date="_departureDate" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudDatePicker Label="Return" @bind-Date="_returnDate" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudNumericField T="decimal" @bind-Value="_newRequest.EstimatedCost" Label="Estimated Cost (GHS)" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudNumericField T="decimal" @bind-Value="_newRequest.AdvanceRequested" Label="Advance Requested (GHS)" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitRequest">Submit Request</MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudCardContent>
+    </MudCard>
+}
+else
+{
+    <MudCard Elevation="2">
+        <MudCardContent>
+            <MudTable Items="_requests" Dense="true" Hover="true" Loading="_loading">
+                <HeaderContent>
+                    <MudTh>@(_isApprovals ? "Employee" : "Destination")</MudTh>
+                    @if (_isApprovals) { <MudTh>Destination</MudTh> }
+                    <MudTh>Purpose</MudTh><MudTh>Dates</MudTh><MudTh>Est. Cost</MudTh><MudTh>Status</MudTh>
+                    @if (_isApprovals) { <MudTh>Actions</MudTh> }
+                </HeaderContent>
+                <RowTemplate>
+                    @if (_isApprovals)
+                    {
+                        <MudTd>@context.Employee?.FirstName @context.Employee?.LastName</MudTd>
+                    }
+                    <MudTd>@context.Destination</MudTd>
+                    <MudTd>@context.Purpose</MudTd>
+                    <MudTd>@context.DepartureDate.ToString("dd MMM") - @context.ReturnDate.ToString("dd MMM")</MudTd>
+                    <MudTd>GHS @context.EstimatedCost.ToString("N2")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small"
+                            Color="@(context.Status == TravelRequestStatus.Approved ? Color.Success : context.Status == TravelRequestStatus.Rejected ? Color.Error : Color.Warning)">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    @if (_isApprovals)
+                    {
+                        <MudTd>
+                            @if (context.Status == TravelRequestStatus.Pending)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                           OnClick="@(() => Approve(context.Id))">Approve</MudButton>
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" Class="ml-1"
+                                           OnClick="@(() => Reject(context.Id))">Reject</MudButton>
+                            }
+                        </MudTd>
+                    }
+                </RowTemplate>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private List<TravelRequest> _requests = new();
+    private TravelRequest _newRequest = new();
+    private DateTime? _departureDate, _returnDate;
+    private bool _loading = true, _isNewRequest, _isApprovals;
+    private int _currentEmployeeId;
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Travel", null, true) };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = NavigationManager.Uri;
+        _isNewRequest = uri.Contains("/travel/request");
+        _isApprovals = uri.Contains("/travel/approvals");
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var username = authState.User?.Identity?.Name;
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == username || e.PersonalEmail == username);
+        _currentEmployeeId = emp?.Id ?? 0;
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<TravelService>();
+        _requests = _isApprovals
+            ? await svc.GetPendingApprovalsAsync()
+            : await svc.GetMyRequestsAsync(_currentEmployeeId);
+        _loading = false;
+    }
+
+    private async Task SubmitRequest()
+    {
+        _newRequest.EmployeeId = _currentEmployeeId;
+        _newRequest.DepartureDate = _departureDate ?? DateTime.Today;
+        _newRequest.ReturnDate = _returnDate ?? DateTime.Today.AddDays(1);
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<TravelService>();
+        await svc.CreateAsync(_newRequest);
+        Snackbar.Add("Travel request submitted", Severity.Success);
+        NavigationManager.NavigateTo("/travel/my-requests");
+    }
+
+    private async Task Approve(int id)
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<TravelService>();
+        await svc.ApproveAsync(id, _currentEmployeeId);
+        Snackbar.Add("Approved", Severity.Success);
+        await LoadData();
+    }
+
+    private async Task Reject(int id)
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<TravelService>();
+        await svc.RejectAsync(id, _currentEmployeeId);
+        Snackbar.Add("Rejected", Severity.Info);
+        await LoadData();
+    }
+}

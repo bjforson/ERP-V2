@@ -1,0 +1,512 @@
+@page "/meetings/one-on-one"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using System.Text.Json
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — 1-on-1 Meetings</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.PeopleAlt" Class="mr-2" />1-on-1 Meetings
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <!-- My Meetings tab (as employee) -->
+    <MudTabPanel Text="My Meetings" Icon="@Icons.Material.Filled.Person">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
+            <MudText Typo="Typo.h6">My 1-on-1 Meetings</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.AddCircle"
+                       OnClick="() => OpenScheduleDialog(false)">
+                Request Meeting
+            </MudButton>
+        </MudStack>
+
+        <MudTable Items="_myMeetings" Dense="false" Hover="true" Breakpoint="Breakpoint.Md"
+                  Elevation="0" Loading="_loading">
+            <HeaderContent>
+                <MudTh>With (Manager)</MudTh>
+                <MudTh>Scheduled Date</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Notes Preview</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="With">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudAvatar Size="Size.Small" Color="Color.Primary">
+                            @context.Manager.FirstName[0]@context.Manager.LastName[0]
+                        </MudAvatar>
+                        <MudText>@context.Manager.FirstName @context.Manager.LastName</MudText>
+                    </MudStack>
+                </MudTd>
+                <MudTd DataLabel="Scheduled Date">
+                    <MudText Color="@(context.ScheduledDate > DateTime.UtcNow ? Color.Success : Color.Default)">
+                        @context.ScheduledDate.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                    </MudText>
+                    @if (context.ScheduledDate > DateTime.UtcNow && context.Status == MeetingStatus.Scheduled)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Class="ml-1">Upcoming</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small" Color="@GetMeetingStatusColor(context.Status)">@context.Status</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Notes">
+                    @if (!string.IsNullOrWhiteSpace(context.Notes))
+                    {
+                        <MudText Typo="Typo.caption">@TruncateText(context.Notes, 60)</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Actions">
+                    <MudIconButton Icon="@Icons.Material.Filled.Visibility" Size="Size.Small"
+                                   Title="View Details" OnClick="() => OpenViewDialog(context)" />
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText>No meetings found.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudTabPanel>
+
+    <!-- Team Meetings tab (as manager - only shown if has subordinates) -->
+    @if (_hasSubordinates)
+    {
+        <MudTabPanel Text="Team Meetings" Icon="@Icons.Material.Filled.Groups">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
+                <MudText Typo="Typo.h6">Team 1-on-1 Meetings</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.AddCircle"
+                           OnClick="() => OpenScheduleDialog(true)">
+                    Schedule Meeting
+                </MudButton>
+            </MudStack>
+
+            <MudTable Items="_teamMeetings" Dense="false" Hover="true" Breakpoint="Breakpoint.Md"
+                      Elevation="0" Loading="_loading">
+                <HeaderContent>
+                    <MudTh>With (Employee)</MudTh>
+                    <MudTh>Scheduled Date</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Notes Preview</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="With">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                            <MudAvatar Size="Size.Small" Color="Color.Secondary">
+                                @context.Employee.FirstName[0]@context.Employee.LastName[0]
+                            </MudAvatar>
+                            <MudText>@context.Employee.FirstName @context.Employee.LastName</MudText>
+                        </MudStack>
+                    </MudTd>
+                    <MudTd DataLabel="Scheduled Date">
+                        <MudText Color="@(context.ScheduledDate > DateTime.UtcNow ? Color.Success : Color.Default)">
+                            @context.ScheduledDate.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                        </MudText>
+                        @if (context.ScheduledDate > DateTime.UtcNow && context.Status == MeetingStatus.Scheduled)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Class="ml-1">Upcoming</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetMeetingStatusColor(context.Status)">@context.Status</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Notes">
+                        @if (!string.IsNullOrWhiteSpace(context.Notes))
+                        {
+                            <MudText Typo="Typo.caption">@TruncateText(context.Notes, 60)</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Actions">
+                        @if (context.Status == MeetingStatus.Scheduled)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.Edit"
+                                       OnClick="() => OpenRecordNotesDialog(context)">
+                                Record Notes
+                            </MudButton>
+                        }
+                        else
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Visibility" Size="Size.Small"
+                                           Title="View Details" OnClick="() => OpenViewDialog(context)" />
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText>No team meetings found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </MudTabPanel>
+    }
+</MudTabs>
+
+<!-- Schedule Meeting Dialog -->
+<MudDialog @bind-IsVisible="_scheduleDialogOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Event" Class="mr-2" />Schedule 1-on-1 Meeting
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudSelect T="int?" @bind-Value="_scheduleForm.OtherEmployeeId" Label="@(_isManagerScheduling ? "Employee" : "Manager")"
+                       Variant="Variant.Outlined" Required="true" AnchorOrigin="Origin.BottomLeft">
+                @foreach (var emp in (_isManagerScheduling ? _subordinates : _managers))
+                {
+                    <MudSelectItem T="int?" Value="@((int?)emp.Id)">@emp.FirstName @emp.LastName</MudSelectItem>
+                }
+            </MudSelect>
+            <MudDatePicker @bind-Date="_scheduleForm.Date" Label="Date" Variant="Variant.Outlined"
+                           Required="true" MinDate="DateTime.Today" DateFormat="dd/MM/yyyy" />
+            <MudTimePicker @bind-Time="_scheduleForm.Time" Label="Time" Variant="Variant.Outlined"
+                           Required="true" AmPm="false" />
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _scheduleDialogOpen = false">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ScheduleMeetingAsync"
+                   Disabled="_submitting || _scheduleForm.OtherEmployeeId == null || _scheduleForm.Date == null">
+            @if (_submitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Schedule
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Record Notes Dialog -->
+<MudDialog @bind-IsVisible="_notesDialogOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.NoteAlt" Class="mr-2" />Record Meeting Notes
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_selectedMeeting != null)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+                Meeting with @_selectedMeeting.Employee.FirstName @_selectedMeeting.Employee.LastName
+                on @_selectedMeeting.ScheduledDate.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+            </MudText>
+            <MudStack Spacing="3">
+                <MudTextField @bind-Value="_notesForm.Notes" Label="Meeting Notes"
+                              Variant="Variant.Outlined" Lines="4" MaxLength="2000" />
+                <MudTextField @bind-Value="_notesForm.ActionItemsText" Label="Action Items (one per line)"
+                              Variant="Variant.Outlined" Lines="3"
+                              HelperText="Enter each action item on a new line" />
+                <MudDatePicker @bind-Date="_notesForm.NextMeetingDate" Label="Next Meeting Date (optional)"
+                               Variant="Variant.Outlined" MinDate="DateTime.Today" DateFormat="dd/MM/yyyy" />
+                <MudSwitch @bind-Value="_notesForm.MarkComplete" Label="Mark as Complete" Color="Color.Success" />
+            </MudStack>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _notesDialogOpen = false">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveNotesAsync"
+                   Disabled="_submitting">
+            @if (_submitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Save Notes
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- View Meeting Dialog -->
+<MudDialog @bind-IsVisible="_viewDialogOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Meeting Details</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_selectedMeeting != null)
+        {
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.body2"><strong>Manager:</strong> @_selectedMeeting.Manager.FirstName @_selectedMeeting.Manager.LastName</MudText>
+                <MudText Typo="Typo.body2"><strong>Employee:</strong> @_selectedMeeting.Employee.FirstName @_selectedMeeting.Employee.LastName</MudText>
+                <MudText Typo="Typo.body2"><strong>Scheduled:</strong> @_selectedMeeting.ScheduledDate.ToLocalTime().ToString("dd MMM yyyy HH:mm")</MudText>
+                <MudText Typo="Typo.body2"><strong>Status:</strong> @_selectedMeeting.Status</MudText>
+                @if (_selectedMeeting.CompletedDate.HasValue)
+                {
+                    <MudText Typo="Typo.body2"><strong>Completed:</strong> @_selectedMeeting.CompletedDate.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm")</MudText>
+                }
+                @if (!string.IsNullOrWhiteSpace(_selectedMeeting.Notes))
+                {
+                    <MudDivider />
+                    <MudText Typo="Typo.subtitle2">Notes:</MudText>
+                    <MudText Typo="Typo.body2">@_selectedMeeting.Notes</MudText>
+                }
+                @if (!string.IsNullOrWhiteSpace(_selectedMeeting.ActionItems))
+                {
+                    <MudText Typo="Typo.subtitle2">Action Items:</MudText>
+                    @foreach (var item in ParseActionItems(_selectedMeeting.ActionItems))
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckBoxOutlineBlank" Size="Size.Small" />
+                            <MudText Typo="Typo.body2">@item</MudText>
+                        </MudStack>
+                    }
+                }
+                @if (_selectedMeeting.NextMeetingDate.HasValue)
+                {
+                    <MudText Typo="Typo.body2"><strong>Next Meeting:</strong> @_selectedMeeting.NextMeetingDate.Value.ToLocalTime().ToString("dd MMM yyyy")</MudText>
+                }
+            </MudStack>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _viewDialogOpen = false">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private bool _submitting = false;
+    private bool _hasSubordinates = false;
+    private bool _isManagerScheduling = false;
+    private bool _scheduleDialogOpen = false;
+    private bool _notesDialogOpen = false;
+    private bool _viewDialogOpen = false;
+    private int _currentEmployeeId = 0;
+
+    private List<OneOnOneMeeting> _myMeetings = new();
+    private List<OneOnOneMeeting> _teamMeetings = new();
+    private List<Employee> _subordinates = new();
+    private List<Employee> _managers = new();
+    private OneOnOneMeeting? _selectedMeeting;
+
+    private ScheduleFormModel _scheduleForm = new();
+    private NotesFormModel _notesForm = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Meetings", href: null, disabled: true),
+        new BreadcrumbItem("1-on-1", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userName = authState.User.Identity?.Name;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var emp = await db.Employees
+            .Include(e => e.Subordinates)
+            .FirstOrDefaultAsync(e => e.WorkEmail == userName && !e.IsDeleted);
+
+        _currentEmployeeId = emp?.Id ?? 0;
+        _hasSubordinates = emp?.Subordinates.Any(s => s.EmploymentStatus != EmploymentStatus.Terminated && s.EmploymentStatus != EmploymentStatus.Resigned && !s.IsDeleted) == true;
+
+        await LoadDataAsync(db);
+    }
+
+    private async Task LoadDataAsync(NickHRDbContext db)
+    {
+        _loading = true;
+        try
+        {
+            _myMeetings = await db.OneOnOneMeetings
+                .Include(m => m.Manager)
+                .Include(m => m.Employee)
+                .Where(m => !m.IsDeleted && m.EmployeeId == _currentEmployeeId)
+                .OrderByDescending(m => m.ScheduledDate)
+                .ToListAsync();
+
+            if (_hasSubordinates)
+            {
+                _teamMeetings = await db.OneOnOneMeetings
+                    .Include(m => m.Manager)
+                    .Include(m => m.Employee)
+                    .Where(m => !m.IsDeleted && m.ManagerId == _currentEmployeeId)
+                    .OrderByDescending(m => m.ScheduledDate)
+                    .ToListAsync();
+            }
+
+            _subordinates = await db.Employees
+                .Where(e => e.ReportingManagerId == _currentEmployeeId && e.EmploymentStatus != EmploymentStatus.Terminated && e.EmploymentStatus != EmploymentStatus.Resigned && !e.IsDeleted)
+                .OrderBy(e => e.FirstName)
+                .ToListAsync();
+
+            // Potential managers (employees who have this employee as subordinate OR HR/Manager roles)
+            if (_currentEmployeeId > 0)
+            {
+                var currentEmp = await db.Employees.FindAsync(_currentEmployeeId);
+                if (currentEmp?.ReportingManagerId != null)
+                {
+                    var mgr = await db.Employees.FindAsync(currentEmp.ReportingManagerId);
+                    if (mgr != null) _managers = new List<Employee> { mgr };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading meetings: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OpenScheduleDialog(bool asManager)
+    {
+        _isManagerScheduling = asManager;
+        _scheduleForm = new ScheduleFormModel();
+        _scheduleDialogOpen = true;
+    }
+
+    private void OpenRecordNotesDialog(OneOnOneMeeting meeting)
+    {
+        _selectedMeeting = meeting;
+        _notesForm = new NotesFormModel
+        {
+            Notes = meeting.Notes ?? string.Empty,
+            ActionItemsText = meeting.ActionItems != null
+                ? string.Join("\n", ParseActionItems(meeting.ActionItems))
+                : string.Empty,
+            NextMeetingDate = meeting.NextMeetingDate?.ToLocalTime().Date
+        };
+        _notesDialogOpen = true;
+    }
+
+    private void OpenViewDialog(OneOnOneMeeting meeting)
+    {
+        _selectedMeeting = meeting;
+        _viewDialogOpen = true;
+    }
+
+    private async Task ScheduleMeetingAsync()
+    {
+        if (_scheduleForm.OtherEmployeeId == null || _scheduleForm.Date == null) return;
+
+        _submitting = true;
+        try
+        {
+            var scheduledDate = _scheduleForm.Date.Value.Date;
+            if (_scheduleForm.Time.HasValue)
+                scheduledDate = scheduledDate.Add(_scheduleForm.Time.Value);
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var meeting = new OneOnOneMeeting
+            {
+                ManagerId = _isManagerScheduling ? _currentEmployeeId : _scheduleForm.OtherEmployeeId.Value,
+                EmployeeId = _isManagerScheduling ? _scheduleForm.OtherEmployeeId.Value : _currentEmployeeId,
+                ScheduledDate = DateTime.SpecifyKind(scheduledDate, DateTimeKind.Local).ToUniversalTime(),
+                Status = MeetingStatus.Scheduled,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.OneOnOneMeetings.Add(meeting);
+            await db.SaveChangesAsync();
+
+            _scheduleDialogOpen = false;
+            Snackbar.Add("Meeting scheduled successfully!", Severity.Success);
+            await LoadDataAsync(db);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error scheduling meeting: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task SaveNotesAsync()
+    {
+        if (_selectedMeeting == null) return;
+        _submitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var meeting = await db.OneOnOneMeetings.FindAsync(_selectedMeeting.Id);
+            if (meeting == null) return;
+
+            meeting.Notes = _notesForm.Notes?.Trim();
+
+            var actionItems = (_notesForm.ActionItemsText ?? string.Empty)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList();
+            meeting.ActionItems = actionItems.Any() ? JsonSerializer.Serialize(actionItems) : null;
+
+            meeting.NextMeetingDate = _notesForm.NextMeetingDate.HasValue
+                ? DateTime.SpecifyKind(_notesForm.NextMeetingDate.Value, DateTimeKind.Local).ToUniversalTime()
+                : null;
+
+            if (_notesForm.MarkComplete)
+            {
+                meeting.Status = MeetingStatus.Completed;
+                meeting.CompletedDate = DateTime.UtcNow;
+            }
+
+            meeting.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            _notesDialogOpen = false;
+            Snackbar.Add("Notes saved successfully!", Severity.Success);
+            await LoadDataAsync(db);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving notes: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private static List<string> ParseActionItems(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new();
+        try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
+        catch { return new(); }
+    }
+
+    private static Color GetMeetingStatusColor(MeetingStatus status) => status switch
+    {
+        MeetingStatus.Scheduled => Color.Info,
+        MeetingStatus.Completed => Color.Success,
+        MeetingStatus.Cancelled => Color.Error,
+        MeetingStatus.Rescheduled => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static string TruncateText(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "…";
+
+    private class ScheduleFormModel
+    {
+        public int? OtherEmployeeId { get; set; }
+        public DateTime? Date { get; set; } = DateTime.Today.AddDays(1);
+        public TimeSpan? Time { get; set; } = new TimeSpan(9, 0, 0);
+    }
+
+    private class NotesFormModel
+    {
+        public string Notes { get; set; } = string.Empty;
+        public string ActionItemsText { get; set; } = string.Empty;
+        public DateTime? NextMeetingDate { get; set; }
+        public bool MarkComplete { get; set; } = true;
+    }
+}

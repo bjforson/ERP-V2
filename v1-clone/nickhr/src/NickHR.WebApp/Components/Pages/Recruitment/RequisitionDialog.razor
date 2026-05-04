@@ -1,0 +1,298 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.Edit : Icons.Material.Filled.Add)" Class="mr-2" />
+            @(IsEdit ? "Edit Job Requisition" : "Create Job Requisition")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Title"
+                                  Label="Job Title *"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Title is required"
+                                  MaxLength="300"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" @bind-Value="_model.DepartmentId"
+                               Label="Department *"
+                               Variant="Variant.Outlined"
+                               Required="true"
+                               RequiredError="Department is required">
+                        @foreach (var d in _departments)
+                        {
+                            <MudSelectItem T="int" Value="@d.Id">@d.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int?" @bind-Value="_model.DesignationId"
+                               Label="Designation"
+                               Variant="Variant.Outlined"
+                               Clearable="true">
+                        @foreach (var d in _designations)
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)d.Id)">@d.Title</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int?" @bind-Value="_model.GradeId"
+                               Label="Grade"
+                               Variant="Variant.Outlined"
+                               Clearable="true">
+                        @foreach (var g in _grades)
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)g.Id)">@g.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudNumericField @bind-Value="_model.NumberOfPositions"
+                                     Label="Number of Positions *"
+                                     Variant="Variant.Outlined"
+                                     Min="1"
+                                     Required="true"
+                                     RequiredError="Number of positions is required" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudNumericField T="decimal?" @bind-Value="_model.SalaryRangeMin"
+                                     Label="Salary Range Min (GH₵)"
+                                     Variant="Variant.Outlined"
+                                     Format="N2"
+                                     Min="0" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudNumericField T="decimal?" @bind-Value="_model.SalaryRangeMax"
+                                     Label="Salary Range Max (GH₵)"
+                                     Variant="Variant.Outlined"
+                                     Format="N2"
+                                     Min="0" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Description"
+                                  Label="Description"
+                                  Variant="Variant.Outlined"
+                                  Lines="4"
+                                  MaxLength="5000" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Requirements"
+                                  Label="Requirements"
+                                  Variant="Variant.Outlined"
+                                  Lines="4"
+                                  MaxLength="5000" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Create")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public int? RequisitionId { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private bool IsEdit => RequisitionId.HasValue;
+
+    private RequisitionFormModel _model = new();
+    private List<DeptOption> _departments = new();
+    private List<DesigOption> _designations = new();
+    private List<GradeOption> _grades = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDropdowns();
+        if (IsEdit)
+        {
+            await LoadRequisition();
+        }
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadDropdowns()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _departments = await db.Departments
+                .Where(d => d.IsActive)
+                .OrderBy(d => d.Name)
+                .Select(d => new DeptOption { Id = d.Id, Name = d.Name })
+                .ToListAsync();
+
+            _designations = await db.Designations
+                .Where(d => d.IsActive)
+                .OrderBy(d => d.Title)
+                .Select(d => new DesigOption { Id = d.Id, Title = d.Title })
+                .ToListAsync();
+
+            _grades = await db.Grades
+                .OrderBy(g => g.Name)
+                .Select(g => new GradeOption { Id = g.Id, Name = g.Name })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading data: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task LoadRequisition()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.JobRequisitions.FindAsync(RequisitionId!.Value);
+            if (entity == null) return;
+            _model = new RequisitionFormModel
+            {
+                Title = entity.Title,
+                DepartmentId = entity.DepartmentId,
+                DesignationId = entity.DesignationId,
+                GradeId = entity.GradeId,
+                NumberOfPositions = entity.NumberOfPositions,
+                SalaryRangeMin = entity.SalaryRangeMin,
+                SalaryRangeMax = entity.SalaryRangeMax,
+                Description = entity.Description,
+                Requirements = entity.Requirements
+            };
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading requisition: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (IsEdit)
+            {
+                var entity = await db.JobRequisitions.FindAsync(RequisitionId!.Value);
+                if (entity == null) { Snackbar.Add("Not found.", Severity.Error); return; }
+                entity.Title = _model.Title;
+                entity.DepartmentId = _model.DepartmentId;
+                entity.DesignationId = _model.DesignationId;
+                entity.GradeId = _model.GradeId;
+                entity.NumberOfPositions = _model.NumberOfPositions;
+                entity.SalaryRangeMin = _model.SalaryRangeMin;
+                entity.SalaryRangeMax = _model.SalaryRangeMax;
+                entity.Description = _model.Description;
+                entity.Requirements = _model.Requirements;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Requisition updated.", Severity.Success);
+            }
+            else
+            {
+                var requestedById = await GetCurrentEmployeeIdAsync();
+                if (requestedById == null)
+                {
+                    Snackbar.Add("Your account is not linked to an employee record. Contact HR.", Severity.Warning);
+                    return;
+                }
+                var entity = new JobRequisition
+                {
+                    Title = _model.Title,
+                    DepartmentId = _model.DepartmentId,
+                    DesignationId = _model.DesignationId,
+                    GradeId = _model.GradeId,
+                    NumberOfPositions = _model.NumberOfPositions,
+                    SalaryRangeMin = _model.SalaryRangeMin,
+                    SalaryRangeMax = _model.SalaryRangeMax,
+                    Description = _model.Description,
+                    Requirements = _model.Requirements,
+                    Status = JobRequisitionStatus.Draft,
+                    RequestedById = requestedById.Value
+                };
+                db.JobRequisitions.Add(entity);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Requisition created.", Severity.Success);
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class RequisitionFormModel
+    {
+        public string Title { get; set; } = string.Empty;
+        public int DepartmentId { get; set; }
+        public int? DesignationId { get; set; }
+        public int? GradeId { get; set; }
+        public int NumberOfPositions { get; set; } = 1;
+        public decimal? SalaryRangeMin { get; set; }
+        public decimal? SalaryRangeMax { get; set; }
+        public string? Description { get; set; }
+        public string? Requirements { get; set; }
+    }
+
+    private class DeptOption { public int Id { get; set; } public string Name { get; set; } = string.Empty; }
+    private class DesigOption { public int Id { get; set; } public string Title { get; set; } = string.Empty; }
+    private class GradeOption { public int Id { get; set; } public string Name { get; set; } = string.Empty; }
+}

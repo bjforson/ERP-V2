@@ -1,0 +1,499 @@
+@page "/recognition"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Recognition Wall</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.EmojiEvents" Class="mr-2" />Recognition Wall
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <!-- Main feed -->
+    <MudItem xs="12" md="8">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.Favorite" Class="mr-1" Style="color:#e91e63" />Recent Recognitions
+                    </MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Stars"
+                               OnClick="OpenSendKudosDialog">
+                        Send Kudos
+                    </MudButton>
+                </CardHeaderActions>
+            </MudCardHeader>
+        </MudCard>
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+        }
+
+        @foreach (var rec in _recognitions)
+        {
+            <MudCard Elevation="1" Class="mb-3">
+                <MudCardContent>
+                    <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
+                        <MudAvatar Color="Color.Primary" Size="Size.Medium">
+                            @rec.SenderEmployee.FirstName[0]@rec.SenderEmployee.LastName[0]
+                        </MudAvatar>
+                        <MudStack Spacing="1" Style="flex:1">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                <MudText Typo="Typo.subtitle2">@rec.SenderEmployee.FirstName @rec.SenderEmployee.LastName</MudText>
+                                <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" Color="Color.Secondary" />
+                                <MudAvatar Color="Color.Secondary" Size="Size.Small">
+                                    @rec.RecipientEmployee.FirstName[0]@rec.RecipientEmployee.LastName[0]
+                                </MudAvatar>
+                                <MudText Typo="Typo.subtitle2" Color="Color.Secondary">@rec.RecipientEmployee.FirstName @rec.RecipientEmployee.LastName</MudText>
+                                <MudSpacer />
+                                <MudChip T="string" Size="Size.Small" Color="@GetCategoryColor(rec.Category)" Label="true">
+                                    @rec.Category
+                                </MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Label="true"
+                                         Icon="@Icons.Material.Filled.Star">
+                                    @rec.Points pts
+                                </MudChip>
+                            </MudStack>
+                            <MudText Typo="Typo.body2">@rec.Message</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@GetTimeAgo(rec.CreatedAt)</MudText>
+                        </MudStack>
+                    </MudStack>
+                </MudCardContent>
+            </MudCard>
+        }
+
+        @if (!_loading && !_recognitions.Any())
+        {
+            <MudPaper Class="pa-6 text-center" Elevation="0">
+                <MudIcon Icon="@Icons.Material.Filled.EmojiEvents" Size="Size.Large" Color="Color.Secondary" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-2">No recognitions yet. Be the first to send kudos!</MudText>
+            </MudPaper>
+        }
+
+        @if (_totalCount > _pageSize)
+        {
+            <MudPagination Count="@((_totalCount + _pageSize - 1) / _pageSize)"
+                           Selected="_currentPage"
+                           SelectedChanged="OnPageChanged"
+                           Class="d-flex justify-center mt-4" />
+        }
+    </MudItem>
+
+    <!-- Sidebar -->
+    <MudItem xs="12" md="4">
+        <!-- Employee of Month -->
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.EmojiEvents" Class="mr-1" Style="color:#FFD700" />Employee of the Month
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (_employeeOfMonth != null)
+                {
+                    <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                        <MudAvatar Color="Color.Warning" Size="Size.Large" Style="width:72px;height:72px;font-size:1.5rem">
+                            @_employeeOfMonth.Employee.FirstName[0]@_employeeOfMonth.Employee.LastName[0]
+                        </MudAvatar>
+                        <MudText Typo="Typo.h6">@_employeeOfMonth.Employee.FirstName @_employeeOfMonth.Employee.LastName</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@(_employeeOfMonth.Employee.Department?.Name ?? "N/A")</MudText>
+                        <MudChip T="string" Color="Color.Warning" Icon="@Icons.Material.Filled.Star">@_employeeOfMonth.Votes Votes</MudChip>
+                    </MudStack>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">No winner selected yet this month.</MudText>
+                }
+                <MudDivider Class="my-3" />
+                <MudButton FullWidth="true" Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.HowToVote"
+                           OnClick="OpenNominateDialog">
+                    Nominate for Next Month
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+
+        <!-- Leaderboard -->
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.Leaderboard" Class="mr-1" />Top This Month
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent Class="pa-2">
+                @for (int i = 0; i < _leaderboard.Count; i++)
+                {
+                    var entry = _leaderboard[i];
+                    var rank = i + 1;
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                        <MudText Typo="Typo.body2" Style="@($"width:20px;font-weight:bold;color:{GetRankColor(rank)}")">@rank</MudText>
+                        <MudAvatar Size="Size.Small" Color="Color.Primary">
+                            @entry.FirstName[0]@entry.LastName[0]
+                        </MudAvatar>
+                        <MudStack Spacing="0" Style="flex:1">
+                            <MudText Typo="Typo.body2">@entry.FirstName @entry.LastName</MudText>
+                            <MudProgressLinear Value="@GetProgressValue(entry.TotalPoints)"
+                                              Color="Color.Primary" Size="Size.Small" Rounded="true" />
+                        </MudStack>
+                        <MudText Typo="Typo.caption" Color="Color.Warning" Style="font-weight:bold">@entry.TotalPoints</MudText>
+                    </MudStack>
+                }
+                @if (!_leaderboard.Any())
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">No data yet this month.</MudText>
+                }
+                <MudButton Href="/recognition/leaderboard" FullWidth="true" Variant="Variant.Text" Color="Color.Primary" Class="mt-2">
+                    View Full Leaderboard
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+<!-- Send Kudos Dialog -->
+<MudDialog @bind-IsVisible="_kudosDialogOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Stars" Class="mr-2" />Send Kudos
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudSelect T="int?" @bind-Value="_kudosForm.RecipientId" Label="Recipient" Variant="Variant.Outlined"
+                       Required="true" AnchorOrigin="Origin.BottomLeft">
+                @foreach (var emp in _employees.Where(e => e.Id != _currentEmployeeId))
+                {
+                    <MudSelectItem T="int?" Value="@((int?)emp.Id)">@emp.FirstName @emp.LastName (@(emp.Department?.Name ?? "N/A"))</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="RecognitionCategory" @bind-Value="_kudosForm.Category" Label="Category" Variant="Variant.Outlined">
+                @foreach (RecognitionCategory cat in Enum.GetValues<RecognitionCategory>())
+                {
+                    <MudSelectItem Value="@cat">@cat</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField @bind-Value="_kudosForm.Message" Label="Message" Variant="Variant.Outlined"
+                          Lines="3" MaxLength="500" Required="true"
+                          HelperText="@($"{_kudosForm.Message?.Length ?? 0}/500")" />
+            <MudStack>
+                <MudText Typo="Typo.body2">Points: <strong>@_kudosForm.Points</strong></MudText>
+                <MudSlider @bind-Value="_kudosForm.Points" Min="5" Max="50" Step="5" Color="Color.Warning" />
+            </MudStack>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _kudosDialogOpen = false">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitKudosAsync"
+                   Disabled="_submitting">
+            @if (_submitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Send Kudos
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Nominate Dialog -->
+<MudDialog @bind-IsVisible="_nominateDialogOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.HowToVote" Class="mr-2" />Nominate Employee of Month
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Nominating for @(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).ToString("MMMM yyyy"))
+        </MudText>
+        <MudSelect T="int?" @bind-Value="_nomineeId" Label="Nominee" Variant="Variant.Outlined"
+                   Required="true" AnchorOrigin="Origin.BottomLeft">
+            @foreach (var emp in _employees.Where(e => e.Id != _currentEmployeeId))
+            {
+                <MudSelectItem T="int?" Value="@((int?)emp.Id)">@emp.FirstName @emp.LastName</MudSelectItem>
+            }
+        </MudSelect>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _nominateDialogOpen = false">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitNominationAsync"
+                   Disabled="_submitting || _nomineeId == null">
+            Nominate
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _loading = true;
+    private bool _submitting = false;
+    private bool _kudosDialogOpen = false;
+    private bool _nominateDialogOpen = false;
+    private int _currentPage = 1;
+    private int _pageSize = 10;
+    private int _totalCount = 0;
+    private int _currentEmployeeId = 0;
+    private int? _nomineeId;
+
+    private List<Recognition> _recognitions = new();
+    private List<LeaderboardEntry> _leaderboard = new();
+    private EmployeeOfMonth? _employeeOfMonth;
+    private List<Employee> _employees = new();
+    private int _maxPoints = 1;
+
+    private KudosFormModel _kudosForm = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Recognition Wall", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userName = authState.User.Identity?.Name;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == userName && !e.IsDeleted);
+        _currentEmployeeId = emp?.Id ?? 0;
+
+        await LoadEmployeesAsync(db);
+        await LoadRecognitionsAsync(db);
+        await LoadLeaderboardAsync(db);
+        await LoadEmployeeOfMonthAsync(db);
+    }
+
+    private async Task LoadEmployeesAsync(NickHRDbContext db)
+    {
+        _employees = await db.Employees
+            .Include(e => e.Department)
+            .Where(e => e.EmploymentStatus != EmploymentStatus.Terminated && e.EmploymentStatus != EmploymentStatus.Resigned && !e.IsDeleted)
+            .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+            .ToListAsync();
+    }
+
+    private async Task LoadRecognitionsAsync(NickHRDbContext db)
+    {
+        _loading = true;
+        _totalCount = await db.Recognitions
+            .Where(r => r.IsPublic && !r.IsDeleted)
+            .CountAsync();
+
+        _recognitions = await db.Recognitions
+            .Include(r => r.SenderEmployee)
+            .Include(r => r.RecipientEmployee)
+            .Where(r => r.IsPublic && !r.IsDeleted)
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip((_currentPage - 1) * _pageSize)
+            .Take(_pageSize)
+            .ToListAsync();
+        _loading = false;
+    }
+
+    private async Task LoadLeaderboardAsync(NickHRDbContext db)
+    {
+        var startOfMonth = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var data = await db.Recognitions
+            .Include(r => r.RecipientEmployee)
+            .Where(r => !r.IsDeleted && r.CreatedAt >= startOfMonth)
+            .GroupBy(r => new { r.RecipientEmployeeId, r.RecipientEmployee.FirstName, r.RecipientEmployee.LastName })
+            .Select(g => new LeaderboardEntry
+            {
+                EmployeeId = g.Key.RecipientEmployeeId,
+                FirstName = g.Key.FirstName,
+                LastName = g.Key.LastName,
+                TotalPoints = g.Sum(x => x.Points),
+                KudosCount = g.Count()
+            })
+            .OrderByDescending(x => x.TotalPoints)
+            .Take(10)
+            .ToListAsync();
+
+        _leaderboard = data;
+        _maxPoints = data.Any() ? data.Max(x => x.TotalPoints) : 1;
+    }
+
+    private async Task LoadEmployeeOfMonthAsync(NickHRDbContext db)
+    {
+        _employeeOfMonth = await db.EmployeesOfMonth
+            .Include(e => e.Employee).ThenInclude(e => e.Department)
+            .Where(e => !e.IsDeleted && e.Month == DateTime.Now.Month && e.Year == DateTime.Now.Year && e.IsWinner)
+            .FirstOrDefaultAsync();
+    }
+
+    private async Task OnPageChanged(int page)
+    {
+        _currentPage = page;
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        await LoadRecognitionsAsync(db);
+    }
+
+    private void OpenSendKudosDialog()
+    {
+        _kudosForm = new KudosFormModel();
+        _kudosDialogOpen = true;
+    }
+
+    private void OpenNominateDialog()
+    {
+        _nomineeId = null;
+        _nominateDialogOpen = true;
+    }
+
+    private async Task SubmitKudosAsync()
+    {
+        if (_kudosForm.RecipientId == null || string.IsNullOrWhiteSpace(_kudosForm.Message))
+        {
+            Snackbar.Add("Please fill in all required fields.", Severity.Warning);
+            return;
+        }
+
+        _submitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var recognition = new Recognition
+            {
+                SenderEmployeeId = _currentEmployeeId,
+                RecipientEmployeeId = _kudosForm.RecipientId.Value,
+                Message = _kudosForm.Message.Trim(),
+                Category = _kudosForm.Category,
+                Points = _kudosForm.Points,
+                IsPublic = true,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.Recognitions.Add(recognition);
+            await db.SaveChangesAsync();
+
+            _kudosDialogOpen = false;
+            Snackbar.Add("Kudos sent successfully!", Severity.Success);
+
+            await LoadRecognitionsAsync(db);
+            await LoadLeaderboardAsync(db);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error sending kudos: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task SubmitNominationAsync()
+    {
+        if (_nomineeId == null) return;
+        _submitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var nextMonth = DateTime.Now.AddMonths(1);
+            var existing = await db.EmployeesOfMonth
+                .FirstOrDefaultAsync(e => !e.IsDeleted && e.EmployeeId == _nomineeId && e.Month == nextMonth.Month && e.Year == nextMonth.Year && e.NominatedById == _currentEmployeeId);
+
+            if (existing != null)
+            {
+                Snackbar.Add("You have already nominated this employee.", Severity.Warning);
+                return;
+            }
+
+            var nom = new EmployeeOfMonth
+            {
+                EmployeeId = _nomineeId.Value,
+                Month = nextMonth.Month,
+                Year = nextMonth.Year,
+                NominatedById = _currentEmployeeId,
+                IsWinner = false,
+                Votes = 1,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.EmployeesOfMonth.Add(nom);
+            await db.SaveChangesAsync();
+
+            _nominateDialogOpen = false;
+            Snackbar.Add("Nomination submitted!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private static Color GetCategoryColor(RecognitionCategory cat) => cat switch
+    {
+        RecognitionCategory.Kudos => Color.Primary,
+        RecognitionCategory.ThankYou => Color.Success,
+        RecognitionCategory.TeamPlayer => Color.Info,
+        RecognitionCategory.Innovation => Color.Warning,
+        RecognitionCategory.Leadership => Color.Secondary,
+        RecognitionCategory.CustomerFocus => Color.Tertiary,
+        _ => Color.Default
+    };
+
+    private static string GetRankColor(int rank) => rank switch
+    {
+        1 => "#FFD700",
+        2 => "#C0C0C0",
+        3 => "#CD7F32",
+        _ => "inherit"
+    };
+
+    private double GetProgressValue(int points) =>
+        _maxPoints > 0 ? (double)points / _maxPoints * 100 : 0;
+
+    private static string GetTimeAgo(DateTime createdAt)
+    {
+        var diff = DateTime.UtcNow - createdAt;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+        return createdAt.ToString("dd MMM yyyy");
+    }
+
+    private class KudosFormModel
+    {
+        public int? RecipientId { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public RecognitionCategory Category { get; set; } = RecognitionCategory.Kudos;
+        public int Points { get; set; } = 10;
+    }
+
+    private class LeaderboardEntry
+    {
+        public int EmployeeId { get; set; }
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public int TotalPoints { get; set; }
+        public int KudosCount { get; set; }
+    }
+}

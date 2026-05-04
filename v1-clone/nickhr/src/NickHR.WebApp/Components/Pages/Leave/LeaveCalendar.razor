@@ -1,0 +1,237 @@
+@page "/leave/calendar"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Leave Calendar</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Team Leave Calendar</MudText>
+
+<!-- Month/Year selector and filters -->
+<MudCard Elevation="1" Class="mb-4">
+    <MudCardContent>
+        <MudGrid>
+            <MudItem xs="6" sm="3">
+                <MudSelect T="int" @bind-Value="_selectedMonth" Label="Month" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" @bind-Value:after="LoadCalendar">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var mn = m;
+                        <MudSelectItem T="int" Value="@mn">@(new DateTime(2000, mn, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudSelect T="int" @bind-Value="_selectedYear" Label="Year" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" @bind-Value:after="LoadCalendar">
+                    @for (int y = DateTime.Today.Year - 2; y <= DateTime.Today.Year + 1; y++)
+                    {
+                        var yr = y;
+                        <MudSelectItem T="int" Value="@yr">@yr</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="int?" @bind-Value="_departmentFilter" Label="Filter by Department" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" Clearable="true" @bind-Value:after="LoadCalendar">
+                    @foreach (var dept in _departments)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)dept.Id)">@dept.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+<!-- Calendar table -->
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                @(new DateTime(_selectedYear, _selectedMonth, 1).ToString("MMMM yyyy"))
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_entries.Count entries</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else if (_entries.Count == 0)
+        {
+            <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                No leave records for this month.
+            </MudText>
+        }
+        else
+        {
+            <!-- Legend -->
+            <div class="d-flex gap-3 pa-3 pb-0">
+                <div class="d-flex align-center gap-1">
+                    <div style="width:16px;height:16px;background:#c8e6c9;border-radius:3px;"></div>
+                    <MudText Typo="Typo.caption">Approved</MudText>
+                </div>
+                <div class="d-flex align-center gap-1">
+                    <div style="width:16px;height:16px;background:#fff9c4;border-radius:3px;"></div>
+                    <MudText Typo="Typo.caption">Pending</MudText>
+                </div>
+            </div>
+
+            @foreach (var group in _entries.GroupBy(e => e.Date).OrderBy(g => g.Key))
+            {
+                <MudDivider />
+                <div class="pa-2 pl-4 mud-background-gray">
+                    <MudText Typo="Typo.subtitle2">
+                        <MudIcon Icon="@Icons.Material.Filled.CalendarToday" Size="Size.Small" Class="mr-1" />
+                        @group.Key.ToString("dddd, dd MMMM yyyy")
+                    </MudText>
+                </div>
+                @foreach (var entry in group.OrderBy(e => e.EmployeeName))
+                {
+                    <div style="@GetRowStyle(entry.Status)" class="d-flex align-center pa-2 pl-4 gap-3">
+                        <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" />
+                        <MudText Typo="Typo.body2" Style="min-width:200px;font-weight:500;">@entry.EmployeeName</MudText>
+                        <MudText Typo="Typo.body2" Style="min-width:120px;">@entry.LeaveType</MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(entry.Status)">@entry.Status.ToString()</MudChip>
+                        @if (!string.IsNullOrWhiteSpace(entry.Department))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@entry.Department</MudText>
+                        }
+                    </div>
+                }
+            }
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private int _selectedMonth = DateTime.Today.Month;
+    private int _selectedYear = DateTime.Today.Year;
+    private int? _departmentFilter;
+    private bool _isLoading = true;
+
+    private List<CalendarEntry> _entries = new();
+    private List<DeptOption> _departments = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDepartments();
+        await LoadCalendar();
+    }
+
+    private async Task LoadDepartments()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _departments = await db.Departments
+                .OrderBy(d => d.Name)
+                .Select(d => new DeptOption { Id = d.Id, Name = d.Name })
+                .ToListAsync();
+        }
+        catch { /* non-critical */ }
+    }
+
+    private async Task LoadCalendar()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var monthStart = new DateTime(_selectedYear, _selectedMonth, 1);
+            var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
+            var query = db.LeaveRequests
+                .Include(r => r.Employee).ThenInclude(e => e.Department)
+                .Include(r => r.LeavePolicy)
+                .Where(r => r.Status == LeaveRequestStatus.Approved || r.Status == LeaveRequestStatus.Pending)
+                .Where(r => r.StartDate <= monthEnd && r.EndDate >= monthStart);
+
+            if (_departmentFilter.HasValue)
+                query = query.Where(r => r.Employee.DepartmentId == _departmentFilter.Value);
+
+            var requests = await query
+                .Select(r => new
+                {
+                    r.StartDate,
+                    r.EndDate,
+                    r.Status,
+                    LeaveType = r.LeavePolicy.Name,
+                    EmployeeName = r.Employee.FirstName + " " + r.Employee.LastName,
+                    Department = r.Employee.Department != null ? r.Employee.Department.Name : null
+                })
+                .ToListAsync();
+
+            // Expand each request into per-day entries within the visible month
+            _entries = new List<CalendarEntry>();
+            foreach (var req in requests)
+            {
+                var start = req.StartDate < monthStart ? monthStart : req.StartDate;
+                var end = req.EndDate > monthEnd ? monthEnd : req.EndDate;
+                for (var d = start; d <= end; d = d.AddDays(1))
+                {
+                    _entries.Add(new CalendarEntry
+                    {
+                        Date = d,
+                        EmployeeName = req.EmployeeName,
+                        Department = req.Department,
+                        LeaveType = req.LeaveType,
+                        Status = req.Status
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading calendar: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private string GetRowStyle(LeaveRequestStatus status) => status switch
+    {
+        LeaveRequestStatus.Approved => "background-color:#c8e6c9;",
+        LeaveRequestStatus.Pending => "background-color:#fff9c4;",
+        _ => ""
+    };
+
+    private Color GetStatusColor(LeaveRequestStatus status) => status switch
+    {
+        LeaveRequestStatus.Approved => Color.Success,
+        LeaveRequestStatus.Pending => Color.Warning,
+        _ => Color.Default
+    };
+
+    private class CalendarEntry
+    {
+        public DateTime Date { get; set; }
+        public string EmployeeName { get; set; } = string.Empty;
+        public string? Department { get; set; }
+        public string LeaveType { get; set; } = string.Empty;
+        public LeaveRequestStatus Status { get; set; }
+    }
+
+    private class DeptOption
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+}

@@ -1,0 +1,240 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.Edit : Icons.Material.Filled.Add)" Class="mr-2" />
+            @(IsEdit ? "Edit Department" : "Add Department")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Name"
+                                  Label="Department Name"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Name is required"
+                                  MaxLength="200"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Code"
+                                  Label="Code"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Code is required"
+                                  MaxLength="50"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Description"
+                                  Label="Description"
+                                  Variant="Variant.Outlined"
+                                  Lines="3"
+                                  MaxLength="500" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int?" @bind-Value="_model.ParentDepartmentId"
+                               Label="Parent Department"
+                               Variant="Variant.Outlined"
+                               Clearable="true">
+                        @foreach (var dept in _departments)
+                        {
+                            <MudSelectItem T="int?" Value="@dept.Id">@dept.Name (@dept.Code)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.CostCenter"
+                                  Label="Cost Center"
+                                  Variant="Variant.Outlined"
+                                  MaxLength="50" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int?" @bind-Value="_model.HeadOfDepartmentId"
+                               Label="Head of Department"
+                               Variant="Variant.Outlined"
+                               Clearable="true">
+                        @foreach (var emp in _employees)
+                        {
+                            <MudSelectItem T="int?" Value="@emp.Id">@emp.FullName</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" Class="d-flex align-center">
+                    <MudCheckBox @bind-Value="_model.IsActive" Label="Active" Color="Color.Primary" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Create")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Department? Department { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private bool IsEdit => Department?.Id > 0;
+
+    private DepartmentFormModel _model = new();
+    private List<DepartmentOption> _departments = new();
+    private List<EmployeeOption> _employees = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Department != null)
+        {
+            _model = new DepartmentFormModel
+            {
+                Name = Department.Name,
+                Code = Department.Code,
+                Description = Department.Description,
+                ParentDepartmentId = Department.ParentDepartmentId,
+                CostCenter = Department.CostCenter,
+                HeadOfDepartmentId = Department.HeadOfDepartmentId,
+                IsActive = Department.IsActive
+            };
+        }
+
+        await LoadDropdowns();
+    }
+
+    private async Task LoadDropdowns()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var currentId = Department?.Id ?? 0;
+            _departments = await db.Departments
+                .Where(d => d.Id != currentId)
+                .OrderBy(d => d.Name)
+                .Select(d => new DepartmentOption { Id = d.Id, Name = d.Name, Code = d.Code })
+                .ToListAsync();
+
+            _employees = await db.Employees
+                .Where(e => e.EmploymentStatus == EmploymentStatus.Active || e.EmploymentStatus == EmploymentStatus.Confirmed)
+                .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
+                .Select(e => new EmployeeOption
+                {
+                    Id = e.Id,
+                    FullName = e.FirstName + " " + e.LastName
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading data: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (IsEdit)
+            {
+                var entity = await db.Departments.FindAsync(Department!.Id);
+                if (entity == null)
+                {
+                    Snackbar.Add("Department not found.", Severity.Error);
+                    return;
+                }
+                entity.Name = _model.Name;
+                entity.Code = _model.Code;
+                entity.Description = _model.Description;
+                entity.ParentDepartmentId = _model.ParentDepartmentId;
+                entity.CostCenter = _model.CostCenter;
+                entity.HeadOfDepartmentId = _model.HeadOfDepartmentId;
+                entity.IsActive = _model.IsActive;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Department updated.", Severity.Success);
+            }
+            else
+            {
+                var entity = new Department
+                {
+                    Name = _model.Name,
+                    Code = _model.Code,
+                    Description = _model.Description,
+                    ParentDepartmentId = _model.ParentDepartmentId,
+                    CostCenter = _model.CostCenter,
+                    HeadOfDepartmentId = _model.HeadOfDepartmentId,
+                    IsActive = _model.IsActive
+                };
+                db.Departments.Add(entity);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Department created.", Severity.Success);
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains("duplicate") == true ||
+                                            ex.InnerException?.Message.Contains("unique") == true)
+        {
+            Snackbar.Add("A department with that code already exists.", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving department: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class DepartmentFormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int? ParentDepartmentId { get; set; }
+        public string? CostCenter { get; set; }
+        public int? HeadOfDepartmentId { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    private class DepartmentOption
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
+    }
+
+    private class EmployeeOption
+    {
+        public int Id { get; set; }
+        public string FullName { get; set; } = string.Empty;
+    }
+}

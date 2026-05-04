@@ -1,0 +1,1314 @@
+@page "/"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Entities.Medical
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Performance
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Entities.Training
+@using NickHR.Core.Entities.Exit
+@using NickHR.Core.Enums
+@using NickHR.Core.Interfaces
+@inject IServiceProvider ServiceProvider
+@inject IAlertService AlertService
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject CurrentEmployeeService CurrentEmployeeService
+
+<PageTitle>NICKSCAN ERP — NickHR — Dashboard</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.Dashboard" Class="mr-2" />
+    @if (_isEmployee) { <text>My Workspace</text> }
+    else if (_isDeptManager && !_isHR) { <text>Manager Dashboard</text> }
+    else { <text>HR Dashboard</text> }
+</MudText>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_loadError != null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_loadError</MudAlert>
+}
+else
+{
+    @* ============================================================ *@
+    @* EMPLOYEE / DEPT MANAGER: Personal Workspace Cards             *@
+    @* ============================================================ *@
+    @if (_isEmployee || _isDeptManager)
+    {
+        <MudGrid Class="mb-4">
+            <!-- My Attendance Today -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/attendance/clock")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="@(_myClockedIn ? Color.Success : Color.Default)" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@(_myClockedIn ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Timer)" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h5" Style="line-height:1">@(_myClockedIn ? "Clocked In" : "Not Clocked In")</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">My Attendance Today</MudText>
+                            </div>
+                        </div>
+                        @if (_myClockedIn && _myClockInTime.HasValue)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Since @_myClockInTime.Value.ToString("hh:mm tt")</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Warning">Tap to clock in</MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- My Leave Balance -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/leave/request")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Info" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.EventAvailable" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_myLeaveAvailable.ToString("F0")</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Leave Days Available</MudText>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-space-between">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Entitled: @_myLeaveEntitled.ToString("F0")</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Taken: @_myLeaveTaken.ToString("F0")</MudText>
+                        </div>
+                        <MudProgressLinear Color="Color.Info" Value="@(_myLeaveEntitled > 0 ? (double)_myLeaveTaken / (double)_myLeaveEntitled * 100 : 0)" Class="mt-1" Size="Size.Small" Rounded="true" />
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- My Recent Payslips -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/my-payslips")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Success" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.Receipt" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h5" Style="line-height:1">Payslips</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">My Recent Pay</MudText>
+                            </div>
+                        </div>
+                        @if (_myRecentPayslips.Any())
+                        {
+                            @foreach (var p in _myRecentPayslips.Take(3))
+                            {
+                                <div class="d-flex justify-space-between mb-1">
+                                    <MudText Typo="Typo.caption">@p.Period</MudText>
+                                    <MudText Typo="Typo.caption"><strong>GH₵ @p.NetPay.ToString("N2")</strong></MudText>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">No payslips yet</MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- My Pending Requests -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100">
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Warning" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.HourglassBottom" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_myPendingRequests</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">My Pending Requests</MudText>
+                            </div>
+                        </div>
+                        @if (_myPendingLeave > 0)
+                        {
+                            <MudText Typo="Typo.caption">@_myPendingLeave leave request(s)</MudText>
+                        }
+                        @if (_myPendingLoans > 0)
+                        {
+                            <MudText Typo="Typo.caption">@_myPendingLoans loan application(s)</MudText>
+                        }
+                        @if (_myPendingRequests == 0)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Success">No pending requests</MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    }
+
+    @* ============================================================ *@
+    @* HR ROLES: Row 1 - Key Metrics                                *@
+    @* ============================================================ *@
+    @if (_isHR)
+    {
+        <MudGrid Class="mb-4">
+            <!-- Card 1: Total Employees -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/employees")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Primary" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.People" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_totalActive</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Total Employees</MudText>
+                            </div>
+                        </div>
+                        <div class="d-flex align-center mb-1">
+                            @if (_newHiresMonth > 0)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.TrendingUp" Color="Color.Success" Size="Size.Small" Class="mr-1" />
+                                <MudText Typo="Typo.caption" Color="Color.Success">+@_newHiresMonth this month</MudText>
+                            }
+                            else if (_separationsMonth > 0)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.TrendingDown" Color="Color.Error" Size="Size.Small" Class="mr-1" />
+                                <MudText Typo="Typo.caption" Color="Color.Error">-@_separationsMonth this month</MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">No change this month</MudText>
+                            }
+                        </div>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-1">@_maleCount M / @_femaleCount F</MudText>
+                        <MudProgressLinear Color="Color.Info" Value="@_malePercent" Size="Size.Small" Rounded="true" />
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- Card 2: New Hires This Month -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/employees")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Success" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.PersonAdd" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_newHiresMonth</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">New Hires This Month</MudText>
+                            </div>
+                        </div>
+                        @foreach (var h in _recentHiresList.Take(3))
+                        {
+                            <div class="d-flex align-center mb-1">
+                                <MudIcon Icon="@Icons.Material.Filled.FiberManualRecord" Size="Size.Small" Color="Color.Success" Class="mr-1" Style="font-size:8px" />
+                                <MudText Typo="Typo.caption">@h.Name <span style="color:var(--mud-palette-text-secondary)">@h.Date</span></MudText>
+                            </div>
+                        }
+                        @if (_newHiresMonth == 0)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">No new hires this month</MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- Card 3: On Leave Today -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/leave/approvals")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Warning" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.EventBusy" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_onLeaveTodayCount</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">On Leave Today</MudText>
+                            </div>
+                        </div>
+                        @foreach (var l in _onLeaveTodayNames.Take(3))
+                        {
+                            <div class="d-flex align-center mb-1">
+                                <MudIcon Icon="@Icons.Material.Filled.FiberManualRecord" Size="Size.Small" Color="Color.Warning" Class="mr-1" Style="font-size:8px" />
+                                <MudText Typo="Typo.caption">@l</MudText>
+                            </div>
+                        }
+                        @if (_onLeaveTodayCount == 0)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">No one on leave today</MudText>
+                        }
+                        @if (_onLeaveTodayCount > 3)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">+@(_onLeaveTodayCount - 3) more</MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- Card 4: Open Positions -->
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/recruitment/requisitions")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Info" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.WorkOutline" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_openPositions</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Open Positions</MudText>
+                            </div>
+                        </div>
+                        @if (_latestJobTitle != null)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-1">Latest:</MudText>
+                            <MudText Typo="Typo.caption">@_latestJobTitle</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">No open positions</MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    }
+
+    @* ============================================================ *@
+    @* DEPT MANAGER: On Leave in My Department                       *@
+    @* ============================================================ *@
+    @if (_isDeptManager && !_isHR)
+    {
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="6" md="6">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/leave/approvals")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Warning" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.EventBusy" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_deptOnLeaveCount</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Team On Leave Today</MudText>
+                            </div>
+                        </div>
+                        @foreach (var l in _deptOnLeaveNames.Take(3))
+                        {
+                            <div class="d-flex align-center mb-1">
+                                <MudIcon Icon="@Icons.Material.Filled.FiberManualRecord" Size="Size.Small" Color="Color.Warning" Class="mr-1" Style="font-size:8px" />
+                                <MudText Typo="Typo.caption">@l</MudText>
+                            </div>
+                        }
+                        @if (_deptOnLeaveCount == 0)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Success">Full team present today</MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="6">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/attendance/my-records")'>
+                    <MudCardContent Class="pa-4">
+                        <div class="d-flex align-center mb-2">
+                            <MudAvatar Color="Color.Success" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                                <MudIcon Icon="@Icons.Material.Filled.FactCheck" />
+                            </MudAvatar>
+                            <div>
+                                <MudText Typo="Typo.h4" Style="line-height:1">@_deptClockedIn / @_deptTotal</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Team Attendance Today</MudText>
+                            </div>
+                        </div>
+                        <MudProgressLinear Color="Color.Success" Value="@(_deptTotal > 0 ? (double)_deptClockedIn / _deptTotal * 100 : 0)" Class="mb-2" Size="Size.Medium" Rounded="true" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@((_deptTotal > 0 ? (int)((double)_deptClockedIn / _deptTotal * 100) : 0))% present</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    }
+
+    @* ============================================================ *@
+    @* PAYROLL / HR: Row 2 - Financial Snapshot                     *@
+    @* ============================================================ *@
+    @if (_isPayroll || _isHR)
+    {
+        <MudGrid Class="mb-4">
+            @if (_isPayroll)
+            {
+                <!-- Card 5: Last Payroll -->
+                <MudItem xs="12" md="4">
+                    <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/payroll/history")'>
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">
+                                    <MudIcon Icon="@Icons.Material.Filled.Payments" Class="mr-2" Color="Color.Primary" />
+                                    Last Payroll
+                                </MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            @if (_lastPayrollRun != null)
+                            {
+                                <MudText Typo="Typo.h5" Class="mb-1">@_lastPayrollPeriod</MudText>
+                                <MudText Typo="Typo.h6" Color="Color.Success" Class="mb-2">GH₵ @_lastPayrollNet.ToString("N2")</MudText>
+                                <div class="d-flex align-center gap-2 flex-wrap">
+                                    <MudChip T="string" Size="Size.Small" Color="@GetPayrollStatusColor(_lastPayrollRun.Status)">@_lastPayrollRun.Status</MudChip>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@_lastPayrollEmpCount employees</MudText>
+                                </div>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">No payroll runs found.</MudText>
+                            }
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+
+                <!-- Card 6: Compliance Status -->
+                <MudItem xs="12" md="4">
+                    <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/compliance")'>
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">
+                                    <MudIcon Icon="@Icons.Material.Filled.VerifiedUser" Class="mr-2" Color="Color.Info" />
+                                    Compliance Status
+                                </MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <!-- SSNIT -->
+                            <div class="d-flex justify-space-between align-center mb-3">
+                                <div>
+                                    <MudText Typo="Typo.body2"><strong>SSNIT Filing</strong></MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Due: @_ssnitDeadline.ToString("dd MMM yyyy")</MudText>
+                                </div>
+                                <MudChip T="string" Size="Size.Small" Color="@GetComplianceColor(_ssnitDaysLeft)">
+                                    @GetComplianceLabel(_ssnitDaysLeft)
+                                </MudChip>
+                            </div>
+                            <MudDivider Class="mb-3" />
+                            <!-- PAYE -->
+                            <div class="d-flex justify-space-between align-center">
+                                <div>
+                                    <MudText Typo="Typo.body2"><strong>PAYE Filing</strong></MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Due: @_payeDeadline.ToString("dd MMM yyyy")</MudText>
+                                </div>
+                                <MudChip T="string" Size="Size.Small" Color="@GetComplianceColor(_payeDaysLeft)">
+                                    @GetComplianceLabel(_payeDaysLeft)
+                                </MudChip>
+                            </div>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+            }
+
+            @if (_isHR || _isPayrollAdmin)
+            {
+                <!-- Card 7: Outstanding Claims -->
+                <MudItem xs="12" md="@(_isPayroll ? 4 : 12)">
+                    <MudCard Elevation="2" Class="h-100" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/loans/approvals")'>
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">
+                                    <MudIcon Icon="@Icons.Material.Filled.AccountBalanceWallet" Class="mr-2" Color="Color.Warning" />
+                                    Outstanding Claims
+                                </MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <div class="d-flex justify-space-between align-center mb-2">
+                                <div class="d-flex align-center">
+                                    <MudIcon Icon="@Icons.Material.Filled.CreditCard" Size="Size.Small" Color="Color.Warning" Class="mr-2" />
+                                    <MudText Typo="Typo.body2">Loans (pending)</MudText>
+                                </div>
+                                <MudText Typo="Typo.body2"><strong>GH₵ @_pendingLoansAmount.ToString("N0")</strong></MudText>
+                            </div>
+                            <div class="d-flex justify-space-between align-center mb-2">
+                                <div class="d-flex align-center">
+                                    <MudIcon Icon="@Icons.Material.Filled.LocalHospital" Size="Size.Small" Color="Color.Error" Class="mr-2" />
+                                    <MudText Typo="Typo.body2">Medical claims</MudText>
+                                </div>
+                                <MudText Typo="Typo.body2"><strong>GH₵ @_pendingMedicalAmount.ToString("N0")</strong></MudText>
+                            </div>
+                            <div class="d-flex justify-space-between align-center mb-3">
+                                <div class="d-flex align-center">
+                                    <MudIcon Icon="@Icons.Material.Filled.Receipt" Size="Size.Small" Color="Color.Info" Class="mr-2" />
+                                    <MudText Typo="Typo.body2">Expense claims</MudText>
+                                </div>
+                                <MudText Typo="Typo.body2"><strong>GH₵ @_pendingExpenseAmount.ToString("N0")</strong></MudText>
+                            </div>
+                            <MudDivider Class="mb-2" />
+                            <div class="d-flex justify-space-between align-center">
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Total Outstanding</MudText>
+                                <MudText Typo="Typo.h6" Color="Color.Warning">GH₵ @((_pendingLoansAmount + _pendingMedicalAmount + _pendingExpenseAmount).ToString("N0"))</MudText>
+                            </div>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+
+    @* ============================================================ *@
+    @* Row 3: Two Columns (role-filtered)                           *@
+    @* ============================================================ *@
+    <MudGrid Class="mb-4">
+        <!-- Left Column md=8 -->
+        <MudItem xs="12" md="8">
+            <MudGrid>
+                @* Pending Actions: HR + Managers *@
+                @if (_isManager)
+                {
+                    <MudItem xs="12">
+                        <MudCard Elevation="2">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">
+                                        <MudIcon Icon="@Icons.Material.Filled.NotificationImportant" Class="mr-2" Color="Color.Warning" />
+                                        Pending Actions
+                                    </MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                @if (!_pendingActions.Any())
+                                {
+                                    <div class="d-flex align-center">
+                                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Class="mr-2" />
+                                        <MudText Typo="Typo.body2" Color="Color.Success">No pending actions — all clear!</MudText>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <MudList T="string" Dense="true">
+                                        @foreach (var action in _pendingActions)
+                                        {
+                                            <MudListItem>
+                                                <div class="d-flex justify-space-between align-center">
+                                                    <div class="d-flex align-center">
+                                                        <MudIcon Icon="@action.Icon" Color="@action.Color" Size="Size.Small" Class="mr-2" />
+                                                        <MudLink Href="@action.Link" Typo="Typo.body2">@action.Label</MudLink>
+                                                        @if (action.OverdueCount > 0)
+                                                        {
+                                                            <MudText Typo="Typo.caption" Color="Color.Error" Class="ml-2">(@action.OverdueCount overdue)</MudText>
+                                                        }
+                                                    </div>
+                                                    <MudChip T="string" Size="Size.Small" Color="@action.Color">@action.Count</MudChip>
+                                                </div>
+                                            </MudListItem>
+                                            <MudDivider />
+                                        }
+                                    </MudList>
+                                }
+                            </MudCardContent>
+                        </MudCard>
+                    </MudItem>
+                }
+
+                @* Today's Attendance: HR sees org-wide, others see self *@
+                @if (_isHR)
+                {
+                    <MudItem xs="12">
+                        <MudCard Elevation="2" Style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/attendance/my-records")'>
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">
+                                        <MudIcon Icon="@Icons.Material.Filled.FactCheck" Class="mr-2" Color="Color.Success" />
+                                        Today's Attendance
+                                    </MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <div class="d-flex align-center mb-1">
+                                    <MudText Typo="Typo.body2" Style="min-width:160px">
+                                        Clocked In: <strong>@_clockedIn / @_totalActive</strong>
+                                        (@((_totalActive > 0 ? (int)((double)_clockedIn / _totalActive * 100) : 0))%)
+                                    </MudText>
+                                </div>
+                                <MudProgressLinear Color="Color.Success" Value="@(_totalActive > 0 ? (double)_clockedIn / _totalActive * 100 : 0)" Class="mb-3" Size="Size.Medium" Rounded="true" />
+                                <MudGrid>
+                                    <MudItem xs="4">
+                                        <div class="d-flex align-center">
+                                            <MudIcon Icon="@Icons.Material.Filled.Schedule" Color="Color.Warning" Size="Size.Small" Class="mr-1" />
+                                            <MudText Typo="Typo.caption">Late: <strong>@_lateToday</strong></MudText>
+                                        </div>
+                                    </MudItem>
+                                    <MudItem xs="4">
+                                        <div class="d-flex align-center">
+                                            <MudIcon Icon="@Icons.Material.Filled.BeachAccess" Color="Color.Info" Size="Size.Small" Class="mr-1" />
+                                            <MudText Typo="Typo.caption">On Leave: <strong>@_onLeaveTodayCount</strong></MudText>
+                                        </div>
+                                    </MudItem>
+                                    <MudItem xs="4">
+                                        <div class="d-flex align-center">
+                                            <MudIcon Icon="@Icons.Material.Filled.DirectionsCar" Color="Color.Secondary" Size="Size.Small" Class="mr-1" />
+                                            <MudText Typo="Typo.caption">Excuse Duty: <strong>@_excuseDutyToday</strong></MudText>
+                                        </div>
+                                    </MudItem>
+                                </MudGrid>
+                            </MudCardContent>
+                        </MudCard>
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudItem>
+
+        <!-- Right Column md=4 -->
+        <MudItem xs="12" md="4">
+            <MudGrid>
+                <!-- Upcoming Events: All roles -->
+                <MudItem xs="12">
+                    <MudCard Elevation="2">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">
+                                    <MudIcon Icon="@Icons.Material.Filled.Celebration" Class="mr-2" Color="Color.Secondary" />
+                                    Upcoming Events
+                                </MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent Class="pa-2">
+                            @if (_upcomingBirthdays.Any())
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="px-2 pt-1">Birthdays this week</MudText>
+                                @foreach (var b in _upcomingBirthdays.Take(3))
+                                {
+                                    <MudListItem T="string" Dense="true">
+                                        <div class="d-flex justify-space-between align-center">
+                                            <MudText Typo="Typo.caption">@b.FullName</MudText>
+                                            <MudChip T="string" Size="Size.Small" Color="@(b.DaysUntil == 0 ? Color.Warning : Color.Default)">
+                                                @(b.DaysUntil == 0 ? "Today!" : $"In {b.DaysUntil}d")
+                                            </MudChip>
+                                        </div>
+                                    </MudListItem>
+                                }
+                            }
+                            @if (_upcomingAnniversaries.Any())
+                            {
+                                <MudDivider />
+                                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="px-2 pt-1">Work anniversaries</MudText>
+                                @foreach (var a in _upcomingAnniversaries.Take(3))
+                                {
+                                    <MudListItem T="string" Dense="true">
+                                        <div class="d-flex justify-space-between align-center">
+                                            <MudText Typo="Typo.caption">@a.FullName (@a.Years yr)</MudText>
+                                            <MudChip T="string" Size="Size.Small" Color="@(a.DaysUntil == 0 ? Color.Primary : Color.Default)">
+                                                @(a.DaysUntil == 0 ? "Today!" : $"In {a.DaysUntil}d")
+                                            </MudChip>
+                                        </div>
+                                    </MudListItem>
+                                }
+                            }
+                            @if (_isHR)
+                            {
+                                @if (_probationDue.Any())
+                                {
+                                    <MudDivider />
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="px-2 pt-1">Probation reviews due</MudText>
+                                    @foreach (var p in _probationDue.Take(3))
+                                    {
+                                        <MudListItem T="string" Dense="true">
+                                            <div class="d-flex justify-space-between align-center">
+                                                <MudText Typo="Typo.caption">@p.Name</MudText>
+                                                <MudChip T="string" Size="Size.Small" Color="Color.Warning">@p.DaysLeft d</MudChip>
+                                            </div>
+                                        </MudListItem>
+                                    }
+                                }
+                                @if (_expiringDocs.Any())
+                                {
+                                    <MudDivider />
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="px-2 pt-1">Expiring documents</MudText>
+                                    @foreach (var d in _expiringDocs.Take(3))
+                                    {
+                                        <MudListItem T="string" Dense="true">
+                                            <div class="d-flex justify-space-between align-center">
+                                                <MudText Typo="Typo.caption">@d.FullName — @d.DocumentType</MudText>
+                                                <MudChip T="string" Size="Size.Small" Color="@(d.DaysUntil <= 7 ? Color.Error : Color.Warning)">
+                                                    @(d.DaysUntil == 0 ? "Today!" : $"In {d.DaysUntil}d")
+                                                </MudChip>
+                                            </div>
+                                        </MudListItem>
+                                    }
+                                }
+                            }
+                            @if (_upcomingTrainingItems.Any())
+                            {
+                                <MudDivider />
+                                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="px-2 pt-1">Upcoming training</MudText>
+                                @foreach (var t in _upcomingTrainingItems.Take(3))
+                                {
+                                    <MudListItem T="string" Dense="true">
+                                        <div class="d-flex justify-space-between align-center">
+                                            <MudText Typo="Typo.caption">@t.Title</MudText>
+                                            <MudChip T="string" Size="Size.Small" Color="Color.Info">@t.StartDate.ToString("dd MMM")</MudChip>
+                                        </div>
+                                    </MudListItem>
+                                }
+                                <div class="d-flex justify-end px-2 pb-1">
+                                    <MudLink Href="/training/programs" Typo="Typo.caption">View all</MudLink>
+                                </div>
+                            }
+                            @if (!_upcomingBirthdays.Any() && !_upcomingAnniversaries.Any() && !_upcomingTrainingItems.Any()
+                                 && (!_isHR || (!_probationDue.Any() && !_expiringDocs.Any())))
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-2">Nothing upcoming in the next 14 days.</MudText>
+                            }
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+
+                @* Department Headcount: HR only *@
+                @if (_isHR)
+                {
+                    <MudItem xs="12">
+                        <MudCard Elevation="2">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">
+                                        <MudIcon Icon="@Icons.Material.Filled.CorporateFare" Class="mr-2" />
+                                        Department Headcount
+                                    </MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                @if (_departmentCounts.Any())
+                                {
+                                    @foreach (var dept in _departmentCounts.Take(8))
+                                    {
+                                        <div class="d-flex justify-space-between align-center mb-1">
+                                            <MudText Typo="Typo.body2" Style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@dept.Name</MudText>
+                                            <div class="d-flex align-center gap-1">
+                                                @if (dept.Delta > 0)
+                                                {
+                                                    <MudText Typo="Typo.caption" Color="Color.Success">+@dept.Delta</MudText>
+                                                }
+                                                else if (dept.Delta < 0)
+                                                {
+                                                    <MudText Typo="Typo.caption" Color="Color.Error">@dept.Delta</MudText>
+                                                }
+                                                <MudChip T="string" Color="Color.Primary" Size="Size.Small">@dept.Count</MudChip>
+                                            </div>
+                                        </div>
+                                        <MudProgressLinear Color="Color.Primary" Value="@GetDeptPercentage(dept.Count)" Class="mb-2" Size="Size.Small" Rounded="true" />
+                                    }
+                                    @if (_departmentCounts.Count > 8)
+                                    {
+                                        <MudLink Href="/reports/headcount" Typo="Typo.caption">View all @_departmentCounts.Count departments</MudLink>
+                                    }
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Secondary">No departments configured yet.</MudText>
+                                }
+                            </MudCardContent>
+                        </MudCard>
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudItem>
+    </MudGrid>
+
+    @* ============================================================ *@
+    @* Row 4: Bottom Stats Bar (role-filtered)                       *@
+    @* ============================================================ *@
+    @if (_isHR || _isPayrollAdmin)
+    {
+        <MudPaper Elevation="2" Class="pa-3 mb-4">
+            <div class="d-flex flex-wrap gap-3 align-center justify-space-around">
+                @if (_isHR)
+                {
+                    <div class="text-center" style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/reports/attrition")'>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Attrition Rate</MudText>
+                        <MudText Typo="Typo.h6">@_attritionRate.ToString("F1")%</MudText>
+                    </div>
+                    <MudDivider Vertical="true" FlexItem="true" />
+                    <div class="text-center" style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/analytics/demographics")'>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Avg Tenure</MudText>
+                        <MudText Typo="Typo.h6">@_avgTenureYears.ToString("F1") yrs</MudText>
+                    </div>
+                    <MudDivider Vertical="true" FlexItem="true" />
+                    <div class="text-center" style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/analytics/demographics")'>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Gender Split</MudText>
+                        <MudText Typo="Typo.h6">@_malePercent.ToString("F0")% M / @((100 - _malePercent).ToString("F0"))% F</MudText>
+                    </div>
+                    <MudDivider Vertical="true" FlexItem="true" />
+                }
+                @if (_isPayroll)
+                {
+                    <div class="text-center" style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/analytics/compensation")'>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Avg Salary</MudText>
+                        <MudText Typo="Typo.h6">GH₵ @_avgSalary.ToString("N0")</MudText>
+                    </div>
+                    <MudDivider Vertical="true" FlexItem="true" />
+                }
+                <div class="text-center" style="cursor:pointer" @onclick='() => Navigation.NavigateTo("/reports/leave")'>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Leave Utilization</MudText>
+                    <MudText Typo="Typo.h6">@_leaveUtilization.ToString("F1")%</MudText>
+                </div>
+            </div>
+        </MudPaper>
+    }
+
+    @* ============================================================ *@
+    @* Row 5: Quick Actions (role-filtered)                          *@
+    @* ============================================================ *@
+    <MudCard Elevation="2" Class="mt-2">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">
+                    <MudIcon Icon="@Icons.Material.Filled.FlashOn" Class="mr-2" />
+                    Quick Actions
+                </MudText>
+            </CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent>
+            <MudGrid>
+                @if (_isHR)
+                {
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true" Href="/employees/create"
+                                   StartIcon="@Icons.Material.Filled.PersonAdd" Class="py-4">Add Employee</MudButton>
+                    </MudItem>
+                }
+                <MudItem xs="6" sm="4" md="2">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success" FullWidth="true" Href="/leave/request"
+                               StartIcon="@Icons.Material.Filled.EventAvailable" Class="py-4">Request Leave</MudButton>
+                </MudItem>
+                @if (_isPayroll)
+                {
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Warning" FullWidth="true" Href="/payroll/run"
+                                   StartIcon="@Icons.Material.Filled.Payments" Class="py-4">Run Payroll</MudButton>
+                    </MudItem>
+                }
+                @if (_isHR)
+                {
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Info" FullWidth="true" Href="/recruitment/requisitions"
+                                   StartIcon="@Icons.Material.Filled.WorkOutline" Class="py-4">New Job Post</MudButton>
+                    </MudItem>
+                }
+                <MudItem xs="6" sm="4" md="2">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true" Href="/attendance/clock"
+                               StartIcon="@Icons.Material.Filled.Timer" Class="py-4">Clock In/Out</MudButton>
+                </MudItem>
+                @if (_isHR)
+                {
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Tertiary" FullWidth="true" Href="/reports/headcount"
+                                   StartIcon="@Icons.Material.Filled.Assessment" Class="py-4">Reports</MudButton>
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isLoading = true;
+    private string? _loadError;
+
+    // Role flags
+    private bool _isSuperAdmin, _isHRManager, _isHROfficer, _isPayrollAdmin, _isDeptManager;
+    private bool _isHR;       // SuperAdmin || HRManager || HROfficer
+    private bool _isPayroll;  // SuperAdmin || HRManager || PayrollAdmin
+    private bool _isManager;  // isHR || isDeptManager
+    private bool _isEmployee; // none of the above
+    private int? _currentEmployeeId;
+    private int? _currentDepartmentId;
+
+    // Row 1 - Key Metrics (HR only)
+    private int _totalActive;
+    private int _newHiresMonth;
+    private int _separationsMonth;
+    private int _maleCount;
+    private int _femaleCount;
+    private double _malePercent;
+    private List<(string Name, string Date)> _recentHiresList = new();
+    private int _onLeaveTodayCount;
+    private List<string> _onLeaveTodayNames = new();
+    private int _openPositions;
+    private string? _latestJobTitle;
+
+    // Row 2 - Financial (Payroll/HR only)
+    private PayrollRun? _lastPayrollRun;
+    private string _lastPayrollPeriod = string.Empty;
+    private decimal _lastPayrollNet;
+    private int _lastPayrollEmpCount;
+    private DateTime _ssnitDeadline;
+    private int _ssnitDaysLeft;
+    private DateTime _payeDeadline;
+    private int _payeDaysLeft;
+    private decimal _pendingLoansAmount;
+    private decimal _pendingMedicalAmount;
+    private decimal _pendingExpenseAmount;
+
+    // Row 3 - Pending Actions (Managers only)
+    private List<PendingActionItem> _pendingActions = new();
+
+    // Row 3 - Attendance (HR: org-wide)
+    private int _clockedIn;
+    private int _lateToday;
+    private int _excuseDutyToday;
+
+    // Row 3 - Events (all roles)
+    private List<UpcomingBirthdayDto> _upcomingBirthdays = new();
+    private List<UpcomingAnniversaryDto> _upcomingAnniversaries = new();
+    private List<ExpiringDocumentDto> _expiringDocs = new();
+    private List<(string Name, int DaysLeft)> _probationDue = new();
+    private List<(string Title, DateTime StartDate)> _upcomingTrainingItems = new();
+
+    // Row 3 - Departments (HR only)
+    private List<DeptRow> _departmentCounts = new();
+
+    // Row 4 - Bottom Stats (HR/Payroll)
+    private double _attritionRate;
+    private double _avgTenureYears;
+    private double _avgSalary;
+    private double _leaveUtilization;
+
+    // Employee-specific data
+    private bool _myClockedIn;
+    private DateTime? _myClockInTime;
+    private decimal _myLeaveEntitled;
+    private decimal _myLeaveTaken;
+    private decimal _myLeaveAvailable;
+    private List<PayslipSummary> _myRecentPayslips = new();
+    private int _myPendingRequests;
+    private int _myPendingLeave;
+    private int _myPendingLoans;
+
+    // DeptManager-specific
+    private int _deptOnLeaveCount;
+    private List<string> _deptOnLeaveNames = new();
+    private int _deptClockedIn;
+    private int _deptTotal;
+
+    private static readonly string[] MonthNames = { "", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        // Resolve role flags
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        _isSuperAdmin = user.IsInRole("SuperAdmin");
+        _isHRManager = user.IsInRole("HRManager");
+        _isHROfficer = user.IsInRole("HROfficer");
+        _isPayrollAdmin = user.IsInRole("PayrollAdmin");
+        _isDeptManager = user.IsInRole("DepartmentManager");
+        _isHR = _isSuperAdmin || _isHRManager || _isHROfficer;
+        _isPayroll = _isSuperAdmin || _isHRManager || _isPayrollAdmin;
+        _isManager = _isHR || _isDeptManager;
+        _isEmployee = !_isManager && !_isPayrollAdmin;
+
+        // Resolve current employee
+        _currentEmployeeId = await CurrentEmployeeService.GetEmployeeIdAsync();
+
+        await LoadDashboardData();
+    }
+
+    private async Task LoadDashboardData()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var today = DateTime.Today;
+            var monthStart = new DateTime(today.Year, today.Month, 1);
+            var yearStart = new DateTime(today.Year, 1, 1);
+            var activeStatuses = new[] { EmploymentStatus.Active, EmploymentStatus.Confirmed, EmploymentStatus.OnProbation };
+            var thirtyDaysFromNow = today.AddDays(30);
+            var fourteenDaysFromNow = today.AddDays(14);
+            var sixtyDaysFromNow = today.AddDays(60);
+            var sevenDaysFromNow = today.AddDays(7);
+            var threeDaysAgo = today.AddDays(-3);
+
+            // Resolve current employee's department (for DeptManager filtering)
+            if (_currentEmployeeId.HasValue)
+            {
+                _currentDepartmentId = await db.Employees
+                    .Where(e => e.Id == _currentEmployeeId.Value)
+                    .Select(e => e.DepartmentId)
+                    .FirstOrDefaultAsync();
+            }
+
+            // ============================================================
+            // EMPLOYEE / DEPT MANAGER: Personal data (always load for these roles)
+            // ============================================================
+            if ((_isEmployee || _isDeptManager) && _currentEmployeeId.HasValue)
+            {
+                // My attendance today
+                var myAttendance = await db.AttendanceRecords
+                    .Where(a => a.EmployeeId == _currentEmployeeId.Value && a.Date == today)
+                    .Select(a => new { a.ClockIn })
+                    .FirstOrDefaultAsync();
+                _myClockedIn = myAttendance != null;
+                _myClockInTime = myAttendance?.ClockIn;
+
+                // My leave balance (current year, all policies summed)
+                var myLeave = await db.LeaveBalances
+                    .Where(lb => lb.EmployeeId == _currentEmployeeId.Value && lb.Year == today.Year)
+                    .ToListAsync();
+                _myLeaveEntitled = myLeave.Sum(lb => lb.Entitled + lb.CarriedForward);
+                _myLeaveTaken = myLeave.Sum(lb => lb.Taken);
+                _myLeaveAvailable = myLeave.Sum(lb => lb.Available);
+
+                // My recent payslips
+                var payslipRaw = await db.PayrollItems
+                    .Include(pi => pi.PayrollRun)
+                    .Where(pi => pi.EmployeeId == _currentEmployeeId.Value)
+                    .OrderByDescending(pi => pi.PayrollRun.PayPeriodYear)
+                    .ThenByDescending(pi => pi.PayrollRun.PayPeriodMonth)
+                    .Take(3)
+                    .Select(pi => new { pi.PayrollRun.PayPeriodMonth, pi.PayrollRun.PayPeriodYear, pi.NetPay })
+                    .ToListAsync();
+                _myRecentPayslips = payslipRaw.Select(p => new PayslipSummary
+                {
+                    Period = $"{MonthNames[p.PayPeriodMonth]} {p.PayPeriodYear}",
+                    NetPay = p.NetPay
+                }).ToList();
+
+                // My pending requests
+                _myPendingLeave = await db.LeaveRequests.CountAsync(r => r.EmployeeId == _currentEmployeeId.Value && r.Status == LeaveRequestStatus.Pending);
+                _myPendingLoans = await db.LoanApplications.CountAsync(l => l.EmployeeId == _currentEmployeeId.Value && l.Status == LoanApplicationStatus.Pending);
+                _myPendingRequests = _myPendingLeave + _myPendingLoans;
+            }
+
+            // ============================================================
+            // DEPT MANAGER: Department-level data
+            // ============================================================
+            if (_isDeptManager && !_isHR && _currentDepartmentId.HasValue)
+            {
+                _deptTotal = await db.Employees.CountAsync(e => activeStatuses.Contains(e.EmploymentStatus) && e.DepartmentId == _currentDepartmentId.Value);
+
+                var deptOnLeaveRaw = await db.LeaveRequests
+                    .Include(r => r.Employee)
+                    .Where(r => r.Status == LeaveRequestStatus.Approved && r.StartDate <= today && r.EndDate >= today
+                            && r.Employee.DepartmentId == _currentDepartmentId.Value)
+                    .Select(r => new { r.Employee.FirstName, r.Employee.LastName })
+                    .ToListAsync();
+                _deptOnLeaveCount = deptOnLeaveRaw.Count;
+                _deptOnLeaveNames = deptOnLeaveRaw.Select(r => $"{r.FirstName} {r.LastName}").ToList();
+
+                var deptAttendance = await db.AttendanceRecords
+                    .Where(a => a.Date == today && a.Employee.DepartmentId == _currentDepartmentId.Value)
+                    .CountAsync();
+                _deptClockedIn = deptAttendance;
+            }
+
+            // ============================================================
+            // HR: Row 1 - Key Metrics
+            // ============================================================
+            if (_isHR)
+            {
+                _totalActive = await db.Employees.CountAsync(e => activeStatuses.Contains(e.EmploymentStatus));
+                _maleCount = await db.Employees.CountAsync(e => activeStatuses.Contains(e.EmploymentStatus) && e.Gender == Gender.Male);
+                _femaleCount = await db.Employees.CountAsync(e => activeStatuses.Contains(e.EmploymentStatus) && e.Gender == Gender.Female);
+                _malePercent = _totalActive > 0 ? (double)_maleCount / _totalActive * 100 : 0;
+
+                _newHiresMonth = await db.Employees.CountAsync(e => e.HireDate.HasValue && e.HireDate.Value >= monthStart && activeStatuses.Contains(e.EmploymentStatus));
+                _separationsMonth = await db.Separations.CountAsync(s => s.CreatedAt >= monthStart);
+
+                var recentHiresRaw = await db.Employees
+                    .Where(e => e.HireDate.HasValue && e.HireDate.Value >= monthStart && activeStatuses.Contains(e.EmploymentStatus))
+                    .OrderByDescending(e => e.HireDate)
+                    .Take(3)
+                    .Select(e => new { e.FirstName, e.LastName, e.HireDate })
+                    .ToListAsync();
+                _recentHiresList = recentHiresRaw
+                    .Select(e => (Name: $"{e.FirstName} {e.LastName}", Date: e.HireDate.HasValue ? e.HireDate.Value.ToString("dd MMM") : string.Empty))
+                    .ToList();
+
+                var onLeaveTodayRaw = await db.LeaveRequests
+                    .Include(r => r.Employee)
+                    .Where(r => r.Status == LeaveRequestStatus.Approved && r.StartDate <= today && r.EndDate >= today)
+                    .Select(r => new { r.Employee.FirstName, r.Employee.LastName })
+                    .ToListAsync();
+                _onLeaveTodayCount = onLeaveTodayRaw.Count;
+                _onLeaveTodayNames = onLeaveTodayRaw.Select(r => $"{r.FirstName} {r.LastName}").ToList();
+
+                _openPositions = await db.JobRequisitions.CountAsync(r => r.Status == JobRequisitionStatus.Published);
+                _latestJobTitle = await db.JobRequisitions
+                    .Where(r => r.Status == JobRequisitionStatus.Published)
+                    .OrderByDescending(r => r.CreatedAt)
+                    .Select(r => r.Title)
+                    .FirstOrDefaultAsync();
+            }
+
+            // ============================================================
+            // PAYROLL / HR: Row 2 - Financial
+            // ============================================================
+            if (_isPayroll)
+            {
+                _lastPayrollRun = await db.PayrollRuns
+                    .OrderByDescending(r => r.PayPeriodYear)
+                    .ThenByDescending(r => r.PayPeriodMonth)
+                    .FirstOrDefaultAsync();
+                if (_lastPayrollRun != null)
+                {
+                    _lastPayrollPeriod = $"{MonthNames[_lastPayrollRun.PayPeriodMonth]} {_lastPayrollRun.PayPeriodYear}";
+                    _lastPayrollNet = _lastPayrollRun.TotalNetPay;
+                    _lastPayrollEmpCount = await db.PayrollItems.CountAsync(i => i.PayrollRunId == _lastPayrollRun.Id);
+                }
+
+                // Compliance deadlines
+                var ssnitDay = 14;
+                var payeDay = 15;
+                var ssnitThisMonth = new DateTime(today.Year, today.Month, ssnitDay);
+                _ssnitDeadline = today.Day > ssnitDay ? ssnitThisMonth.AddMonths(1) : ssnitThisMonth;
+                _ssnitDaysLeft = (_ssnitDeadline - today).Days;
+                var payeThisMonth = new DateTime(today.Year, today.Month, payeDay);
+                _payeDeadline = today.Day > payeDay ? payeThisMonth.AddMonths(1) : payeThisMonth;
+                _payeDaysLeft = (_payeDeadline - today).Days;
+            }
+
+            if (_isHR || _isPayrollAdmin)
+            {
+                var pendingLoanStatuses = new[] { LoanApplicationStatus.Pending, LoanApplicationStatus.ManagerApproved, LoanApplicationStatus.HRApproved };
+                _pendingLoansAmount = await db.LoanApplications
+                    .Where(l => pendingLoanStatuses.Contains(l.Status))
+                    .SumAsync(l => (decimal?)l.RequestedAmount) ?? 0m;
+
+                var pendingMedicalStatuses = new[] { MedicalClaimStatus.Submitted, MedicalClaimStatus.UnderReview };
+                _pendingMedicalAmount = await db.MedicalClaims
+                    .Where(m => pendingMedicalStatuses.Contains(m.Status))
+                    .SumAsync(m => (decimal?)m.ClaimAmount) ?? 0m;
+
+                var pendingExpenseStatuses = new[] { ExpenseClaimStatus.Submitted, ExpenseClaimStatus.UnderReview };
+                _pendingExpenseAmount = await db.ExpenseClaims
+                    .Where(e => pendingExpenseStatuses.Contains(e.Status))
+                    .SumAsync(e => (decimal?)e.Amount) ?? 0m;
+            }
+
+            // ============================================================
+            // MANAGERS: Row 3 - Pending Actions
+            // ============================================================
+            if (_isManager)
+            {
+                var actions = new List<PendingActionItem>();
+
+                var pendingLeaveCount = await db.LeaveRequests.CountAsync(r => r.Status == LeaveRequestStatus.Pending);
+                if (pendingLeaveCount > 0)
+                {
+                    var overdueLeave = await db.LeaveRequests.CountAsync(r => r.Status == LeaveRequestStatus.Pending && r.CreatedAt <= threeDaysAgo);
+                    actions.Add(new PendingActionItem { Label = "Leave requests", Count = pendingLeaveCount, OverdueCount = overdueLeave, Icon = Icons.Material.Filled.EventAvailable, Color = Color.Warning, Link = "/leave/approvals" });
+                }
+
+                var pendingOvertimeCount = await db.OvertimeRequests.CountAsync(r => r.Status == OvertimeRequestStatus.Pending);
+                if (pendingOvertimeCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Overtime requests", Count = pendingOvertimeCount, Icon = Icons.Material.Filled.AccessTime, Color = Color.Info, Link = "/overtime/approvals" });
+
+                var pendingLoanCount = await db.LoanApplications.CountAsync(l => l.Status == LoanApplicationStatus.Pending);
+                if (pendingLoanCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Loan applications", Count = pendingLoanCount, Icon = Icons.Material.Filled.CreditCard, Color = Color.Warning, Link = "/loans/approvals" });
+
+                var pendingMedicalCount = await db.MedicalClaims.CountAsync(m => m.Status == MedicalClaimStatus.Submitted || m.Status == MedicalClaimStatus.UnderReview);
+                if (pendingMedicalCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Medical claims", Count = pendingMedicalCount, Icon = Icons.Material.Filled.LocalHospital, Color = Color.Error, Link = "/medical/claims" });
+
+                var pendingExpenseCount = await db.ExpenseClaims.CountAsync(e => e.Status == ExpenseClaimStatus.Submitted || e.Status == ExpenseClaimStatus.UnderReview);
+                if (pendingExpenseCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Expense claims", Count = pendingExpenseCount, Icon = Icons.Material.Filled.Receipt, Color = Color.Info, Link = "/expenses/approvals" });
+
+                var pendingTravelCount = await db.TravelRequests.CountAsync(t => t.Status == TravelRequestStatus.Pending);
+                if (pendingTravelCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Travel requests", Count = pendingTravelCount, Icon = Icons.Material.Filled.Flight, Color = Color.Primary, Link = "/travel/approvals" });
+
+                var pendingOOSCount = await db.OutOfStationRequests.CountAsync(o => o.Status == OutOfStationStatus.Pending);
+                if (pendingOOSCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Out of station", Count = pendingOOSCount, Icon = Icons.Material.Filled.LocationOn, Color = Color.Secondary, Link = "/outofstation/approvals" });
+
+                var pendingTransferCount = await db.TransferPromotions.CountAsync(t => t.Status == ApprovalStatus.Pending);
+                if (pendingTransferCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Transfers & promotions", Count = pendingTransferCount, Icon = Icons.Material.Filled.SwapHoriz, Color = Color.Primary, Link = "/transfers/approvals" });
+
+                var pendingExcuseCount = await db.ExcuseDuties.CountAsync(e => e.Status == ExcuseDutyStatus.Pending);
+                if (pendingExcuseCount > 0)
+                    actions.Add(new PendingActionItem { Label = "Excuse duty", Count = pendingExcuseCount, Icon = Icons.Material.Filled.DirectionsCar, Color = Color.Secondary, Link = "/excuse-duty/approvals" });
+
+                var pendingProfileChanges = await db.Set<NickHR.Core.Entities.Core.ProfileChangeRequest>()
+                    .CountAsync(p => p.Status == NickHR.Core.Enums.ChangeRequestStatus.Pending);
+                if (pendingProfileChanges > 0)
+                    actions.Add(new PendingActionItem { Label = "Profile change requests", Count = pendingProfileChanges, Icon = Icons.Material.Filled.ManageAccounts, Color = Color.Warning, Link = "/admin/profile-changes" });
+
+                _pendingActions = actions;
+            }
+
+            // ============================================================
+            // HR: Row 3 - Org-wide Attendance
+            // ============================================================
+            if (_isHR)
+            {
+                // Need _totalActive for attendance percentage (already loaded above)
+                var graceTime = new TimeSpan(8, 15, 0);
+                var todayAttendance = await db.AttendanceRecords
+                    .Where(a => a.Date == today)
+                    .Select(a => new { a.EmployeeId, a.ClockIn })
+                    .ToListAsync();
+                _clockedIn = todayAttendance.Count;
+                _lateToday = todayAttendance.Count(a => a.ClockIn.HasValue && a.ClockIn.Value.TimeOfDay > graceTime);
+                _excuseDutyToday = await db.ExcuseDuties.CountAsync(e => e.Date == today && e.Status == ExcuseDutyStatus.Approved);
+            }
+
+            // ============================================================
+            // ALL ROLES: Events (birthdays, anniversaries, training)
+            // ============================================================
+            try
+            {
+                _upcomingBirthdays = await AlertService.GetUpcomingBirthdaysAsync(7);
+                _upcomingAnniversaries = await AlertService.GetUpcomingAnniversariesAsync(30);
+                if (_isHR)
+                {
+                    _expiringDocs = await AlertService.GetExpiringDocumentsAsync(60);
+                }
+            }
+            catch { /* non-critical */ }
+
+            if (_isHR)
+            {
+                var probationRaw = await db.Employees
+                    .Where(e => activeStatuses.Contains(e.EmploymentStatus) && e.ProbationEndDate.HasValue
+                             && e.ProbationEndDate.Value >= today && e.ProbationEndDate.Value <= thirtyDaysFromNow)
+                    .OrderBy(e => e.ProbationEndDate)
+                    .Select(e => new { e.FirstName, e.LastName, e.ProbationEndDate })
+                    .Take(5)
+                    .ToListAsync();
+                _probationDue = probationRaw
+                    .Select(e => (Name: $"{e.FirstName} {e.LastName}", DaysLeft: (e.ProbationEndDate!.Value - today).Days))
+                    .ToList();
+            }
+
+            var trainingRaw = await db.TrainingPrograms
+                .Where(t => t.IsActive && t.StartDate.HasValue && t.StartDate.Value >= today && t.StartDate.Value <= fourteenDaysFromNow)
+                .OrderBy(t => t.StartDate)
+                .Select(t => new { t.Title, t.StartDate })
+                .Take(5)
+                .ToListAsync();
+            _upcomingTrainingItems = trainingRaw
+                .Select(t => (Title: t.Title, StartDate: t.StartDate!.Value))
+                .ToList();
+
+            // ============================================================
+            // HR: Departments & Bottom Stats
+            // ============================================================
+            if (_isHR)
+            {
+                var empDeptsRaw = await db.Employees
+                    .Where(e => activeStatuses.Contains(e.EmploymentStatus) && e.DepartmentId != null)
+                    .Include(e => e.Department)
+                    .Select(e => new { DeptName = e.Department!.Name, e.HireDate })
+                    .ToListAsync();
+                var deptGroups = empDeptsRaw.GroupBy(e => e.DeptName).OrderByDescending(g => g.Count()).ToList();
+                _departmentCounts = deptGroups.Select(g =>
+                {
+                    var hiredThisMonth = g.Count(e => e.HireDate.HasValue && e.HireDate.Value >= monthStart);
+                    return new DeptRow { Name = g.Key, Count = g.Count(), Delta = hiredThisMonth };
+                }).ToList();
+
+                // Bottom stats
+                var exitsThisYear = await db.Separations.CountAsync(s => s.CreatedAt >= yearStart);
+                _attritionRate = _totalActive > 0 ? (double)exitsThisYear / _totalActive * 100 : 0;
+
+                var tenureRaw = await db.Employees
+                    .Where(e => activeStatuses.Contains(e.EmploymentStatus) && e.HireDate.HasValue)
+                    .Select(e => e.HireDate!.Value)
+                    .ToListAsync();
+                _avgTenureYears = tenureRaw.Count > 0 ? tenureRaw.Average(d => (today - d).TotalDays / 365.25) : 0;
+            }
+
+            if (_isPayroll)
+            {
+                var salaryRaw = await db.Employees
+                    .Where(e => activeStatuses.Contains(e.EmploymentStatus))
+                    .Select(e => (double)e.BasicSalary)
+                    .ToListAsync();
+                _avgSalary = salaryRaw.Count > 0 ? salaryRaw.Average() : 0;
+            }
+
+            if (_isHR || _isPayrollAdmin)
+            {
+                var leaveTakenRaw = await db.LeaveRequests
+                    .Where(r => r.Status == LeaveRequestStatus.Approved && r.StartDate >= yearStart)
+                    .Select(r => new { r.StartDate, r.EndDate })
+                    .ToListAsync();
+                var totalTakenDays = leaveTakenRaw.Sum(r => (r.EndDate - r.StartDate).Days + 1);
+                var totalEntitledDays = await db.LeaveBalances.SumAsync(b => (double?)b.Entitled) ?? 0.0;
+                _leaveUtilization = totalEntitledDays > 0 ? totalTakenDays / totalEntitledDays * 100 : 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Error loading dashboard: {ex.Message}";
+            Snackbar.Add(_loadError, Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private double GetDeptPercentage(int count) =>
+        _totalActive > 0 ? (double)count / _totalActive * 100 : 0;
+
+    private Color GetPayrollStatusColor(PayrollStatus status) => status switch
+    {
+        PayrollStatus.Locked => Color.Success,
+        PayrollStatus.Completed => Color.Warning,
+        PayrollStatus.Draft => Color.Default,
+        PayrollStatus.Processing => Color.Info,
+        PayrollStatus.Reversed => Color.Error,
+        _ => Color.Default
+    };
+
+    private Color GetComplianceColor(int daysLeft)
+    {
+        if (daysLeft < 0) return Color.Error;
+        if (daysLeft <= 7) return Color.Warning;
+        return Color.Success;
+    }
+
+    private string GetComplianceLabel(int daysLeft)
+    {
+        if (daysLeft < 0) return $"Overdue {-daysLeft}d";
+        if (daysLeft == 0) return "Due today";
+        return $"{daysLeft} days";
+    }
+
+    private class PendingActionItem
+    {
+        public string Label { get; set; } = string.Empty;
+        public int Count { get; set; }
+        public int OverdueCount { get; set; }
+        public string Icon { get; set; } = string.Empty;
+        public Color Color { get; set; }
+        public string Link { get; set; } = string.Empty;
+    }
+
+    private class DeptRow
+    {
+        public string Name { get; set; } = string.Empty;
+        public int Count { get; set; }
+        public int Delta { get; set; }
+    }
+
+    private class PayslipSummary
+    {
+        public string Period { get; set; } = string.Empty;
+        public decimal NetPay { get; set; }
+    }
+}

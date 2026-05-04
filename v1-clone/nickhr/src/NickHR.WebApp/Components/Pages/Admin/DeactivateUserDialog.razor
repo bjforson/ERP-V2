@@ -1,0 +1,126 @@
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Identity
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Interfaces
+@using NickHR.Services.SystemAccess
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body1" Class="mb-3">
+            Deactivating <strong>@UserEmail</strong>. Select which systems to revoke access from:
+        </MudText>
+
+        <MudPaper Elevation="0" Class="pa-3 mb-2" Style="border: 1px solid var(--mud-palette-divider); border-radius: 8px;">
+            <MudCheckBox T="bool" @bind-Value="_disableNickHR" Color="Color.Error" Dense="true">
+                <MudText Typo="Typo.body2" Style="font-weight: 600;">NickHR</MudText>
+                <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">
+                    User will be unable to log in to NickHR
+                </MudText>
+            </MudCheckBox>
+        </MudPaper>
+
+        @if (HasNscisAccess)
+        {
+            <MudPaper Elevation="0" Class="pa-3 mb-2" Style="border: 1px solid var(--mud-palette-divider); border-radius: 8px;">
+                <MudCheckBox T="bool" @bind-Value="_disableNscis" Color="Color.Error" Dense="true">
+                    <MudText Typo="Typo.body2" Style="font-weight: 600;">NSCIS</MudText>
+                    <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">
+                        User will lose access to container scanning & image analysis
+                    </MudText>
+                </MudCheckBox>
+            </MudPaper>
+        }
+
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-3">
+            This action can be reversed by re-activating the user and re-granting system access.
+        </MudAlert>
+
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-2">@_errorMessage</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_isProcessing">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Error"
+                   OnClick="Confirm" Disabled="@(_isProcessing || (!_disableNickHR && !_disableNscis))">
+            @if (_isProcessing) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+            Deactivate
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string UserId { get; set; } = string.Empty;
+    [Parameter] public string UserEmail { get; set; } = string.Empty;
+    [Parameter] public bool HasNscisAccess { get; set; }
+
+    private bool _disableNickHR = true;
+    private bool _disableNscis;
+    private bool _isProcessing;
+    private string _errorMessage = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        // Default: check all systems the user has access to
+        _disableNscis = HasNscisAccess;
+    }
+
+    private async Task Confirm()
+    {
+        _isProcessing = true;
+        _errorMessage = string.Empty;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+            // 1. Disable NickHR access (set ApplicationUser.IsActive = false)
+            if (_disableNickHR)
+            {
+                var user = await userManager.FindByIdAsync(UserId);
+                if (user == null)
+                {
+                    _errorMessage = "User not found in NickHR.";
+                    return;
+                }
+                user.IsActive = false;
+                await userManager.UpdateAsync(user);
+                Snackbar.Add("NickHR access revoked.", Severity.Success);
+            }
+
+            // 2. Disable NSCIS access via SystemAccessService
+            if (_disableNscis && HasNscisAccess)
+            {
+                var sysAccessSvc = scope.ServiceProvider.GetRequiredService<ISystemAccessService>();
+                var result = await sysAccessSvc.RevokeAccessAsync(
+                    UserId, SystemAccessService.SystemNameNscis, actor: "Admin");
+
+                if (result.Success)
+                {
+                    Snackbar.Add("NSCIS access revoked.", Severity.Success);
+                }
+                else
+                {
+                    Snackbar.Add($"NSCIS revocation failed: {result.ErrorMessage}", Severity.Warning);
+                }
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

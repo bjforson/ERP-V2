@@ -1,0 +1,335 @@
+@page "/recruitment/requisitions"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Job Requisitions</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Job Requisitions</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Requisitions
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_filtered.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudSelect T="JobRequisitionStatus?"
+                       Value="_statusFilter"
+                       Label="Filter by Status" Variant="Variant.Outlined"
+                       Clearable="true" Dense="true" Class="mr-2" Style="min-width:180px;"
+                       ValueChanged="@((JobRequisitionStatus? val) => OnFilterChanged(val))">
+                @foreach (JobRequisitionStatus s in Enum.GetValues(typeof(JobRequisitionStatus)))
+                {
+                    <MudSelectItem T="JobRequisitionStatus?" Value="@((JobRequisitionStatus?)s)">@s</MudSelectItem>
+                }
+            </MudSelect>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenCreateDialog">
+                Create Requisition
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_filtered" Dense="true" Hover="true" Striped="true" T="RequisitionRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<RequisitionRow, object>(x => x.Title)">Title</MudTableSortLabel></MudTh>
+                    <MudTh>Department</MudTh>
+                    <MudTh>Designation</MudTh>
+                    <MudTh>Positions</MudTh>
+                    <MudTh>Salary Range</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<RequisitionRow, object>(x => x.Status)">Status</MudTableSortLabel></MudTh>
+                    <MudTh>Requested By</MudTh>
+                    <MudTh>Applications</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<RequisitionRow, object>(x => x.CreatedAt)">Created</MudTableSortLabel></MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Title">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.Title</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Department">@context.DepartmentName</MudTd>
+                    <MudTd DataLabel="Designation">@(context.DesignationTitle ?? "—")</MudTd>
+                    <MudTd DataLabel="Positions">@context.NumberOfPositions</MudTd>
+                    <MudTd DataLabel="Salary Range">
+                        @if (context.SalaryRangeMin.HasValue || context.SalaryRangeMax.HasValue)
+                        {
+                            <span>GH₵ @(context.SalaryRangeMin?.ToString("N0") ?? "?") – @(context.SalaryRangeMax?.ToString("N0") ?? "?")</span>
+                        }
+                        else
+                        {
+                            <span class="mud-text-secondary">—</span>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)" Variant="Variant.Filled">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Requested By">@context.RequestedByName</MudTd>
+                    <MudTd DataLabel="Applications">
+                        <MudChip T="string" Size="Size.Small" Color="@(context.ApplicationCount > 0 ? Color.Info : Color.Default)">
+                            @context.ApplicationCount
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Created">@context.CreatedAt.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd>
+                        @if (context.Status == JobRequisitionStatus.Draft)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning"
+                                           title="Edit" OnClick="@(() => OpenEditDialog(context.Id))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Send" Size="Size.Small" Color="Color.Info"
+                                           title="Submit for Approval" OnClick="@(() => SubmitForApproval(context))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           title="Delete" OnClick="@(() => DeleteRequisition(context))" />
+                        }
+                        else if (context.Status == JobRequisitionStatus.PendingApproval)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Color="Color.Success"
+                                           title="Approve" OnClick="@(() => ApproveRequisition(context))" />
+                        }
+                        else if (context.Status == JobRequisitionStatus.Approved)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Publish" Size="Size.Small" Color="Color.Primary"
+                                           title="Publish" OnClick="@(() => PublishRequisition(context))" />
+                        }
+                        else if (context.Status == JobRequisitionStatus.Published)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.PeopleAlt" Size="Size.Small" Color="Color.Info"
+                                           title="View Applications" OnClick="@(() => Navigation.NavigateTo($"/recruitment/applications?reqId={context.Id}"))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Color="Color.Secondary"
+                                           title="Close" OnClick="@(() => CloseRequisition(context))" />
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No requisitions found. Click "Create Requisition" to get started.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<RequisitionRow> _all = new();
+    private List<RequisitionRow> _filtered = new();
+    private bool _isLoading = true;
+    private JobRequisitionStatus? _statusFilter;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _all = await db.JobRequisitions
+                .Include(r => r.Department)
+                .Include(r => r.Designation)
+                .Include(r => r.RequestedBy)
+                .Include(r => r.Applications)
+                .OrderByDescending(r => r.CreatedAt)
+                .Select(r => new RequisitionRow
+                {
+                    Id = r.Id,
+                    Title = r.Title,
+                    DepartmentName = r.Department.Name,
+                    DesignationTitle = r.Designation != null ? r.Designation.Title : null,
+                    NumberOfPositions = r.NumberOfPositions,
+                    SalaryRangeMin = r.SalaryRangeMin,
+                    SalaryRangeMax = r.SalaryRangeMax,
+                    Status = r.Status,
+                    RequestedByName = r.RequestedBy.FirstName + " " + r.RequestedBy.LastName,
+                    ApplicationCount = r.Applications.Count(),
+                    CreatedAt = r.CreatedAt
+                })
+                .ToListAsync();
+
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading requisitions: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        _filtered = _statusFilter.HasValue
+            ? _all.Where(r => r.Status == _statusFilter.Value).ToList()
+            : _all;
+    }
+
+    private void OnFilterChanged(JobRequisitionStatus? value)
+    {
+        _statusFilter = value;
+        ApplyFilter();
+    }
+
+    private Color GetStatusColor(JobRequisitionStatus status) => status switch
+    {
+        JobRequisitionStatus.Draft => Color.Default,
+        JobRequisitionStatus.PendingApproval => Color.Warning,
+        JobRequisitionStatus.Approved => Color.Info,
+        JobRequisitionStatus.Published => Color.Success,
+        JobRequisitionStatus.Closed => Color.Dark,
+        JobRequisitionStatus.Cancelled => Color.Error,
+        _ => Color.Default
+    };
+
+    private async Task OpenCreateDialog()
+    {
+        var parameters = new DialogParameters<RequisitionDialog>
+        {
+            { x => x.RequisitionId, null }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<RequisitionDialog>("Create Job Requisition", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadData();
+    }
+
+    private async Task OpenEditDialog(int id)
+    {
+        var parameters = new DialogParameters<RequisitionDialog>
+        {
+            { x => x.RequisitionId, id }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<RequisitionDialog>("Edit Job Requisition", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadData();
+    }
+
+    private async Task SubmitForApproval(RequisitionRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox("Submit for Approval",
+            $"Submit '{row.Title}' for approval?", yesText: "Submit", cancelText: "Cancel");
+        if (confirmed != true) return;
+        await UpdateStatus(row.Id, JobRequisitionStatus.PendingApproval, "Submitted for approval.");
+    }
+
+    private async Task ApproveRequisition(RequisitionRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox("Approve Requisition",
+            $"Approve '{row.Title}'?", yesText: "Approve", cancelText: "Cancel");
+        if (confirmed != true) return;
+        await UpdateStatus(row.Id, JobRequisitionStatus.Approved, "Requisition approved.");
+    }
+
+    private async Task PublishRequisition(RequisitionRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox("Publish Requisition",
+            $"Publish '{row.Title}'? This will make it visible for applications.", yesText: "Publish", cancelText: "Cancel");
+        if (confirmed != true) return;
+        await UpdateStatus(row.Id, JobRequisitionStatus.Published, "Requisition published.");
+    }
+
+    private async Task CloseRequisition(RequisitionRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox("Close Requisition",
+            $"Close '{row.Title}'? No further applications will be accepted.", yesText: "Close", cancelText: "Cancel");
+        if (confirmed != true) return;
+        await UpdateStatus(row.Id, JobRequisitionStatus.Closed, "Requisition closed.");
+    }
+
+    private async Task UpdateStatus(int id, JobRequisitionStatus newStatus, string successMessage)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.JobRequisitions.FindAsync(id);
+            if (entity == null) { Snackbar.Add("Requisition not found.", Severity.Warning); return; }
+            entity.Status = newStatus;
+            if (newStatus == JobRequisitionStatus.Approved) entity.ApprovedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            Snackbar.Add(successMessage, Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error updating status: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task DeleteRequisition(RequisitionRow row)
+    {
+        if (row.ApplicationCount > 0)
+        {
+            Snackbar.Add($"Cannot delete '{row.Title}': it has {row.ApplicationCount} application(s).", Severity.Warning);
+            return;
+        }
+        var confirmed = await DialogService.ShowMessageBox("Confirm Delete",
+            $"Delete requisition '{row.Title}'? This cannot be undone.", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.JobRequisitions.FindAsync(row.Id);
+            if (entity == null) return;
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Requisition deleted.", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error deleting: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private class RequisitionRow
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string DepartmentName { get; set; } = string.Empty;
+        public string? DesignationTitle { get; set; }
+        public int NumberOfPositions { get; set; }
+        public decimal? SalaryRangeMin { get; set; }
+        public decimal? SalaryRangeMax { get; set; }
+        public JobRequisitionStatus Status { get; set; }
+        public string RequestedByName { get; set; } = string.Empty;
+        public int ApplicationCount { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+}

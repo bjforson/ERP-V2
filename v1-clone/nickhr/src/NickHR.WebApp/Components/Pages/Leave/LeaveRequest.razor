@@ -1,0 +1,290 @@
+@page "/leave/request"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+
+<PageTitle>NICKSCAN ERP — NickHR — Request Leave</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Request Leave</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_employeeId == null && !_isLoadingEmployee)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+else
+{
+<MudGrid>
+    <MudItem xs="12" md="8">
+        <MudCard Elevation="2">
+            <MudCardContent>
+                <EditForm Model="_model" OnValidSubmit="HandleSubmit">
+                    <DataAnnotationsValidator />
+                    <MudGrid>
+                        <MudItem xs="12">
+                            <MudSelect T="int" @bind-Value="_model.LeavePolicyId" Label="Leave Type *" Variant="Variant.Outlined" Required="true">
+                                @foreach (var policy in _leavePolicies)
+                                {
+                                    <MudSelectItem Value="@policy.Id">@policy.Name (@policy.Available days available)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker @bind-Date="_startDate" Label="Start Date *" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                           MinDate="DateTime.Today" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker @bind-Date="_endDate" Label="End Date *" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                           MinDate="@(_startDate ?? DateTime.Today)" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.body2" Color="Color.Info">
+                                @if (_startDate.HasValue && _endDate.HasValue)
+                                {
+                                    var days = CalculateWorkingDays(_startDate.Value, _endDate.Value);
+                                    <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Class="mr-1" />
+                                    @:@days working day(s)
+                                }
+                            </MudText>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_model.Reason" Label="Reason" Variant="Variant.Outlined" Lines="3" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_model.HandoverNotes" Label="Handover Notes" Variant="Variant.Outlined" Lines="2"
+                                          HelperText="Brief notes on task handover during your absence" />
+                        </MudItem>
+                        <MudItem xs="12" Class="d-flex justify-end gap-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/leave/my-requests">Cancel</MudButton>
+                            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                                       Disabled="_isSubmitting" StartIcon="@Icons.Material.Filled.Send">
+                                Submit Request
+                            </MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </EditForm>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Leave Balances Sidebar -->
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">My Leave Balances</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @foreach (var balance in _balances)
+                {
+                    <div class="mb-3">
+                        <div class="d-flex justify-space-between">
+                            <MudText Typo="Typo.body2">@balance.LeaveType</MudText>
+                            <MudText Typo="Typo.body2" Style="font-weight: 600;">@balance.Available / @balance.Entitled</MudText>
+                        </div>
+                        <MudProgressLinear Color="@GetBalanceColor(balance.Available, balance.Entitled)"
+                                           Value="@GetBalancePercent(balance.Available, balance.Entitled)" Class="mt-1" />
+                    </div>
+                }
+                @if (!_balances.Any())
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">No leave balances found.</MudText>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+}
+
+@code {
+    private CreateLeaveRequestDto _model = new();
+    private DateTime? _startDate;
+    private DateTime? _endDate;
+    private bool _isSubmitting = false;
+    private bool _isLoadingEmployee = true;
+    private int? _employeeId;
+    private List<LeavePolicyDisplay> _leavePolicies = new();
+    private List<LeaveBalanceDisplay> _balances = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Leave", href: "/leave/my-requests"),
+        new BreadcrumbItem("Request", href: null, disabled: true)
+    };
+
+    private record LeavePolicyDisplay(int Id, string Name, decimal Available);
+    private record LeaveBalanceDisplay(string LeaveType, decimal Available, decimal Entitled);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employeeId = await GetCurrentEmployeeIdAsync();
+        _isLoadingEmployee = false;
+        await LoadBalances();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        await using var scope = ServiceProvider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadBalances()
+    {
+        if (_employeeId == null) return;
+
+        await using var scope = ServiceProvider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        int currentYear = DateTime.Today.Year;
+
+        var leaveBalances = await db.LeaveBalances
+            .Include(lb => lb.LeavePolicy)
+            .Where(lb => lb.EmployeeId == _employeeId.Value && lb.Year == currentYear)
+            .ToListAsync();
+
+        _balances = leaveBalances
+            .Select(lb => new LeaveBalanceDisplay(
+                lb.LeavePolicy.Name,
+                lb.Available,
+                lb.Entitled + lb.CarriedForward))
+            .ToList();
+
+        _leavePolicies = leaveBalances
+            .Where(lb => lb.Available > 0)
+            .Select(lb => new LeavePolicyDisplay(
+                lb.LeavePolicyId,
+                lb.LeavePolicy.Name,
+                lb.Available))
+            .ToList();
+
+        // Fall back to all active leave policies if no balances exist yet
+        if (!_leavePolicies.Any())
+        {
+            var policies = await db.LeavePolicies
+                .Where(p => p.IsActive)
+                .OrderBy(p => p.Name)
+                .ToListAsync();
+
+            _leavePolicies = policies
+                .Select(p => new LeavePolicyDisplay(p.Id, p.Name, p.DefaultDays))
+                .ToList();
+        }
+    }
+
+    private int CalculateWorkingDays(DateTime start, DateTime end)
+    {
+        int days = 0;
+        for (var date = start; date <= end; date = date.AddDays(1))
+        {
+            if (date.DayOfWeek != DayOfWeek.Saturday && date.DayOfWeek != DayOfWeek.Sunday)
+                days++;
+        }
+        return days;
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (_employeeId == null)
+        {
+            Snackbar.Add("Your account is not linked to an employee record. Contact HR.", Severity.Warning);
+            return;
+        }
+        if (!_startDate.HasValue || !_endDate.HasValue)
+        {
+            Snackbar.Add("Please select start and end dates", Severity.Warning);
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            _model.StartDate = _startDate.Value;
+            _model.EndDate = _endDate.Value;
+
+            await using var scope = ServiceProvider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            decimal numberOfDays = CalculateWorkingDays(_model.StartDate, _model.EndDate);
+
+            var request = new NickHR.Core.Entities.Leave.LeaveRequest
+            {
+                EmployeeId = _employeeId.Value,
+                LeavePolicyId = _model.LeavePolicyId,
+                StartDate = _model.StartDate,
+                EndDate = _model.EndDate,
+                NumberOfDays = numberOfDays,
+                Reason = _model.Reason,
+                HandoverNotes = _model.HandoverNotes,
+                Status = LeaveRequestStatus.Pending,
+            };
+
+            db.LeaveRequests.Add(request);
+
+            // Update pending balance
+            int currentYear = DateTime.Today.Year;
+            var balance = await db.LeaveBalances
+                .FirstOrDefaultAsync(lb =>
+                    lb.EmployeeId == _employeeId.Value &&
+                    lb.LeavePolicyId == _model.LeavePolicyId &&
+                    lb.Year == currentYear);
+
+            if (balance != null)
+            {
+                balance.Pending += numberOfDays;
+            }
+
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Leave request submitted!", Severity.Success);
+            Navigation.NavigateTo("/leave/my-requests");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private Color GetBalanceColor(decimal available, decimal entitled)
+    {
+        if (entitled == 0) return Color.Default;
+        var pct = available / entitled * 100;
+        return pct switch
+        {
+            > 50 => Color.Success,
+            > 25 => Color.Warning,
+            _ => Color.Error
+        };
+    }
+
+    private double GetBalancePercent(decimal available, decimal entitled)
+    {
+        if (entitled == 0) return 0;
+        return (double)(available / entitled * 100);
+    }
+}

@@ -1,0 +1,117 @@
+@page "/attendance/qr-scan"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Services.Attendance
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — QR Code Attendance - Scan</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.QrCodeScanner" Class="mr-2" />QR Code Attendance - Check In
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader><MudText Typo="Typo.h6">Enter QR Token</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudAlert Severity="Severity.Info" Class="mb-3">
+                    Paste the QR code token provided by your admin to mark attendance.
+                </MudAlert>
+                <MudTextField @bind-Value="_token" Label="QR Token" Lines="4" Variant="Variant.Outlined" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-4"
+                           OnClick="ValidateAndClockIn" Disabled="@(string.IsNullOrEmpty(_token))">
+                    Validate & Clock In
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        @if (_result != null)
+        {
+            <MudAlert Severity="@(_result.Success ? Severity.Success : Severity.Error)" Class="mb-4">
+                @_result.Message
+            </MudAlert>
+        }
+        @if (_locationName != null)
+        {
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.h6">Attendance Recorded</MudText>
+                    <MudText>Location: @_locationName</MudText>
+                    <MudText>Time: @DateTime.UtcNow.ToString("dd MMM yyyy HH:mm")</MudText>
+                </MudCardContent>
+            </MudCard>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private string _token = "";
+    private string? _locationName;
+    private ValidationResult? _result;
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Attendance", null), new("QR Scan", null, true) };
+
+    private async Task ValidateAndClockIn()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var qrSvc = scope.ServiceProvider.GetRequiredService<QrAttendanceService>();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var locationId = qrSvc.ValidateQrTokenAsync(_token);
+        if (!locationId.HasValue)
+        {
+            _result = new ValidationResult { Success = false, Message = "Invalid or expired QR token." };
+            return;
+        }
+
+        var location = await db.Locations.FindAsync(locationId.Value);
+        _locationName = location?.Name ?? "Unknown";
+
+        // Get current user's employee record
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var username = authState.User?.Identity?.Name;
+        var employee = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == username || e.PersonalEmail == username);
+
+        if (employee == null)
+        {
+            _result = new ValidationResult { Success = false, Message = "Employee record not found for current user." };
+            return;
+        }
+
+        var today = DateTime.UtcNow.Date;
+        var existing = await db.AttendanceRecords.FirstOrDefaultAsync(a => a.EmployeeId == employee.Id && a.Date == today);
+
+        if (existing != null && existing.ClockIn.HasValue)
+        {
+            _result = new ValidationResult { Success = false, Message = "Already clocked in today." };
+            return;
+        }
+
+        var record = new AttendanceRecord
+        {
+            EmployeeId = employee.Id,
+            Date = today,
+            ClockIn = DateTime.UtcNow,
+            AttendanceType = AttendanceType.Present,
+            Notes = $"QR attendance at {_locationName}"
+        };
+        db.AttendanceRecords.Add(record);
+        await db.SaveChangesAsync();
+
+        _result = new ValidationResult { Success = true, Message = $"Successfully clocked in at {_locationName}!" };
+        Snackbar.Add("Attendance recorded!", Severity.Success);
+    }
+
+    class ValidationResult { public bool Success; public string Message = ""; }
+}

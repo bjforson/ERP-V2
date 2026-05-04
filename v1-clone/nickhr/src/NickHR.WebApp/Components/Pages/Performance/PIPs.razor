@@ -1,0 +1,244 @@
+@page "/performance/pips"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Performance
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Performance Improvement Plans</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Performance Improvement Plans</MudText>
+
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid Spacing="2" AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="6">
+                <MudSelect T="int?" Value="_selectedCycleId" Label="Appraisal Cycle" Variant="Variant.Outlined"
+                           Dense="true" ValueChanged="@((int? v) => OnCycleChanged(v))">
+                    <MudSelectItem T="int?" Value="@((int?)null)">All Cycles</MudSelectItem>
+                    @foreach (var c in _cycles)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)c.Id)">@c.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudText Typo="Typo.body2" Class="mb-1">Threshold: @_threshold.ToString("N1")</MudText>
+                <MudSlider T="decimal" Value="_threshold" Min="1m" Max="5m" Step="0.1m" Color="Color.Warning"
+                           ValueChanged="@((decimal v) => OnThresholdChanged(v))">
+                    @_threshold.ToString("N1")
+                </MudSlider>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else
+{
+    @if (_pipRows.Count > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+            <MudIcon Icon="@Icons.Material.Filled.Warning" Class="mr-2" />
+            <strong>@_pipRows.Count employee@(_pipRows.Count == 1 ? "" : "s")</strong> below threshold of @_threshold.ToString("N1")
+        </MudAlert>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="mb-4">
+            No employees are below the threshold of @_threshold.ToString("N1").
+        </MudAlert>
+    }
+
+    <MudCard Elevation="2">
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@_pipRows" Dense="true" Hover="true" Striped="true" T="PipRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<PipRow, object>(x => x.EmployeeName)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh>Department</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<PipRow, object>(x => x.FinalRating ?? 0)">Final Rating</MudTableSortLabel></MudTh>
+                    <MudTh>Manager</MudTh>
+                    <MudTh>Review Comments</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.EmployeeName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Department">@(context.DepartmentName ?? "—")</MudTd>
+                    <MudTd DataLabel="Final Rating">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">
+                            @(context.FinalRating.HasValue ? context.FinalRating.Value.ToString("N1") : "—")
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Manager">@(context.ReviewerName ?? "—")</MudTd>
+                    <MudTd DataLabel="Review Comments">
+                        @if (!string.IsNullOrWhiteSpace(context.ManagerComments))
+                        {
+                            <MudText Typo="Typo.body2">
+                                @(context.ManagerComments.Length > 80 ? context.ManagerComments[..80] + "…" : context.ManagerComments)
+                            </MudText>
+                        }
+                        else
+                        {
+                            <span class="mud-text-secondary">No comments</span>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                   OnClick="@(() => ViewAppraisal(context.AppraisalId))">
+                            View Appraisal
+                        </MudButton>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Class="pa-4 mud-text-secondary">No employees below threshold.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@if (_showDetail)
+{
+    <MudDialog @bind-IsVisible="_showDetail" Options="@(new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true })">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Appraisal Detail — @_detailRow?.EmployeeName</MudText>
+        </TitleContent>
+        <DialogContent>
+            @if (_detailRow != null)
+            {
+                <MudGrid Spacing="2">
+                    <MudItem xs="6"><MudText Typo="Typo.body2"><strong>Department:</strong> @(_detailRow.DepartmentName ?? "—")</MudText></MudItem>
+                    <MudItem xs="6"><MudText Typo="Typo.body2"><strong>Reviewer:</strong> @(_detailRow.ReviewerName ?? "—")</MudText></MudItem>
+                    <MudItem xs="4"><MudText Typo="Typo.body2"><strong>Self Rating:</strong> @(_detailRow.SelfRating?.ToString("N1") ?? "—")</MudText></MudItem>
+                    <MudItem xs="4"><MudText Typo="Typo.body2"><strong>Manager Rating:</strong> @(_detailRow.ManagerRating?.ToString("N1") ?? "—")</MudText></MudItem>
+                    <MudItem xs="4"><MudText Typo="Typo.body2"><strong>Final Rating:</strong> @(_detailRow.FinalRating?.ToString("N1") ?? "—")</MudText></MudItem>
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.body2"><strong>Manager Comments:</strong></MudText>
+                        <MudText Typo="Typo.body2">@(_detailRow.ManagerComments ?? "None")</MudText>
+                    </MudItem>
+                </MudGrid>
+            }
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showDetail = false)" Variant="Variant.Filled" Color="Color.Primary">Close</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private bool _isLoading = true;
+    private int? _selectedCycleId;
+    private decimal _threshold = 2.5m;
+    private List<CycleOption> _cycles = new();
+    private List<PipRow> _allRows = new();
+    private List<PipRow> _pipRows = new();
+    private bool _showDetail;
+    private PipRow? _detailRow;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCycles();
+        await LoadData();
+    }
+
+    private async Task LoadCycles()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _cycles = await db.AppraisalCycles
+                .OrderByDescending(c => c.StartDate)
+                .Select(c => new CycleOption { Id = c.Id, Name = c.Name })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var query = db.AppraisalForms
+                .Include(a => a.Employee).ThenInclude(e => e.Department)
+                .Include(a => a.Reviewer)
+                .Where(a => a.Status == AppraisalStatus.Completed)
+                .AsQueryable();
+            if (_selectedCycleId.HasValue)
+                query = query.Where(a => a.AppraisalCycleId == _selectedCycleId.Value);
+
+            _allRows = await query
+                .Select(a => new PipRow
+                {
+                    AppraisalId = a.Id,
+                    EmployeeName = a.Employee.FirstName + " " + a.Employee.LastName,
+                    DepartmentName = a.Employee.Department != null ? a.Employee.Department.Name : null,
+                    ReviewerName = a.Reviewer.FirstName + " " + a.Reviewer.LastName,
+                    SelfRating = a.SelfRating,
+                    ManagerRating = a.ManagerRating,
+                    FinalRating = a.FinalRating,
+                    ManagerComments = a.ManagerComments
+                })
+                .ToListAsync();
+
+            ApplyThreshold();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private void ApplyThreshold()
+    {
+        _pipRows = _allRows
+            .Where(r => r.FinalRating.HasValue && r.FinalRating.Value < _threshold)
+            .OrderBy(r => r.FinalRating)
+            .ToList();
+    }
+
+    private async Task OnCycleChanged(int? val)
+    {
+        _selectedCycleId = val;
+        await LoadData();
+    }
+
+    private void OnThresholdChanged(decimal val)
+    {
+        _threshold = val;
+        ApplyThreshold();
+    }
+
+    private void ViewAppraisal(int appraisalId)
+    {
+        _detailRow = _pipRows.FirstOrDefault(r => r.AppraisalId == appraisalId);
+        _showDetail = true;
+    }
+
+    private class CycleOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+
+    private class PipRow
+    {
+        public int AppraisalId { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public string? DepartmentName { get; set; }
+        public string? ReviewerName { get; set; }
+        public decimal? SelfRating { get; set; }
+        public decimal? ManagerRating { get; set; }
+        public decimal? FinalRating { get; set; }
+        public string? ManagerComments { get; set; }
+    }
+}

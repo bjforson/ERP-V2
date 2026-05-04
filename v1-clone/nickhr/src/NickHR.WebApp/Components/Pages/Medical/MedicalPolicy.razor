@@ -1,0 +1,319 @@
+@page "/medical/policy"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Medical
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Medical Policy</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Medical Policy</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <!-- Policy Card -->
+    <MudItem xs="12" md="5">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.Policy" Class="mr-1" Style="vertical-align:middle;" />
+                        Current Policy
+                    </MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary"
+                                   OnClick="() => _editMode = !_editMode" />
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (_isLoading)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else if (_policy == null && !_editMode)
+                {
+                    <MudAlert Severity="Severity.Warning">No active medical policy configured.</MudAlert>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3"
+                               OnClick="CreateDefaultPolicy">Create Policy</MudButton>
+                }
+                else if (!_editMode && _policy != null)
+                {
+                    <MudList T="string" Dense="true" DisablePadding="true">
+                        <MudListItem T="string">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Policy Name</MudText>
+                            <MudText Typo="Typo.body1" Style="font-weight:600;">@_policy.Name</MudText>
+                        </MudListItem>
+                        <MudDivider Class="my-2" />
+                        <MudListItem T="string">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Annual Limit Per Employee</MudText>
+                            <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_policy.AnnualLimit.ToString("N2")</MudText>
+                        </MudListItem>
+                        <MudDivider Class="my-2" />
+                        <MudListItem T="string">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Waiting Period</MudText>
+                            <MudText Typo="Typo.body1">@_policy.WaitingPeriodMonths months from joining</MudText>
+                        </MudListItem>
+                        <MudDivider Class="my-2" />
+                        <MudListItem T="string">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Covers Dependents</MudText>
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(_policy.CoversDependents ? Color.Success : Color.Default)">
+                                @(_policy.CoversDependents ? "Yes" : "No")
+                            </MudChip>
+                        </MudListItem>
+                        @if (!string.IsNullOrEmpty(_policy.Description))
+                        {
+                            <MudDivider Class="my-2" />
+                            <MudListItem T="string">
+                                <MudText Typo="Typo.overline" Color="Color.Secondary">Description</MudText>
+                                <MudText Typo="Typo.body2">@_policy.Description</MudText>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+                else
+                {
+                    <!-- Edit Form -->
+                    <MudGrid>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_editName" Label="Policy Name *" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudNumericField T="decimal" @bind-Value="_editAnnualLimit"
+                                             Label="Annual Limit (GH₵) *" Variant="Variant.Outlined"
+                                             Min="0" Format="N2" Adornment="Adornment.Start" AdornmentText="GH₵" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudNumericField T="int" @bind-Value="_editWaitingPeriod"
+                                             Label="Waiting Period (months)" Variant="Variant.Outlined" Min="0" Max="24" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudSwitch T="bool" @bind-Value="_editCoversDependents"
+                                       Label="Covers Dependents" Color="Color.Primary" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_editDescription" Label="Description" Variant="Variant.Outlined"
+                                          Lines="3" />
+                        </MudItem>
+                        <MudItem xs="12" Class="d-flex gap-2">
+                            <MudButton Variant="Variant.Outlined" OnClick="() => _editMode = false">Cancel</MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SavePolicy"
+                                       Disabled="_isSaving">
+                                @if (_isSaving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+                                Save Changes
+                            </MudButton>
+                        </MudItem>
+                    </MudGrid>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Usage Summary Table -->
+    <MudItem xs="12" md="7">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Employee Usage — @DateTime.Today.Year</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (_isLoadingUsage)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else if (!_usageSummary.Any())
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">No claims this year.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_usageSummary" Dense="true" Striped="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Employee</MudTh>
+                            <MudTh>Claims</MudTh>
+                            <MudTh>Claimed (GH₵)</MudTh>
+                            <MudTh>Approved (GH₵)</MudTh>
+                            <MudTh>Usage %</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.EmployeeName</MudTd>
+                            <MudTd>@context.ClaimCount</MudTd>
+                            <MudTd>@context.TotalClaimed.ToString("N2")</MudTd>
+                            <MudTd>@context.TotalApproved.ToString("N2")</MudTd>
+                            <MudTd>
+                                <div class="d-flex align-center gap-2">
+                                    <MudProgressLinear Value="@context.UsagePercent"
+                                                       Color="@GetUsageColor(context.UsagePercent)"
+                                                       Style="width:80px;" Size="Size.Small" />
+                                    <MudText Typo="Typo.caption">@context.UsagePercent.ToString("N0")%</MudText>
+                                </div>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private MedicalBenefit? _policy;
+    private bool _isLoading = true;
+    private bool _isLoadingUsage = true;
+    private bool _editMode = false;
+    private bool _isSaving = false;
+    private List<EmployeeUsageSummary> _usageSummary = new();
+
+    // Edit fields
+    private string _editName = "";
+    private decimal _editAnnualLimit = 2000m;
+    private int _editWaitingPeriod = 0;
+    private bool _editCoversDependents = false;
+    private string _editDescription = "";
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Medical", href: null, disabled: true),
+        new BreadcrumbItem("Policy", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPolicy();
+        await LoadUsageSummary();
+    }
+
+    private async Task LoadPolicy()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _policy = await db.MedicalBenefits.Where(b => b.IsActive).FirstOrDefaultAsync();
+
+            if (_policy != null)
+            {
+                _editName = _policy.Name;
+                _editAnnualLimit = _policy.AnnualLimit;
+                _editWaitingPeriod = _policy.WaitingPeriodMonths;
+                _editCoversDependents = _policy.CoversDependents;
+                _editDescription = _policy.Description ?? "";
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadUsageSummary()
+    {
+        _isLoadingUsage = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var yearStart = new DateTime(DateTime.Today.Year, 1, 1);
+            var limit = _policy?.AnnualLimit ?? 2000m;
+
+            var claims = await db.MedicalClaims
+                .Include(c => c.Employee)
+                .Where(c => c.ClaimDate >= yearStart)
+                .ToListAsync();
+
+            _usageSummary = claims
+                .GroupBy(c => new { c.EmployeeId, Name = c.Employee != null ? $"{c.Employee.FirstName} {c.Employee.LastName}" : "Unknown" })
+                .Select(g => new EmployeeUsageSummary
+                {
+                    EmployeeName = g.Key.Name,
+                    ClaimCount = g.Count(),
+                    TotalClaimed = g.Sum(c => c.ClaimAmount),
+                    TotalApproved = g.Sum(c => c.ApprovedAmount),
+                    UsagePercent = limit > 0 ? (double)(g.Sum(c => c.ApprovedAmount) / limit * 100) : 0
+                })
+                .OrderByDescending(u => u.TotalApproved)
+                .ToList();
+        }
+        finally
+        {
+            _isLoadingUsage = false;
+        }
+    }
+
+    private async Task SavePolicy()
+    {
+        if (string.IsNullOrWhiteSpace(_editName)) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (_policy == null)
+            {
+                _policy = new MedicalBenefit();
+                db.MedicalBenefits.Add(_policy);
+            }
+            else
+            {
+                db.MedicalBenefits.Attach(_policy);
+            }
+
+            _policy.Name = _editName;
+            _policy.AnnualLimit = _editAnnualLimit;
+            _policy.WaitingPeriodMonths = _editWaitingPeriod;
+            _policy.CoversDependents = _editCoversDependents;
+            _policy.Description = _editDescription;
+            _policy.IsActive = true;
+            _policy.UpdatedAt = DateTime.UtcNow;
+
+            await db.SaveChangesAsync();
+            _editMode = false;
+            Snackbar.Add("Policy saved successfully!", Severity.Success);
+            await LoadUsageSummary();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving policy: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task CreateDefaultPolicy()
+    {
+        _editName = "Standard Medical Benefit";
+        _editAnnualLimit = 2000m;
+        _editWaitingPeriod = 3;
+        _editCoversDependents = false;
+        _editDescription = "";
+        _editMode = true;
+        await Task.CompletedTask;
+    }
+
+    private Color GetUsageColor(double pct)
+    {
+        if (pct < 50) return Color.Success;
+        if (pct < 80) return Color.Warning;
+        return Color.Error;
+    }
+
+    public class EmployeeUsageSummary
+    {
+        public string EmployeeName { get; set; } = "";
+        public int ClaimCount { get; set; }
+        public decimal TotalClaimed { get; set; }
+        public decimal TotalApproved { get; set; }
+        public double UsagePercent { get; set; }
+    }
+}

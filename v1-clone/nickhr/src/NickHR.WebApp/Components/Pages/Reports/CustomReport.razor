@@ -1,0 +1,376 @@
+@page "/reports/custom"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Exit
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Custom Report Builder</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Custom Report Builder</MudText>
+
+<MudGrid>
+    <!-- Left Panel: Configuration -->
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent><MudText Typo="Typo.h6">1. Select Data Source</MudText></CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudSelect T="string" Label="Data Source" @bind-Value="_dataSource" @bind-Value:after="OnDataSourceChanged" Dense="true">
+                    <MudSelectItem T="string" Value="@("Employees")">Employees</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("PayrollRuns")">Payroll Runs</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("LeaveRequests")">Leave Requests</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Attendance")">Attendance</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Separations")">Separations</MudSelectItem>
+                </MudSelect>
+            </MudCardContent>
+        </MudCard>
+
+        @if (_availableColumns.Any())
+        {
+            <MudCard Elevation="2" Class="mb-4">
+                <MudCardHeader>
+                    <CardHeaderContent><MudText Typo="Typo.h6">2. Select Columns</MudText></CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    @foreach (var col in _availableColumns)
+                    {
+                        <MudCheckBox T="bool" Label="@col" Value="@_selectedColumns.Contains(col)"
+                                     ValueChanged="@((v) => ToggleColumn(col, v))" Dense="true" />
+                    }
+                </MudCardContent>
+            </MudCard>
+
+            <MudCard Elevation="2" Class="mb-4">
+                <MudCardHeader>
+                    <CardHeaderContent><MudText Typo="Typo.h6">3. Filters</MudText></CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudDatePicker Label="Date From" @bind-Date="_dateFrom" Clearable="true" Dense="true" Class="mb-2" />
+                    <MudDatePicker Label="Date To" @bind-Date="_dateTo" Clearable="true" Dense="true" Class="mb-2" />
+
+                    @if (_dataSource == "Employees" || _dataSource == "LeaveRequests" || _dataSource == "Attendance" || _dataSource == "Separations")
+                    {
+                        <MudSelect T="int?" Label="Department" @bind-Value="_filterDeptId" Clearable="true" Dense="true" Class="mb-2">
+                            @foreach (var d in _departments)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)d.Id)">@d.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+
+                    @if (_dataSource == "Employees")
+                    {
+                        <MudSelect T="EmploymentStatus?" Label="Status" @bind-Value="_filterStatus" Clearable="true" Dense="true">
+                            @foreach (EmploymentStatus es in Enum.GetValues(typeof(EmploymentStatus)))
+                            {
+                                <MudSelectItem T="EmploymentStatus?" Value="@((EmploymentStatus?)es)">@es</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+
+                    @if (_dataSource == "LeaveRequests")
+                    {
+                        <MudSelect T="LeaveRequestStatus?" Label="Leave Status" @bind-Value="_filterLeaveStatus" Clearable="true" Dense="true">
+                            @foreach (LeaveRequestStatus ls in Enum.GetValues(typeof(LeaveRequestStatus)))
+                            {
+                                <MudSelectItem T="LeaveRequestStatus?" Value="@((LeaveRequestStatus?)ls)">@ls</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                </MudCardContent>
+            </MudCard>
+
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                       OnClick="GenerateReport" StartIcon="@Icons.Material.Filled.PlayArrow"
+                       Disabled="@(!_selectedColumns.Any())">
+                Generate Report
+            </MudButton>
+        }
+    </MudItem>
+
+    <!-- Right Panel: Results -->
+    <MudItem xs="12" md="8">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else if (_reportRows.Any())
+        {
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">
+                            Results — @_reportRows.Count rows
+                        </MudText>
+                    </CardHeaderContent>
+                    <CardHeaderActions>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Success" OnClick="ExportCsv"
+                                   StartIcon="@Icons.Material.Filled.Download" Size="Size.Small">Export CSV</MudButton>
+                    </CardHeaderActions>
+                </MudCardHeader>
+                <MudCardContent Class="pa-0">
+                    <div style="overflow-x:auto;">
+                        <MudTable Items="@_reportRows" Dense="true" Hover="true" Striped="true" T="Dictionary<string,string?>">
+                            <HeaderContent>
+                                @foreach (var col in _selectedColumns)
+                                {
+                                    <MudTh>@col</MudTh>
+                                }
+                            </HeaderContent>
+                            <RowTemplate>
+                                @foreach (var col in _selectedColumns)
+                                {
+                                    <MudTd DataLabel="@col">@(context.TryGetValue(col, out var v) ? v : "—")</MudTd>
+                                }
+                            </RowTemplate>
+                            <PagerContent>
+                                <MudTablePager PageSizeOptions="new[] { 10, 25, 50, 100 }" />
+                            </PagerContent>
+                        </MudTable>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        }
+        else if (_hasGenerated)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">No records match your criteria.</MudAlert>
+        }
+        else if (!string.IsNullOrEmpty(_dataSource))
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                Select columns and click "Generate Report" to view results.
+            </MudAlert>
+        }
+        else
+        {
+            <MudCard Elevation="0" Class="d-flex align-center justify-center" Style="height:300px;">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Assessment" Style="font-size:64px; opacity:0.2;" />
+                    <MudText Typo="Typo.h6" Color="Color.Secondary" Class="mt-2">Select a data source to begin</MudText>
+                </MudCardContent>
+            </MudCard>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private string _dataSource = string.Empty;
+    private List<string> _availableColumns = new();
+    private HashSet<string> _selectedColumns = new();
+    private DateTime? _dateFrom;
+    private DateTime? _dateTo;
+    private int? _filterDeptId;
+    private EmploymentStatus? _filterStatus;
+    private LeaveRequestStatus? _filterLeaveStatus;
+
+    private List<(int Id, string Name)> _departments = new();
+    private List<Dictionary<string, string?>> _reportRows = new();
+    private bool _isLoading = false;
+    private bool _hasGenerated = false;
+
+    private static readonly Dictionary<string, List<string>> ColumnMap = new()
+    {
+        ["Employees"] = new() { "Employee Code", "First Name", "Last Name", "Department", "Designation", "Location", "Employment Type", "Employment Status", "Hire Date", "Gender", "Work Email", "Basic Salary" },
+        ["PayrollRuns"] = new() { "Period", "Status", "Total Gross", "Total Net", "Total SSNIT (Emp)", "Total SSNIT (Empr)", "Total PAYE", "Run Date" },
+        ["LeaveRequests"] = new() { "Employee", "Department", "Leave Type", "Start Date", "End Date", "Days", "Status", "Applied On" },
+        ["Attendance"] = new() { "Employee", "Department", "Date", "Clock In", "Clock Out", "Work Hours", "Status" },
+        ["Separations"] = new() { "Employee", "Department", "Separation Type", "Notice Date", "Last Working Date", "Tenure (yrs)", "Reason" }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _departments = (await db.Departments.Where(d => d.IsActive).OrderBy(d => d.Name)
+            .Select(d => new { d.Id, d.Name }).ToListAsync()).Select(d => (d.Id, d.Name)).ToList();
+    }
+
+    private void OnDataSourceChanged()
+    {
+        _availableColumns = ColumnMap.TryGetValue(_dataSource, out var cols) ? cols : new();
+        _selectedColumns.Clear();
+        _reportRows.Clear();
+        _hasGenerated = false;
+    }
+
+    private void ToggleColumn(string col, bool selected)
+    {
+        if (selected) _selectedColumns.Add(col);
+        else _selectedColumns.Remove(col);
+    }
+
+    private async Task GenerateReport()
+    {
+        _isLoading = true;
+        _hasGenerated = false;
+        _reportRows.Clear();
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            switch (_dataSource)
+            {
+                case "Employees":
+                    await GenerateEmployeesReport(db);
+                    break;
+                case "PayrollRuns":
+                    await GeneratePayrollReport(db);
+                    break;
+                case "LeaveRequests":
+                    await GenerateLeaveReport(db);
+                    break;
+                case "Attendance":
+                    await GenerateAttendanceReport(db);
+                    break;
+                case "Separations":
+                    await GenerateSeparationsReport(db);
+                    break;
+            }
+            _hasGenerated = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task GenerateEmployeesReport(NickHRDbContext db)
+    {
+        var q = db.Employees.Include(e => e.Department).Include(e => e.Designation).Include(e => e.Location).AsQueryable();
+        if (_filterDeptId.HasValue) q = q.Where(e => e.DepartmentId == _filterDeptId.Value);
+        if (_filterStatus.HasValue) q = q.Where(e => e.EmploymentStatus == _filterStatus.Value);
+        if (_dateFrom.HasValue) q = q.Where(e => e.HireDate >= _dateFrom.Value);
+        if (_dateTo.HasValue) q = q.Where(e => e.HireDate <= _dateTo.Value);
+        var rows = await q.OrderBy(e => e.LastName).ToListAsync();
+        _reportRows = rows.Select(e =>
+        {
+            var d = new Dictionary<string, string?>();
+            if (_selectedColumns.Contains("Employee Code")) d["Employee Code"] = e.EmployeeCode;
+            if (_selectedColumns.Contains("First Name")) d["First Name"] = e.FirstName;
+            if (_selectedColumns.Contains("Last Name")) d["Last Name"] = e.LastName;
+            if (_selectedColumns.Contains("Department")) d["Department"] = e.Department?.Name;
+            if (_selectedColumns.Contains("Designation")) d["Designation"] = e.Designation?.Title;
+            if (_selectedColumns.Contains("Location")) d["Location"] = e.Location?.Name;
+            if (_selectedColumns.Contains("Employment Type")) d["Employment Type"] = e.EmploymentType.ToString();
+            if (_selectedColumns.Contains("Employment Status")) d["Employment Status"] = e.EmploymentStatus.ToString();
+            if (_selectedColumns.Contains("Hire Date")) d["Hire Date"] = e.HireDate?.ToString("dd/MM/yyyy") ?? "N/A";
+            if (_selectedColumns.Contains("Gender")) d["Gender"] = e.Gender.ToString();
+            if (_selectedColumns.Contains("Work Email")) d["Work Email"] = e.WorkEmail;
+            if (_selectedColumns.Contains("Basic Salary")) d["Basic Salary"] = e.BasicSalary.ToString("N2");
+            return d;
+        }).ToList();
+    }
+
+    private async Task GeneratePayrollReport(NickHRDbContext db)
+    {
+        var q = db.PayrollRuns.AsQueryable();
+        if (_dateFrom.HasValue) q = q.Where(r => r.RunDate >= _dateFrom.Value);
+        if (_dateTo.HasValue) q = q.Where(r => r.RunDate <= _dateTo.Value);
+        var rows = await q.OrderByDescending(r => r.RunDate).ToListAsync();
+        _reportRows = rows.Select(r =>
+        {
+            var d = new Dictionary<string, string?>();
+            if (_selectedColumns.Contains("Period")) d["Period"] = $"{System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(r.PayPeriodMonth)} {r.PayPeriodYear}";
+            if (_selectedColumns.Contains("Status")) d["Status"] = r.Status.ToString();
+            if (_selectedColumns.Contains("Total Gross")) d["Total Gross"] = r.TotalGrossPay.ToString("N2");
+            if (_selectedColumns.Contains("Total Net")) d["Total Net"] = r.TotalNetPay.ToString("N2");
+            if (_selectedColumns.Contains("Total SSNIT (Emp)")) d["Total SSNIT (Emp)"] = r.TotalSSNITEmployee.ToString("N2");
+            if (_selectedColumns.Contains("Total SSNIT (Empr)")) d["Total SSNIT (Empr)"] = r.TotalSSNITEmployer.ToString("N2");
+            if (_selectedColumns.Contains("Total PAYE")) d["Total PAYE"] = r.TotalPAYE.ToString("N2");
+            if (_selectedColumns.Contains("Run Date")) d["Run Date"] = r.RunDate.ToString("dd/MM/yyyy");
+            return d;
+        }).ToList();
+    }
+
+    private async Task GenerateLeaveReport(NickHRDbContext db)
+    {
+        var q = db.LeaveRequests.Include(r => r.Employee).ThenInclude(e => e.Department)
+            .Include(r => r.LeavePolicy).AsQueryable();
+        if (_filterDeptId.HasValue) q = q.Where(r => r.Employee.DepartmentId == _filterDeptId.Value);
+        if (_filterLeaveStatus.HasValue) q = q.Where(r => r.Status == _filterLeaveStatus.Value);
+        if (_dateFrom.HasValue) q = q.Where(r => r.StartDate >= _dateFrom.Value);
+        if (_dateTo.HasValue) q = q.Where(r => r.StartDate <= _dateTo.Value);
+        var rows = await q.OrderByDescending(r => r.StartDate).ToListAsync();
+        _reportRows = rows.Select(r =>
+        {
+            var d = new Dictionary<string, string?>();
+            if (_selectedColumns.Contains("Employee")) d["Employee"] = $"{r.Employee.FirstName} {r.Employee.LastName}";
+            if (_selectedColumns.Contains("Department")) d["Department"] = r.Employee.Department?.Name;
+            if (_selectedColumns.Contains("Leave Type")) d["Leave Type"] = r.LeavePolicy?.LeaveType.ToString();
+            if (_selectedColumns.Contains("Start Date")) d["Start Date"] = r.StartDate.ToString("dd/MM/yyyy");
+            if (_selectedColumns.Contains("End Date")) d["End Date"] = r.EndDate.ToString("dd/MM/yyyy");
+            if (_selectedColumns.Contains("Days")) d["Days"] = r.NumberOfDays.ToString("F1");
+            if (_selectedColumns.Contains("Status")) d["Status"] = r.Status.ToString();
+            if (_selectedColumns.Contains("Applied On")) d["Applied On"] = r.CreatedAt.ToString("dd/MM/yyyy");
+            return d;
+        }).ToList();
+    }
+
+    private async Task GenerateAttendanceReport(NickHRDbContext db)
+    {
+        var q = db.AttendanceRecords.Include(a => a.Employee).ThenInclude(e => e.Department).AsQueryable();
+        if (_filterDeptId.HasValue) q = q.Where(a => a.Employee.DepartmentId == _filterDeptId.Value);
+        if (_dateFrom.HasValue) q = q.Where(a => a.Date >= _dateFrom.Value);
+        if (_dateTo.HasValue) q = q.Where(a => a.Date <= _dateTo.Value);
+        var rows = await q.OrderByDescending(a => a.Date).Take(1000).ToListAsync();
+        _reportRows = rows.Select(a =>
+        {
+            var d = new Dictionary<string, string?>();
+            if (_selectedColumns.Contains("Employee")) d["Employee"] = $"{a.Employee.FirstName} {a.Employee.LastName}";
+            if (_selectedColumns.Contains("Department")) d["Department"] = a.Employee.Department?.Name;
+            if (_selectedColumns.Contains("Date")) d["Date"] = a.Date.ToString("dd/MM/yyyy HH:mm");
+            if (_selectedColumns.Contains("Clock In")) d["Clock In"] = a.ClockIn?.ToString(@"HH\:mm");
+            if (_selectedColumns.Contains("Clock Out")) d["Clock Out"] = a.ClockOut?.ToString(@"HH\:mm");
+            if (_selectedColumns.Contains("Work Hours")) d["Work Hours"] = a.WorkHours?.ToString("F1");
+            if (_selectedColumns.Contains("Status")) d["Status"] = a.AttendanceType.ToString();
+            return d;
+        }).ToList();
+    }
+
+    private async Task GenerateSeparationsReport(NickHRDbContext db)
+    {
+        var q = db.Separations.Include(s => s.Employee).ThenInclude(e => e.Department).AsQueryable();
+        if (_filterDeptId.HasValue) q = q.Where(s => s.Employee.DepartmentId == _filterDeptId.Value);
+        if (_dateFrom.HasValue) q = q.Where(s => s.LastWorkingDate >= _dateFrom.Value);
+        if (_dateTo.HasValue) q = q.Where(s => s.LastWorkingDate <= _dateTo.Value);
+        var rows = await q.OrderByDescending(s => s.LastWorkingDate).ToListAsync();
+        _reportRows = rows.Select(s =>
+        {
+            var d = new Dictionary<string, string?>();
+            if (_selectedColumns.Contains("Employee")) d["Employee"] = $"{s.Employee.FirstName} {s.Employee.LastName}";
+            if (_selectedColumns.Contains("Department")) d["Department"] = s.Employee.Department?.Name;
+            if (_selectedColumns.Contains("Separation Type")) d["Separation Type"] = s.SeparationType.ToString();
+            if (_selectedColumns.Contains("Notice Date")) d["Notice Date"] = s.NoticeDate.ToString("dd/MM/yyyy");
+            if (_selectedColumns.Contains("Last Working Date")) d["Last Working Date"] = s.LastWorkingDate.ToString("dd/MM/yyyy");
+            if (_selectedColumns.Contains("Tenure (yrs)")) d["Tenure (yrs)"] = s.Employee.HireDate.HasValue ? ((s.LastWorkingDate - s.Employee.HireDate.Value).TotalDays / 365.25).ToString("F1") : "N/A";
+            if (_selectedColumns.Contains("Reason")) d["Reason"] = s.Reason;
+            return d;
+        }).ToList();
+    }
+
+    private void ExportCsv()
+    {
+        if (!_reportRows.Any()) return;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(string.Join(",", _selectedColumns));
+        foreach (var row in _reportRows)
+            sb.AppendLine(string.Join(",", _selectedColumns.Select(c => $"\"{(row.TryGetValue(c, out var v) ? v : "")}\"")));
+        Snackbar.Add($"CSV export prepared ({_reportRows.Count} rows). Wire up IJSRuntime for browser file download.", Severity.Info);
+    }
+}

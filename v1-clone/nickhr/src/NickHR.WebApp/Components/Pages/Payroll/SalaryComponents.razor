@@ -1,0 +1,393 @@
+@page "/payroll/salary-components"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHROrPayroll)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Services.Payroll
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject NickHR.Services.Payroll.IPayrollProcessingService PayrollService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Salary Components</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Tune" Class="mr-2" />Salary Components
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<!-- Salary Components Table -->
+<MudCard Elevation="2" Class="mb-6">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">Component Catalogue</MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenAddComponentDialogAsync">
+                Add Component
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_loadingComponents)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        <MudTabs Elevation="0" Rounded="false" ApplyEffectsToContainer="true">
+            <MudTabPanel Text="All">
+                @RenderComponentTable(_components)
+            </MudTabPanel>
+            <MudTabPanel Text="Earnings">
+                @RenderComponentTable(_components.Where(c => c.ComponentType == SalaryComponentType.Earning).ToList())
+            </MudTabPanel>
+            <MudTabPanel Text="Deductions">
+                @RenderComponentTable(_components.Where(c => c.ComponentType != SalaryComponentType.Earning).ToList())
+            </MudTabPanel>
+        </MudTabs>
+    </MudCardContent>
+</MudCard>
+
+<!-- Employee Salary Structure Section -->
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">Employee Salary Structure</MudText>
+        </CardHeaderContent>
+    </MudCardHeader>
+    <MudCardContent>
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudSelect T="int?" @bind-Value="_selectedEmployeeId" Label="Select Employee"
+                           Variant="Variant.Outlined" Dense="true"
+                           Clearable="true"
+                           @bind-Value:after="LoadEmployeeStructureAsync">
+                    @foreach (var emp in _employees)
+                    {
+                        <MudSelectItem Value="@((int?)emp.Id)">
+                            @emp.FirstName @emp.LastName (@emp.EmployeeCode)
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            @if (_selectedEmployeeId.HasValue)
+            {
+                <MudItem xs="12" md="3" Class="d-flex align-end">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="OpenAddEmployeeSalaryDialogAsync">
+                        Add Component
+                    </MudButton>
+                </MudItem>
+            }
+        </MudGrid>
+
+        @if (_selectedEmployeeId.HasValue)
+        {
+            @if (_loadingStructure)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
+            }
+            else if (!_employeeStructure.Any())
+            {
+                <MudAlert Severity="Severity.Info" Class="mt-3">
+                    No salary components assigned to this employee.
+                </MudAlert>
+            }
+            else
+            {
+                <MudTable Items="_employeeStructure" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                          Class="mt-3" Elevation="0">
+                    <HeaderContent>
+                        <MudTh>Component</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Amount (GH₵)</MudTh>
+                        <MudTh>Effective From</MudTh>
+                        <MudTh>Effective To</MudTh>
+                        <MudTh>Active</MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Component">@context.SalaryComponent.Name</MudTd>
+                        <MudTd DataLabel="Type">
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(context.SalaryComponent.ComponentType == SalaryComponentType.Earning ? Color.Success : Color.Error)">
+                                @context.SalaryComponent.ComponentType
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Amount">GH₵ @context.Amount.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Effective From">@context.EffectiveFrom.ToString("dd MMM yyyy")</MudTd>
+                        <MudTd DataLabel="Effective To">@(context.EffectiveTo?.ToString("dd MMM yyyy") ?? "Ongoing")</MudTd>
+                        <MudTd DataLabel="Active">
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(context.IsActive ? Color.Success : Color.Default)">
+                                @(context.IsActive ? "Active" : "Inactive")
+                            </MudChip>
+                        </MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                           Size="Size.Small"
+                                           OnClick="() => ConfirmRemoveStructureAsync(context)" />
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText>No salary structure found.</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            }
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private bool _loadingComponents = true;
+    private bool _loadingStructure = false;
+    private List<SalaryComponent> _components = new();
+    private List<Employee> _employees = new();
+    private List<EmployeeSalaryStructure> _employeeStructure = new();
+    private int? _selectedEmployeeId;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Payroll", href: null, disabled: true),
+        new BreadcrumbItem("Salary Components", href: null, disabled: true)
+    };
+
+    private RenderFragment RenderComponentTable(List<SalaryComponent> list) => __builder =>
+    {
+        <MudTable Items="list" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="0">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<SalaryComponent, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
+                <MudTh>Code</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>Fixed?</MudTh>
+                <MudTh>Taxable?</MudTh>
+                <MudTh>Statutory?</MudTh>
+                <MudTh>Default Amount</MudTh>
+                <MudTh>Default %</MudTh>
+                <MudTh>Active</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">@context.Name</MudTd>
+                <MudTd DataLabel="Code"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Code</MudChip></MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.ComponentType == SalaryComponentType.Earning ? Color.Success : Color.Error)">
+                        @context.ComponentType
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Fixed?">
+                    <MudIcon Icon="@(context.IsFixed ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                             Color="@(context.IsFixed ? Color.Success : Color.Default)" Size="Size.Small" />
+                </MudTd>
+                <MudTd DataLabel="Taxable?">
+                    <MudIcon Icon="@(context.IsTaxable ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                             Color="@(context.IsTaxable ? Color.Warning : Color.Default)" Size="Size.Small" />
+                </MudTd>
+                <MudTd DataLabel="Statutory?">
+                    <MudIcon Icon="@(context.IsStatutory ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                             Color="@(context.IsStatutory ? Color.Info : Color.Default)" Size="Size.Small" />
+                </MudTd>
+                <MudTd DataLabel="Default Amount">
+                    @(context.DefaultAmount.HasValue ? $"GH₵ {context.DefaultAmount:N2}" : "-")
+                </MudTd>
+                <MudTd DataLabel="Default %">
+                    @(context.DefaultPercentage.HasValue ? $"{context.DefaultPercentage:N2}%" : "-")
+                </MudTd>
+                <MudTd DataLabel="Active">
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.IsActive ? Color.Success : Color.Default)">
+                        @(context.IsActive ? "Active" : "Inactive")
+                    </MudChip>
+                </MudTd>
+                <MudTd>
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                   OnClick="() => OpenEditComponentDialogAsync(context)" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                   OnClick="() => ConfirmDeleteComponentAsync(context)" />
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText>No components found.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.WhenAll(LoadComponentsAsync(), LoadEmployeesAsync());
+    }
+
+    private async Task LoadComponentsAsync()
+    {
+        _loadingComponents = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _components = await db.SalaryComponents
+                .Where(c => !c.IsDeleted)
+                .OrderBy(c => c.ComponentType)
+                .ThenBy(c => c.Name)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading components: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loadingComponents = false;
+        }
+    }
+
+    private async Task LoadEmployeesAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted &&
+                            (e.EmploymentStatus == EmploymentStatus.Active ||
+                             e.EmploymentStatus == EmploymentStatus.Confirmed ||
+                             e.EmploymentStatus == EmploymentStatus.OnProbation))
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading employees: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task LoadEmployeeStructureAsync()
+    {
+        if (!_selectedEmployeeId.HasValue) { _employeeStructure = new(); return; }
+
+        _loadingStructure = true;
+        StateHasChanged();
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employeeStructure = await db.EmployeeSalaryStructures
+                .Include(s => s.SalaryComponent)
+                .Where(s => s.EmployeeId == _selectedEmployeeId.Value && !s.IsDeleted)
+                .OrderByDescending(s => s.EffectiveFrom)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading structure: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loadingStructure = false;
+        }
+    }
+
+    private async Task OpenAddComponentDialogAsync()
+    {
+        var dialog = await DialogService.ShowAsync<SalaryComponentDialog>("Add Salary Component",
+            new DialogParameters(),
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        if (!(await dialog.Result)?.Canceled ?? false)
+            await LoadComponentsAsync();
+    }
+
+    private async Task OpenEditComponentDialogAsync(SalaryComponent component)
+    {
+        var parameters = new DialogParameters { ["Component"] = component };
+        var dialog = await DialogService.ShowAsync<SalaryComponentDialog>("Edit Salary Component",
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        if (!(await dialog.Result)?.Canceled ?? false)
+            await LoadComponentsAsync();
+    }
+
+    private async Task ConfirmDeleteComponentAsync(SalaryComponent component)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Delete Component",
+            $"Soft-delete '{component.Name}'? It will be deactivated and hidden from new assignments.",
+            yesText: "Delete",
+            cancelText: "Cancel");
+
+        if (result != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.SalaryComponents.FindAsync(component.Id);
+            if (entity != null)
+            {
+                entity.IsDeleted = true;
+                entity.IsActive = false;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Component deleted.", Severity.Success);
+                await LoadComponentsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OpenAddEmployeeSalaryDialogAsync()
+    {
+        if (!_selectedEmployeeId.HasValue) return;
+
+        var parameters = new DialogParameters
+        {
+            ["EmployeeId"] = _selectedEmployeeId.Value,
+            ["Components"] = _components.Where(c => c.IsActive && !c.IsDeleted).ToList()
+        };
+        var dialog = await DialogService.ShowAsync<EmployeeSalaryDialog>("Add Salary Component to Employee",
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        if (!(await dialog.Result)?.Canceled ?? false)
+            await LoadEmployeeStructureAsync();
+    }
+
+    private async Task ConfirmRemoveStructureAsync(EmployeeSalaryStructure item)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Remove Component",
+            $"Remove '{item.SalaryComponent.Name}' from this employee's salary structure?",
+            yesText: "Remove",
+            cancelText: "Cancel");
+
+        if (result != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmployeeSalaryStructures.FindAsync(item.Id);
+            if (entity != null)
+            {
+                entity.IsDeleted = true;
+                entity.IsActive = false;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Component removed.", Severity.Success);
+                await LoadEmployeeStructureAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Remove failed: {ex.Message}", Severity.Error);
+        }
+    }
+}

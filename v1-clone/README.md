@@ -1,6 +1,7 @@
-# `v1-clone/` — point-in-time clone of v1's NickFinance into v2
+# `v1-clone/` — point-in-time clone of v1's NickFinance + NickHR into v2
 
-**Cloned**: 2026-04-30 17:30 UTC
+**NickFinance cloned**: 2026-04-30 17:30 UTC
+**NickHR cloned**: 2026-05-04 (Sprint 15)
 **Source**: `C:\Shared\NSCIM_PRODUCTION\` (the v1 repo —
 `github.com/bjforson/NSCIM-PRODUCTION`)
 **This repo**: `C:\Shared\ERP V2\` (the v2 repo —
@@ -8,10 +9,11 @@
 
 ## What this is
 
-A verbatim file-tree copy of the working NickFinance code (and the v1
-platform projects it depends on) from inside the v1 tree, dropped into
-the v2 tree so this repo carries the canonical NickFinance source going
-forward.
+A verbatim file-tree copy of the working NickFinance and NickHR code
+(plus the v1 platform projects they depend on) from inside the v1 tree,
+dropped into the v2 tree so this repo carries the canonical source going
+forward. The two clones land alongside each other under separate
+subdirectories — they share platform deps where overlap exists.
 
 The clone exists because of the **directional v1/v2 separation rule**
 (see `~/.claude/projects/.../memory/reference_v1_v2_separation.md`):
@@ -31,12 +33,14 @@ becomes the deploy-staging artefact only.
 | Path under `v1-clone/` | Origin in v1 | Project count |
 | --- | --- | --- |
 | `finance/` | `NSCIM_PRODUCTION/finance/` | 30 |
+| `nickhr/` | `NSCIM_PRODUCTION/NickHR/` | 9 (8 src + 1 test) |
 | `platform/NickERP.Platform.Core/` | `NSCIM_PRODUCTION/platform/NickERP.Platform.Core/` | 1 |
 | `platform/NickERP.Platform.Identity/` | `NSCIM_PRODUCTION/platform/NickERP.Platform.Identity/` | 1 |
 | `platform/NickERP.Platform.Observability/` | `NSCIM_PRODUCTION/platform/NickERP.Platform.Observability/` | 1 |
+| `platform/NickERP.Platform.Tenancy/` | `NSCIM_PRODUCTION/platform/NickERP.Platform.Tenancy/` | 1 (added 2026-05-04 for NickHR) |
 | `platform/NickERP.Platform.Web.Shared/` | `NSCIM_PRODUCTION/platform/NickERP.Platform.Web.Shared/` | 1 |
 
-`bin/`, `obj/`, `.vs/` were excluded. Source-only: ~352 files, ~2 MB.
+`bin/`, `obj/`, `.vs/` were excluded. Source-only.
 
 These four `platform/*` projects are the strict transitive deps of v1
 NickFinance — copied as-is so the relative `..\..\platform\...`

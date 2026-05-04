@@ -1,0 +1,227 @@
+@page "/employees/org-chart"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>NICKSCAN ERP — NickHR — Organization Chart</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.AccountTree" Class="mr-2" />Organization Chart
+</MudText>
+
+@if (_loading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (!_allEmployees.Any())
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">No employees found.</MudAlert>
+}
+else
+{
+    <MudGrid Class="mb-3">
+        <MudItem xs="12" md="4">
+            <MudSelect T="int?" Value="_filterDeptId" ValueChanged="OnDeptFilter"
+                       Label="Filter by Department" Variant="Variant.Outlined" Clearable="true" Dense="true">
+                @foreach (var kvp in _departments)
+                {
+                    <MudSelectItem Value="@((int?)kvp.Key)">@kvp.Value</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+
+    <div class="org-tree">
+        @foreach (var node in _rootNodes)
+        {
+            @RenderNode(node, 0)
+        }
+    </div>
+}
+
+<style>
+    .org-tree .org-node { border-left: 3px solid var(--mud-palette-primary); }
+    .org-node-header { cursor: pointer; }
+    .org-node-header:hover { background: var(--mud-palette-action-hover); border-radius: 4px; }
+</style>
+
+@code {
+    private bool _loading = true;
+    private List<Employee> _allEmployees = new();
+    private List<OrgNode> _rootNodes = new();
+    private Dictionary<int, string> _departments = new();
+    private int? _filterDeptId;
+    private HashSet<int> _expanded = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _allEmployees = await db.Employees
+                .Include(e => e.Department)
+                .Include(e => e.Designation)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .ToListAsync();
+
+            _departments = _allEmployees
+                .Where(e => e.Department != null && e.DepartmentId.HasValue)
+                .GroupBy(e => e.DepartmentId!.Value)
+                .ToDictionary(g => g.Key, g => g.First().Department!.Name);
+
+            BuildTree();
+            // Expand top-level by default
+            foreach (var n in _rootNodes)
+                _expanded.Add(n.Employee.Id);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading org chart: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void BuildTree()
+    {
+        var byManager = _allEmployees
+            .Where(e => e.ReportingManagerId.HasValue)
+            .GroupBy(e => e.ReportingManagerId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var topLevel = _allEmployees.Where(e => !e.ReportingManagerId.HasValue).ToList();
+        _rootNodes = topLevel.Select(e => BuildNode(e, byManager)).ToList();
+    }
+
+    private OrgNode BuildNode(Employee emp, Dictionary<int, List<Employee>> byManager)
+    {
+        var children = byManager.TryGetValue(emp.Id, out var subs)
+            ? subs.Select(s => BuildNode(s, byManager)).ToList()
+            : new List<OrgNode>();
+        return new OrgNode { Employee = emp, Children = children };
+    }
+
+    private bool NodeMatchesFilter(OrgNode node)
+    {
+        if (_filterDeptId == null) return true;
+        if (node.Employee.DepartmentId == _filterDeptId) return true;
+        return node.Children.Any(NodeMatchesFilter);
+    }
+
+    private RenderFragment RenderNode(OrgNode node, int depth) => builder =>
+    {
+        if (!NodeMatchesFilter(node)) return;
+
+        var emp = node.Employee;
+        var isExpanded = _expanded.Contains(emp.Id);
+        var hasChildren = node.Children.Any(NodeMatchesFilter);
+        var indent = depth * 24;
+
+        int seq = 0;
+
+        // Outer div with left-border for depth > 0
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", depth > 0 ? "org-node ml-4 pl-3 mb-2" : "mb-2");
+
+        // Header row
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", "org-node-header d-flex align-center gap-2 pa-2");
+        builder.AddAttribute(seq++, "style", $"margin-left:{indent}px");
+
+        // Expand/collapse icon
+        if (hasChildren)
+        {
+            builder.OpenComponent<MudIconButton>(seq++);
+            builder.AddAttribute(seq++, "Icon", isExpanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore);
+            builder.AddAttribute(seq++, "Size", Size.Small);
+            builder.AddAttribute(seq++, "OnClick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => ToggleExpand(emp.Id)));
+            builder.CloseComponent();
+        }
+        else
+        {
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "style", "width:40px;display:inline-block;");
+            builder.CloseElement();
+        }
+
+        // Avatar
+        builder.OpenComponent<MudAvatar>(seq++);
+        builder.AddAttribute(seq++, "Size", Size.Small);
+        builder.AddAttribute(seq++, "Color", Color.Primary);
+        if (!string.IsNullOrEmpty(emp.PhotoUrl))
+            builder.AddAttribute(seq++, "Image", $"/api/files/{emp.PhotoUrl}");
+        builder.AddAttribute(seq++, "ChildContent", (RenderFragment)(ab =>
+        {
+            if (string.IsNullOrEmpty(emp.PhotoUrl))
+            {
+                ab.AddContent(0, emp.FirstName.Length > 0 ? emp.FirstName[0].ToString() : "?");
+            }
+        }));
+        builder.CloseComponent();
+
+        // Name & title clickable block
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "style", "cursor:pointer;flex:1");
+        builder.AddAttribute(seq++, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => Nav.NavigateTo($"/employees/{emp.Id}")));
+
+        builder.OpenComponent<MudText>(seq++);
+        builder.AddAttribute(seq++, "Typo", Typo.body1);
+        builder.AddAttribute(seq++, "ChildContent", (RenderFragment)(tb => tb.AddContent(0, $"{emp.FirstName} {emp.LastName}")));
+        builder.CloseComponent();
+
+        builder.OpenComponent<MudText>(seq++);
+        builder.AddAttribute(seq++, "Typo", Typo.caption);
+        builder.AddAttribute(seq++, "Color", Color.Secondary);
+        builder.AddAttribute(seq++, "ChildContent", (RenderFragment)(tb => tb.AddContent(0, $"{emp.Designation?.Title ?? "—"} · {emp.Department?.Name ?? "—"}")));
+        builder.CloseComponent();
+
+        builder.CloseElement(); // name block
+
+        builder.CloseElement(); // header row
+
+        // Children
+        if (hasChildren && isExpanded)
+        {
+            builder.OpenElement(seq++, "div");
+            foreach (var child in node.Children)
+            {
+                var childFrag = RenderNode(child, depth + 1);
+                childFrag(builder);
+            }
+            builder.CloseElement();
+        }
+
+        builder.CloseElement(); // outer div
+    };
+
+    private void ToggleExpand(int id)
+    {
+        if (_expanded.Contains(id))
+            _expanded.Remove(id);
+        else
+            _expanded.Add(id);
+    }
+
+    private void OnDeptFilter(int? deptId) => _filterDeptId = deptId;
+
+    public class OrgNode
+    {
+        public Employee Employee { get; set; } = null!;
+        public List<OrgNode> Children { get; set; } = new();
+    }
+}

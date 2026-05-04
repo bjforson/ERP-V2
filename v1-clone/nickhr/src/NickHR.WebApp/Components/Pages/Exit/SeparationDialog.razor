@@ -1,0 +1,152 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Exit
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.ExitToApp" Class="mr-2" />
+            Initiate Separation
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudSelect T="int" @bind-Value="_model.EmployeeId" Label="Employee *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Employee is required">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int" Value="@e.Id">@e.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="SeparationType" @bind-Value="_model.SeparationType" Label="Separation Type *"
+                               Variant="Variant.Outlined" Required="true">
+                        @foreach (SeparationType t in Enum.GetValues(typeof(SeparationType)))
+                        {
+                            <MudSelectItem T="SeparationType" Value="@t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudNumericField @bind-Value="_model.NoticePeriodDays" Label="Notice Period (days)"
+                                     Variant="Variant.Outlined" Min="0" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_noticeDate" Label="Notice Date *"
+                                   Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                   Required="true" RequiredError="Date is required" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_lastWorkingDate" Label="Last Working Date *"
+                                   Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                   Required="true" RequiredError="Date is required" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Reason" Label="Reason" Variant="Variant.Outlined"
+                                  Lines="3" MaxLength="1000" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Initiate
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private DateTime? _noticeDate = DateTime.Today;
+    private DateTime? _lastWorkingDate = DateTime.Today.AddDays(30);
+
+    private SeparationFormModel _model = new();
+    private List<EmpOption> _employees = new();
+
+    protected override async Task OnInitializedAsync() => await LoadEmployees();
+
+    private async Task LoadEmployees()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid || !_noticeDate.HasValue || !_lastWorkingDate.HasValue) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = new Separation
+            {
+                EmployeeId = _model.EmployeeId,
+                SeparationType = _model.SeparationType,
+                NoticeDate = _noticeDate.Value,
+                LastWorkingDate = _lastWorkingDate.Value,
+                NoticePeriodDays = _model.NoticePeriodDays,
+                Reason = _model.Reason
+            };
+            db.Separations.Add(entity);
+            await db.SaveChangesAsync();
+
+            // Create default clearance items
+            var defaultItems = new[] { "IT — Email & System Access", "Finance — Loans & Final Pay", "Admin — ID, Keys & Equipment", "Department — Handover" };
+            foreach (var item in defaultItems)
+            {
+                db.ClearanceItems.Add(new ClearanceItem
+                {
+                    SeparationId = entity.Id,
+                    Department = item,
+                    IsCleared = false
+                });
+            }
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Separation initiated.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class SeparationFormModel
+    {
+        public int EmployeeId { get; set; }
+        public SeparationType SeparationType { get; set; } = SeparationType.Resignation;
+        public int NoticePeriodDays { get; set; } = 30;
+        public string? Reason { get; set; }
+    }
+
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

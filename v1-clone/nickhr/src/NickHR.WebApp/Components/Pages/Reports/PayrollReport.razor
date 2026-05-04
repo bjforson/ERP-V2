@@ -1,0 +1,244 @@
+@page "/reports/payroll"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Payroll Report</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Payroll Report</MudText>
+
+<!-- Period Selector -->
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" Label="Month" @bind-Value="_selectedMonth" Dense="true">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var month = m;
+                        <MudSelectItem T="int" Value="@month">@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(month)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" Label="Year" @bind-Value="_selectedYear" Dense="true">
+                    @for (int y = DateTime.Now.Year; y >= DateTime.Now.Year - 5; y--)
+                    {
+                        var year = y;
+                        <MudSelectItem T="int" Value="@year">@year</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" md="3">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadReport" StartIcon="@Icons.Material.Filled.Search">Load Report</MudButton>
+            </MudItem>
+            <MudItem xs="12" sm="12" md="3" Class="d-flex justify-end">
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" OnClick="ExportCsv" StartIcon="@Icons.Material.Filled.Download" Disabled="@(_payrollRun == null)">Export to CSV</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_payrollRun == null)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        No payroll run found for @System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(_selectedMonth) @_selectedYear.
+        Please run payroll for this period first.
+    </MudAlert>
+}
+else
+{
+    <!-- Summary Cards -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="6" md="2">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Total Gross</MudText>
+                    <MudText Typo="Typo.h6">GH₵ @_payrollRun.TotalGrossPay.ToString("N2")</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Total Net</MudText>
+                    <MudText Typo="Typo.h6" Color="Color.Success">GH₵ @_payrollRun.TotalNetPay.ToString("N2")</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">SSNIT (Emp)</MudText>
+                    <MudText Typo="Typo.h6">GH₵ @_payrollRun.TotalSSNITEmployee.ToString("N2")</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">SSNIT (Empr)</MudText>
+                    <MudText Typo="Typo.h6">GH₵ @_payrollRun.TotalSSNITEmployer.ToString("N2")</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Total PAYE</MudText>
+                    <MudText Typo="Typo.h6">GH₵ @_payrollRun.TotalPAYE.ToString("N2")</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Employees</MudText>
+                    <MudText Typo="Typo.h6">@_deptRows.Sum(r => r.EmpCount)</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Department Breakdown -->
+    <MudCard Elevation="2">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">
+                    Department Breakdown — @System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(_selectedMonth) @_selectedYear
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Class="ml-2">@_payrollRun.Status</MudChip>
+                </MudText>
+            </CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@_deptRows" Dense="true" Hover="true" Striped="true" T="DeptPayrollRow" Footer="true">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DeptPayrollRow, object>(x => x.DeptName)">Department</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DeptPayrollRow, object>(x => x.EmpCount)">Employees</MudTableSortLabel></MudTh>
+                    <MudTh>Total Basic (GH₵)</MudTh>
+                    <MudTh>Total Allowances (GH₵)</MudTh>
+                    <MudTh>Total Gross (GH₵)</MudTh>
+                    <MudTh>Total SSNIT (GH₵)</MudTh>
+                    <MudTh>Total PAYE (GH₵)</MudTh>
+                    <MudTh>Total Net (GH₵)</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Department"><strong>@context.DeptName</strong></MudTd>
+                    <MudTd DataLabel="Employees">@context.EmpCount</MudTd>
+                    <MudTd DataLabel="Total Basic">@context.TotalBasic.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Total Allowances">@context.TotalAllowances.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Total Gross">@context.TotalGross.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Total SSNIT">@context.TotalSsnit.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Total PAYE">@context.TotalPaye.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Total Net"><strong>@context.TotalNet.ToString("N2")</strong></MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd><strong>GRAND TOTAL</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.EmpCount)</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.TotalBasic).ToString("N2")</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.TotalAllowances).ToString("N2")</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.TotalGross).ToString("N2")</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.TotalSsnit).ToString("N2")</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.TotalPaye).ToString("N2")</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.TotalNet).ToString("N2")</strong></MudTd>
+                </FooterContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No department breakdown available.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isLoading = false;
+    private int _selectedMonth = DateTime.Now.Month;
+    private int _selectedYear = DateTime.Now.Year;
+    private PayrollRun? _payrollRun;
+    private List<DeptPayrollRow> _deptRows = new();
+
+    protected override async Task OnInitializedAsync() => await LoadReport();
+
+    private async Task LoadReport()
+    {
+        _isLoading = true;
+        _payrollRun = null;
+        _deptRows.Clear();
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _payrollRun = await db.PayrollRuns
+                .FirstOrDefaultAsync(r => r.PayPeriodMonth == _selectedMonth && r.PayPeriodYear == _selectedYear);
+
+            if (_payrollRun != null)
+            {
+                var items = await db.PayrollItems
+                    .Include(i => i.Employee).ThenInclude(e => e.Department)
+                    .Where(i => i.PayrollRunId == _payrollRun.Id)
+                    .ToListAsync();
+
+                _deptRows = items
+                    .GroupBy(i => i.Employee?.Department?.Name ?? "Unassigned")
+                    .Select(g => new DeptPayrollRow
+                    {
+                        DeptName = g.Key,
+                        EmpCount = g.Count(),
+                        TotalBasic = g.Sum(i => i.BasicSalary),
+                        TotalAllowances = g.Sum(i => i.TotalAllowances),
+                        TotalGross = g.Sum(i => i.GrossPay),
+                        TotalSsnit = g.Sum(i => i.SSNITEmployee + i.SSNITEmployer),
+                        TotalPaye = g.Sum(i => i.PAYE),
+                        TotalNet = g.Sum(i => i.NetPay)
+                    })
+                    .OrderByDescending(r => r.TotalGross)
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading payroll report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ExportCsv()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Department,Employees,Total Basic,Total Allowances,Total Gross,Total SSNIT,Total PAYE,Total Net");
+        foreach (var r in _deptRows)
+            sb.AppendLine($"{r.DeptName},{r.EmpCount},{r.TotalBasic:F2},{r.TotalAllowances:F2},{r.TotalGross:F2},{r.TotalSsnit:F2},{r.TotalPaye:F2},{r.TotalNet:F2}");
+        Snackbar.Add("CSV export prepared. Wire up IJSRuntime for browser file download.", Severity.Info);
+    }
+
+    private class DeptPayrollRow
+    {
+        public string DeptName { get; set; } = string.Empty;
+        public int EmpCount { get; set; }
+        public decimal TotalBasic { get; set; }
+        public decimal TotalAllowances { get; set; }
+        public decimal TotalGross { get; set; }
+        public decimal TotalSsnit { get; set; }
+        public decimal TotalPaye { get; set; }
+        public decimal TotalNet { get; set; }
+    }
+}

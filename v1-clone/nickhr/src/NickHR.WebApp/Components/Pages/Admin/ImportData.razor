@@ -1,0 +1,276 @@
+@page "/admin/import"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IHttpClientFactory HttpClientFactory
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Import Data</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Staff Data Import</MudText>
+
+<MudGrid>
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.CloudUpload" Class="mr-2" />
+                        Import from Server File
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.body2" Class="mb-3">
+                    Import staff data from the pre-saved Excel file on the server
+                    (<code>staff_payroll_data.xlsx</code>).
+                </MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           OnClick="ImportFromServer" Disabled="_isImporting"
+                           StartIcon="@Icons.Material.Filled.PlayArrow" FullWidth="true">
+                    @if (_isImporting)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    }
+                    Import from Server File
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.UploadFile" Class="mr-2" />
+                        Upload Excel File
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.body2" Class="mb-3">
+                    Upload an Excel file (.xlsx) with employee data to import.
+                </MudText>
+                <InputFile OnChange="HandleFileUpload" accept=".xlsx,.xls" class="mb-3" />
+                @if (_uploadedFile != null)
+                {
+                    <MudText Typo="Typo.caption" Class="mb-2">Selected: @_uploadedFile.Name (@(_uploadedFile.Size / 1024) KB)</MudText>
+                    <MudButton Variant="Variant.Filled" Color="Color.Secondary"
+                               OnClick="ImportUploadedFile" Disabled="_isImporting"
+                               StartIcon="@Icons.Material.Filled.Upload" FullWidth="true">
+                        @if (_isImporting)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        Upload &amp; Import
+                    </MudButton>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@if (_importResult != null)
+{
+    <MudCard Elevation="2" Class="mt-4">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">
+                    <MudIcon Icon="@Icons.Material.Filled.Assessment" Class="mr-2" />
+                    Import Results
+                </MudText>
+            </CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent>
+            <MudGrid>
+                <MudItem xs="6" sm="3">
+                    <MudCard Elevation="0" Style="background: var(--mud-palette-success-lighten);">
+                        <MudCardContent Class="text-center py-2">
+                            <MudText Typo="Typo.h4" Color="Color.Success">@_importResult.Imported</MudText>
+                            <MudText Typo="Typo.caption">Imported</MudText>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudCard Elevation="0" Style="background: var(--mud-palette-warning-lighten);">
+                        <MudCardContent Class="text-center py-2">
+                            <MudText Typo="Typo.h4" Color="Color.Warning">@_importResult.Skipped</MudText>
+                            <MudText Typo="Typo.caption">Skipped</MudText>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudCard Elevation="0" Style="background: var(--mud-palette-error-lighten);">
+                        <MudCardContent Class="text-center py-2">
+                            <MudText Typo="Typo.h4" Color="Color.Error">@_importResult.InvalidRows</MudText>
+                            <MudText Typo="Typo.caption">Invalid</MudText>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudCard Elevation="0" Style="background: var(--mud-palette-info-lighten);">
+                        <MudCardContent Class="text-center py-2">
+                            <MudText Typo="Typo.h4" Color="Color.Info">@_importResult.TotalRows</MudText>
+                            <MudText Typo="Typo.caption">Total Rows</MudText>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+            </MudGrid>
+
+            @if (_importResult.Errors?.Any() == true)
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2" Color="Color.Error">Errors:</MudText>
+                <MudList T="string" Dense="true">
+                    @foreach (var error in _importResult.Errors.Take(20))
+                    {
+                        <MudListItem T="string" Icon="@Icons.Material.Filled.Error" IconColor="Color.Error">
+                            @error
+                        </MudListItem>
+                    }
+                </MudList>
+                @if (_importResult.Errors.Count > 20)
+                {
+                    <MudText Typo="Typo.caption">... and @(_importResult.Errors.Count - 20) more errors</MudText>
+                }
+            }
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isImporting = false;
+    private IBrowserFile? _uploadedFile;
+    private ImportResult? _importResult;
+
+    private void HandleFileUpload(InputFileChangeEventArgs e)
+    {
+        _uploadedFile = e.File;
+    }
+
+    private async Task ImportFromServer()
+    {
+        _isImporting = true;
+        _importResult = null;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NickHR.API");
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var token = authState.User.FindFirst("jti")?.Value;
+
+            // Login to get token
+            var loginResponse = await client.PostAsJsonAsync("api/auth/login",
+                new { email = "admin@nickhr.local", password = "Admin@123456" });
+            if (loginResponse.IsSuccessStatusCode)
+            {
+                var loginData = await loginResponse.Content.ReadFromJsonAsync<LoginApiResponse>();
+                if (loginData?.Data?.Token != null)
+                {
+                    client.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", loginData.Data.Token);
+                }
+            }
+
+            var response = await client.PostAsync("api/import/execute-server-file", null);
+            var json = await response.Content.ReadAsStringAsync();
+            _importResult = System.Text.Json.JsonSerializer.Deserialize<ImportResult>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (_importResult?.Success == true)
+                Snackbar.Add($"Import complete: {_importResult.Data?.Imported} imported", Severity.Success);
+            else
+                Snackbar.Add(_importResult?.Message ?? "Import failed", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isImporting = false;
+        }
+    }
+
+    private async Task ImportUploadedFile()
+    {
+        if (_uploadedFile == null) return;
+        _isImporting = true;
+        _importResult = null;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NickHR.API");
+
+            var loginResponse = await client.PostAsJsonAsync("api/auth/login",
+                new { email = "admin@nickhr.local", password = "Admin@123456" });
+            if (loginResponse.IsSuccessStatusCode)
+            {
+                var loginData = await loginResponse.Content.ReadFromJsonAsync<LoginApiResponse>();
+                if (loginData?.Data?.Token != null)
+                {
+                    client.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", loginData.Data.Token);
+                }
+            }
+
+            using var content = new MultipartFormDataContent();
+            using var stream = _uploadedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            content.Add(new StreamContent(stream), "file", _uploadedFile.Name);
+
+            var response = await client.PostAsync("api/import/execute", content);
+            var json = await response.Content.ReadAsStringAsync();
+            _importResult = System.Text.Json.JsonSerializer.Deserialize<ImportResult>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (_importResult?.Success == true)
+                Snackbar.Add($"Import complete: {_importResult.Data?.Imported} imported", Severity.Success);
+            else
+                Snackbar.Add(_importResult?.Message ?? "Import failed", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isImporting = false;
+        }
+    }
+
+    private class ImportResult
+    {
+        public bool Success { get; set; }
+        public string? Message { get; set; }
+        public ImportDataResult? Data { get; set; }
+        public List<string>? Errors { get; set; }
+        public int TotalRows => Data?.TotalRows ?? 0;
+        public int Imported => Data?.Imported ?? 0;
+        public int Skipped => Data?.Skipped ?? 0;
+        public int InvalidRows => Data?.InvalidRows ?? 0;
+    }
+
+    private class ImportDataResult
+    {
+        public int Imported { get; set; }
+        public int Skipped { get; set; }
+        public int TotalRows { get; set; }
+        public int InvalidRows { get; set; }
+        public List<string>? Errors { get; set; }
+    }
+
+    private class LoginApiResponse
+    {
+        public bool Success { get; set; }
+        public LoginTokenData? Data { get; set; }
+    }
+
+    private class LoginTokenData
+    {
+        public string? Token { get; set; }
+    }
+}

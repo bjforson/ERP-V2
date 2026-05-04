@@ -1,0 +1,88 @@
+@page "/attendance/qr-generate"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Services.Attendance
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — QR Code Attendance - Generate</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.QrCode" Class="mr-2" />QR Code Attendance - Generate
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="2">
+            <MudCardHeader><MudText Typo="Typo.h6">Generate QR Token</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudSelect T="int?" @bind-Value="_selectedLocationId" Label="Location" Required="true">
+                    @foreach (var l in _locations)
+                    {
+                        <MudSelectItem T="int?" Value="@l.Id">@l.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudNumericField T="int" @bind-Value="_expiryMinutes" Label="Expiry (minutes)" Min="5" Max="480" Class="mt-3" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-4"
+                           OnClick="Generate" Disabled="@(!_selectedLocationId.HasValue)">
+                    Generate QR Token
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="8">
+        @if (!string.IsNullOrEmpty(_qrToken))
+        {
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">QR Code Token</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudAlert Severity="Severity.Info" Class="mb-3">
+                        This token encodes the location and date. Share it with employees to mark attendance.
+                        Token expires in @_expiryMinutes minutes.
+                    </MudAlert>
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Location: @_locations.FirstOrDefault(l => l.Id == _selectedLocationId)?.Name</MudText>
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Generated: @DateTime.UtcNow.ToString("dd MMM yyyy HH:mm")</MudText>
+                    <MudPaper Elevation="0" Class="pa-4" Style="background:#f5f5f5; word-break:break-all; font-family:monospace; font-size:12px">
+                        @_qrToken
+                    </MudPaper>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Class="mt-3"
+                               StartIcon="@Icons.Material.Filled.ContentCopy"
+                               OnClick="@(() => { })">
+                        Copy Token
+                    </MudButton>
+                </MudCardContent>
+            </MudCard>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private List<Location> _locations = new();
+    private int? _selectedLocationId;
+    private int _expiryMinutes = 30;
+    private string _qrToken = "";
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Attendance", null), new("QR Generate", null, true) };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _locations = await db.Locations.Where(l => !l.IsDeleted).OrderBy(l => l.Name).ToListAsync();
+    }
+
+    private void Generate()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<QrAttendanceService>();
+        _qrToken = svc.GenerateQrTokenAsync(_selectedLocationId!.Value, _expiryMinutes);
+        Snackbar.Add("QR token generated", Severity.Success);
+    }
+}

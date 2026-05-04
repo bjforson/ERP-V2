@@ -1,0 +1,351 @@
+@page "/recruitment/applications"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Applications</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Recruitment Pipeline</MudText>
+
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid Spacing="2" AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="6" md="4">
+                <MudSelect T="int?"
+                           Value="_selectedRequisitionId"
+                           Label="Select Requisition"
+                           Variant="Variant.Outlined"
+                           Clearable="true"
+                           ValueChanged="@((int? val) => OnRequisitionChanged(val))">
+                    @foreach (var r in _requisitions)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)r.Id)">@r.Title (@r.DepartmentName)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            @if (_selectedRequisitionId.HasValue)
+            {
+                <MudItem xs="12" sm="6" md="8" Class="d-flex justify-end">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.PersonAdd"
+                               OnClick="OpenAddCandidateDialog">
+                        Add Candidate
+                    </MudButton>
+                </MudItem>
+            }
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_selectedRequisitionId.HasValue)
+{
+    <!-- Pipeline Summary Cards -->
+    <MudGrid Spacing="2" Class="mb-4">
+        @foreach (var stage in _stageCounts)
+        {
+            <MudItem xs="6" sm="4" md="2">
+                <MudCard Elevation="1" Style="@($"border-top: 3px solid var(--mud-palette-{GetStageColorName(stage.Key)});")">
+                    <MudCardContent Class="pa-3 text-center">
+                        <MudText Typo="Typo.h5" Color="@GetStageColor(stage.Key)">@stage.Value</MudText>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@stage.Key</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+
+    <!-- Applications Table -->
+    <MudCard Elevation="2">
+        <MudCardContent Class="pa-0">
+            @if (_isLoading)
+            {
+                <div class="d-flex justify-center pa-8">
+                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                </div>
+            }
+            else
+            {
+                <MudTable Items="@_applications" Dense="true" Hover="true" Striped="true" T="ApplicationRow">
+                    <HeaderContent>
+                        <MudTh><MudTableSortLabel SortBy="new Func<ApplicationRow, object>(x => x.CandidateName)">Candidate Name</MudTableSortLabel></MudTh>
+                        <MudTh>Email</MudTh>
+                        <MudTh>Phone</MudTh>
+                        <MudTh><MudTableSortLabel SortBy="new Func<ApplicationRow, object>(x => x.ApplicationDate)">Applied</MudTableSortLabel></MudTh>
+                        <MudTh><MudTableSortLabel SortBy="new Func<ApplicationRow, object>(x => x.Stage)">Stage</MudTableSortLabel></MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Candidate Name">
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">@context.CandidateName</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Email">@context.Email</MudTd>
+                        <MudTd DataLabel="Phone">@(context.Phone ?? "—")</MudTd>
+                        <MudTd DataLabel="Applied">@context.ApplicationDate.ToString("dd MMM yyyy")</MudTd>
+                        <MudTd DataLabel="Stage">
+                            <MudChip T="string" Size="Size.Small" Color="@GetStageColor(context.Stage)" Variant="Variant.Filled">
+                                @context.Stage
+                            </MudChip>
+                        </MudTd>
+                        <MudTd>
+                            @if (context.Stage != ApplicationStage.Hired && context.Stage != ApplicationStage.Rejected && context.Stage != ApplicationStage.Withdrawn)
+                            {
+                                <MudMenu Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small"
+                                         Color="Color.Primary" title="Move to Stage" Dense="true">
+                                    @foreach (var next in GetNextStages(context.Stage))
+                                    {
+                                        var stageCopy = next;
+                                        <MudMenuItem OnClick="@(() => MoveToStage(context, stageCopy))">
+                                            @stageCopy
+                                        </MudMenuItem>
+                                    }
+                                </MudMenu>
+                                <MudIconButton Icon="@Icons.Material.Filled.Cancel" Size="Size.Small" Color="Color.Error"
+                                               title="Reject" OnClick="@(() => RejectApplication(context))" />
+                            }
+                            @if (context.Stage == ApplicationStage.Interview || context.Stage == ApplicationStage.Screening)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.CalendarMonth" Size="Size.Small" Color="Color.Info"
+                                               title="Schedule Interview" OnClick="@(() => Navigation.NavigateTo("/recruitment/interviews"))" />
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <PagerContent>
+                        <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                    </PagerContent>
+                    <NoRecordsContent>
+                        <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                            No applications for this requisition yet.
+                        </MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            }
+        </MudCardContent>
+    </MudCard>
+}
+else
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        Select a requisition above to view and manage applications.
+    </MudAlert>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "reqId")]
+    public int? ReqIdParam { get; set; }
+
+    private List<ReqOption> _requisitions = new();
+    private List<ApplicationRow> _applications = new();
+    private Dictionary<string, int> _stageCounts = new();
+    private int? _selectedRequisitionId;
+    private bool _isLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRequisitions();
+        if (ReqIdParam.HasValue)
+        {
+            _selectedRequisitionId = ReqIdParam.Value;
+            await LoadApplications();
+        }
+    }
+
+    private async Task LoadRequisitions()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _requisitions = await db.JobRequisitions
+                .Include(r => r.Department)
+                .Where(r => r.Status == JobRequisitionStatus.Published || r.Status == JobRequisitionStatus.Approved)
+                .OrderByDescending(r => r.CreatedAt)
+                .Select(r => new ReqOption { Id = r.Id, Title = r.Title, DepartmentName = r.Department.Name })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading requisitions: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OnRequisitionChanged(int? value)
+    {
+        _selectedRequisitionId = value;
+        _applications = new();
+        _stageCounts = new();
+        if (value.HasValue) await LoadApplications();
+    }
+
+    private async Task LoadApplications()
+    {
+        if (!_selectedRequisitionId.HasValue) return;
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _applications = await db.Applications
+                .Include(a => a.Candidate)
+                .Where(a => a.JobRequisitionId == _selectedRequisitionId.Value)
+                .OrderByDescending(a => a.ApplicationDate)
+                .Select(a => new ApplicationRow
+                {
+                    Id = a.Id,
+                    CandidateName = a.Candidate.FirstName + " " + a.Candidate.LastName,
+                    Email = a.Candidate.Email,
+                    Phone = a.Candidate.Phone,
+                    ApplicationDate = a.ApplicationDate,
+                    Stage = a.Stage,
+                    CandidateId = a.CandidateId
+                })
+                .ToListAsync();
+
+            // Build stage counts
+            _stageCounts = new Dictionary<string, int>();
+            foreach (ApplicationStage s in Enum.GetValues(typeof(ApplicationStage)))
+            {
+                if (s == ApplicationStage.Withdrawn) continue;
+                _stageCounts[s.ToString()] = _applications.Count(a => a.Stage == s);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading applications: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private Color GetStageColor(ApplicationStage stage) => stage switch
+    {
+        ApplicationStage.Applied => Color.Default,
+        ApplicationStage.Screening => Color.Info,
+        ApplicationStage.Interview => Color.Warning,
+        ApplicationStage.Offer => Color.Primary,
+        ApplicationStage.Hired => Color.Success,
+        ApplicationStage.Rejected => Color.Error,
+        ApplicationStage.Withdrawn => Color.Dark,
+        _ => Color.Default
+    };
+
+    private Color GetStageColor(string stageName) =>
+        Enum.TryParse<ApplicationStage>(stageName, out var s) ? GetStageColor(s) : Color.Default;
+
+    private string GetStageColorName(string stageName) => stageName switch
+    {
+        "Applied" => "default",
+        "Screening" => "info",
+        "Interview" => "warning",
+        "Offer" => "primary",
+        "Hired" => "success",
+        "Rejected" => "error",
+        _ => "default"
+    };
+
+    private List<ApplicationStage> GetNextStages(ApplicationStage current) => current switch
+    {
+        ApplicationStage.Applied => new() { ApplicationStage.Screening },
+        ApplicationStage.Screening => new() { ApplicationStage.Interview },
+        ApplicationStage.Interview => new() { ApplicationStage.Offer },
+        ApplicationStage.Offer => new() { ApplicationStage.Hired },
+        _ => new()
+    };
+
+    private async Task MoveToStage(ApplicationRow row, ApplicationStage nextStage)
+    {
+        if (nextStage == ApplicationStage.Hired)
+        {
+            var confirm = await DialogService.ShowMessageBox("Move to Hired",
+                $"Moving {row.CandidateName} to Hired will create an employee record. Continue?",
+                yesText: "Yes, Hire", cancelText: "Cancel");
+            if (confirm != true) return;
+        }
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Applications.FindAsync(row.Id);
+            if (entity == null) return;
+            entity.Stage = nextStage;
+            await db.SaveChangesAsync();
+            Snackbar.Add($"{row.CandidateName} moved to {nextStage}.", Severity.Success);
+
+            if (nextStage == ApplicationStage.Hired)
+            {
+                Snackbar.Add("Note: Employee record creation should be completed via Offers > Initiate Onboarding.", Severity.Info);
+            }
+
+            await LoadApplications();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error updating stage: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task RejectApplication(ApplicationRow row)
+    {
+        var confirm = await DialogService.ShowMessageBox("Reject Application",
+            $"Reject application from {row.CandidateName}?", yesText: "Reject", cancelText: "Cancel");
+        if (confirm != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Applications.FindAsync(row.Id);
+            if (entity == null) return;
+            entity.Stage = ApplicationStage.Rejected;
+            await db.SaveChangesAsync();
+            Snackbar.Add($"{row.CandidateName}'s application rejected.", Severity.Info);
+            await LoadApplications();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OpenAddCandidateDialog()
+    {
+        if (!_selectedRequisitionId.HasValue) return;
+        var parameters = new DialogParameters<AddCandidateDialog>
+        {
+            { x => x.RequisitionId, _selectedRequisitionId.Value }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<AddCandidateDialog>("Add Candidate", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadApplications();
+    }
+
+    private class ReqOption
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string DepartmentName { get; set; } = string.Empty;
+    }
+
+    private class ApplicationRow
+    {
+        public int Id { get; set; }
+        public int CandidateId { get; set; }
+        public string CandidateName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string? Phone { get; set; }
+        public DateTime ApplicationDate { get; set; }
+        public ApplicationStage Stage { get; set; }
+    }
+}

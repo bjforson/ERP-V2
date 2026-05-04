@@ -1,0 +1,104 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>NickERP.Platform.Core</name>
+    </assembly>
+    <members>
+        <member name="T:NickERP.Platform.Core.Contracts.IPlatformModule">
+            <summary>
+            Every NICKSCAN ERP module implements this interface in its API project's
+            <c>Program.cs</c> as a static module descriptor. The unified ERP portal
+            reads this to populate the App Launcher tile grid and to verify the module
+            satisfies the platform contract version it ships against.
+            </summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.Name">
+            <summary>Short kebab-case identifier (e.g. "nscis", "nickhr", "finance").</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.DisplayName">
+            <summary>Human-readable name shown in the App Launcher (e.g. "NickScan Central Imaging").</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.Version">
+            <summary>Semver version of the module.</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.Description">
+            <summary>One-line description shown on the App Launcher tile.</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.PlatformContractVersion">
+            <summary>The platform contract version this module targets (see <c>PLATFORM.md</c>).</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.Icon">
+            <summary>Material icon name or asset path for the App Launcher tile.</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.Color">
+            <summary>Brand color for the tile (CSS hex string).</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.HomeRoute">
+            <summary>Default landing route after the user clicks the tile.</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.PlatformDependencies">
+            <summary>
+            Platform service dependencies this module requires. The portal warns
+            if a tenant has the module enabled but is missing one of these.
+            Use lower-case names: "comms", "files", "audit", "notify", "workflow",
+            "tenancy", "identity", "jobs", "reporting".
+            </summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Contracts.IPlatformModule.Capabilities">
+            <summary>
+            Capability tokens advertised by this module (used for cross-module
+            integrations and feature gating). Free-form, dot-separated.
+            e.g. "container.scan", "payroll.run", "invoice.post".
+            </summary>
+        </member>
+        <member name="T:NickERP.Platform.Core.Contracts.ModuleManifest">
+            <summary>
+            JSON-serializable manifest returned by every module's
+            <c>GET /api/_module/manifest</c> endpoint. The unified ERP portal
+            fetches this to render the App Launcher.
+            </summary>
+        </member>
+        <member name="T:NickERP.Platform.Core.PlatformContractVersion">
+             <summary>
+             The current version of the NICKSCAN ERP Platform Contract that this
+             shared library publishes. Modules echo this value in their manifest
+             (<c>ModuleManifest.PlatformContractVersion</c>) so the portal can
+             detect mismatches.
+            
+             Bump the major version when a breaking change to <c>PLATFORM.md</c> ships.
+             Bump the minor version for additive changes.
+             </summary>
+        </member>
+        <member name="T:NickERP.Platform.Core.Tenancy.IAuditedEntity">
+            <summary>
+            Marker interface for entities whose insert/update/delete events should be
+            captured by the central audit log (Phase 4 onward). The platform's
+            <c>AuditingDbContextInterceptor</c> automatically emits an audit event
+            for any entity implementing this interface.
+            </summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Tenancy.IAuditedEntity.CreatedBy">
+            <summary>Username of the user who created this row.</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Tenancy.IAuditedEntity.CreatedAt">
+            <summary>UTC timestamp when this row was created.</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Tenancy.IAuditedEntity.UpdatedBy">
+            <summary>Username of the user who last updated this row.</summary>
+        </member>
+        <member name="P:NickERP.Platform.Core.Tenancy.IAuditedEntity.UpdatedAt">
+            <summary>UTC timestamp of the last update (null if never updated).</summary>
+        </member>
+        <member name="T:NickERP.Platform.Core.Tenancy.ITenantOwned">
+             <summary>
+             Marker interface for entities that belong to a specific tenant.
+             Every business-data entity in every module SHOULD implement this from Phase 1 onward.
+            
+             The platform's <c>TenantOwnedEntityInterceptor</c> automatically writes the
+             current tenant id on insert, and EF Core global query filters automatically
+             scope reads. Modules don't have to do anything except implement the interface
+             and call <c>builder.AddTenantQueryFilter&lt;T&gt;()</c> in <c>OnModelCreating</c>.
+             </summary>
+        </member>
+    </members>
+</doc>

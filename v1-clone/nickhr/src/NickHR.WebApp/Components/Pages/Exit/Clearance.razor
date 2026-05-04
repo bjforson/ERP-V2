@@ -1,0 +1,276 @@
+@page "/exit/clearance"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Exit
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Employee Clearance</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Employee Clearance</MudText>
+
+<MudCard Elevation="1" Class="mb-4">
+    <MudCardContent>
+        <MudSelect T="int?" Value="_selectedSeparationId" Label="Select Separation" Variant="Variant.Outlined"
+                   Style="max-width:400px;" ValueChanged="@((int? v) => OnSeparationChanged(v))">
+            <MudSelectItem T="int?" Value="@((int?)null)">— Select Employee Separation —</MudSelectItem>
+            @foreach (var s in _separations)
+            {
+                <MudSelectItem T="int?" Value="@((int?)s.Id)">@s.Label</MudSelectItem>
+            }
+        </MudSelect>
+    </MudCardContent>
+</MudCard>
+
+@if (_selectedSeparationId.HasValue && _currentSeparation != null)
+{
+    <MudGrid Spacing="3">
+        @* Summary card *@
+        <MudItem xs="12">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="3">
+                            <MudText Typo="Typo.body2"><strong>Employee:</strong> @_currentSeparation.EmployeeName</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudText Typo="Typo.body2"><strong>Type:</strong> @_currentSeparation.SeparationType</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudText Typo="Typo.body2"><strong>Last Working Day:</strong> @_currentSeparation.LastWorkingDate.ToString("dd MMM yyyy")</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudText Typo="Typo.body2"><strong>Overall Progress:</strong></MudText>
+                            <MudProgressLinear Value="@_currentSeparation.ClearancePercent"
+                                              Color="@(_currentSeparation.ClearancePercent >= 100 ? Color.Success : Color.Warning)"
+                                              Rounded="true" Size="Size.Large" Class="mt-1" />
+                            <MudText Typo="Typo.caption">@((int)_currentSeparation.ClearancePercent)% complete</MudText>
+                        </MudItem>
+                    </MudGrid>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Info" StartIcon="@Icons.Material.Filled.RecordVoiceOver"
+                               OnClick="OpenExitInterview">
+                        Record Exit Interview
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success" StartIcon="@Icons.Material.Filled.AccountBalanceWallet"
+                               Class="ml-2" OnClick="OpenFinalSettlement">
+                        Process Final Settlement
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+
+        @* Clearance checklist *@
+        <MudItem xs="12">
+            <MudText Typo="Typo.h6" Class="mb-3">Clearance Checklist</MudText>
+            @if (_isLoadingItems)
+            {
+                <div class="d-flex justify-center pa-4">
+                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+                </div>
+            }
+            else
+            {
+                <MudGrid Spacing="2">
+                    @foreach (var item in _clearanceItems)
+                    {
+                        <MudItem xs="12" sm="6" md="4">
+                            <MudCard Elevation="2" Class="@(item.IsCleared ? "border-l-4 mud-border-success" : "border-l-4 mud-border-warning")">
+                                <MudCardContent>
+                                    <div class="d-flex justify-space-between align-center mb-2">
+                                        <MudText Typo="Typo.subtitle2">@item.Department</MudText>
+                                        <MudCheckBox T="bool" Value="item.IsCleared" Color="Color.Success"
+                                                     ValueChanged="@((bool v) => ToggleClearance(item, v))" />
+                                    </div>
+                                    @if (item.IsCleared)
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Success">
+                                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Class="mr-1" />
+                                            Cleared @(item.ClearedAt.HasValue ? item.ClearedAt.Value.ToString("dd MMM yyyy") : "")
+                                        </MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Warning">Pending clearance</MudText>
+                                    }
+                                    <MudTextField @bind-Value="item.Notes" Label="Notes" Variant="Variant.Outlined"
+                                                  Dense="true" Class="mt-2" Lines="2"
+                                                  OnBlur="@(() => SaveItemNotes(item))" />
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+                    }
+                </MudGrid>
+            }
+        </MudItem>
+    </MudGrid>
+}
+else if (!_selectedSeparationId.HasValue)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        Select an employee separation above to manage their clearance process.
+    </MudAlert>
+}
+
+@code {
+    private bool _isLoadingItems;
+    private int? _selectedSeparationId;
+    private List<SeparationOption> _separations = new();
+    private SeparationSummary? _currentSeparation;
+    private List<ClearanceItemRow> _clearanceItems = new();
+
+    protected override async Task OnInitializedAsync() => await LoadSeparations();
+
+    private async Task LoadSeparations()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _separations = await db.Separations
+                .Include(s => s.Employee)
+                .Where(s => !s.IsDeleted)
+                .OrderByDescending(s => s.NoticeDate)
+                .Select(s => new SeparationOption
+                {
+                    Id = s.Id,
+                    Label = s.Employee.FirstName + " " + s.Employee.LastName + " — " + s.SeparationType + " (" + s.LastWorkingDate.ToString("dd MMM yyyy") + ")"
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task OnSeparationChanged(int? val)
+    {
+        _selectedSeparationId = val;
+        if (!val.HasValue) { _currentSeparation = null; _clearanceItems = new(); return; }
+        await LoadSeparationDetail(val.Value);
+    }
+
+    private async Task LoadSeparationDetail(int id)
+    {
+        _isLoadingItems = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var sep = await db.Separations
+                .Include(s => s.Employee)
+                .Include(s => s.ClearanceItems)
+                .Include(s => s.FinalSettlement)
+                .FirstOrDefaultAsync(s => s.Id == id);
+
+            if (sep == null) return;
+
+            var cleared = sep.ClearanceItems.Count(c => c.IsCleared);
+            var total = sep.ClearanceItems.Count;
+
+            _currentSeparation = new SeparationSummary
+            {
+                Id = sep.Id,
+                EmployeeName = sep.Employee.FirstName + " " + sep.Employee.LastName,
+                SeparationType = sep.SeparationType.ToString(),
+                LastWorkingDate = sep.LastWorkingDate,
+                ClearancePercent = total > 0 ? (double)cleared / total * 100 : 0
+            };
+
+            _clearanceItems = sep.ClearanceItems.Select(c => new ClearanceItemRow
+            {
+                Id = c.Id,
+                Department = c.Department,
+                Description = c.Description,
+                IsCleared = c.IsCleared,
+                ClearedAt = c.ClearedAt,
+                Notes = c.Notes
+            }).ToList();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoadingItems = false; }
+    }
+
+    private async Task ToggleClearance(ClearanceItemRow item, bool isCleared)
+    {
+        item.IsCleared = isCleared;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.ClearanceItems.FindAsync(item.Id);
+            if (entity == null) return;
+            entity.IsCleared = isCleared;
+            entity.ClearedAt = isCleared ? DateTime.UtcNow : null;
+            await db.SaveChangesAsync();
+
+            // Refresh progress
+            var cleared = _clearanceItems.Count(c => c.IsCleared);
+            var total = _clearanceItems.Count;
+            if (_currentSeparation != null)
+                _currentSeparation.ClearancePercent = total > 0 ? (double)cleared / total * 100 : 0;
+
+            Snackbar.Add(isCleared ? "Marked as cleared." : "Clearance removed.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task SaveItemNotes(ClearanceItemRow item)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.ClearanceItems.FindAsync(item.Id);
+            if (entity == null) return;
+            entity.Notes = item.Notes;
+            await db.SaveChangesAsync();
+        }
+        catch { /* Silently ignore note save failures */ }
+    }
+
+    private async Task OpenExitInterview()
+    {
+        if (!_selectedSeparationId.HasValue) return;
+        var parameters = new DialogParameters { ["SeparationId"] = _selectedSeparationId.Value };
+        var dialog = await DialogService.ShowAsync<ExitInterviewDialog>("Record Exit Interview", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        await dialog.Result;
+    }
+
+    private async Task OpenFinalSettlement()
+    {
+        if (!_selectedSeparationId.HasValue) return;
+        var parameters = new DialogParameters { ["SeparationId"] = _selectedSeparationId.Value };
+        var dialog = await DialogService.ShowAsync<FinalSettlementDialog>("Process Final Settlement", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        await dialog.Result;
+    }
+
+    private class SeparationOption { public int Id { get; set; } public string Label { get; set; } = ""; }
+
+    private class SeparationSummary
+    {
+        public int Id { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public string SeparationType { get; set; } = "";
+        public DateTime LastWorkingDate { get; set; }
+        public double ClearancePercent { get; set; }
+    }
+
+    private class ClearanceItemRow
+    {
+        public int Id { get; set; }
+        public string Department { get; set; } = "";
+        public string? Description { get; set; }
+        public bool IsCleared { get; set; }
+        public DateTime? ClearedAt { get; set; }
+        public string? Notes { get; set; }
+    }
+}

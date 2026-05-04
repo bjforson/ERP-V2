@@ -1,0 +1,351 @@
+@page "/probation"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+<PageTitle>NICKSCAN ERP — NickHR — Probation Dashboard</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Probation Management</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<!-- Alert cards -->
+@if (_approaching7.Any() || _approaching14.Any())
+{
+    <MudGrid Class="mb-4">
+        @if (_approaching7.Any())
+        {
+            <MudItem xs="12" sm="6" md="4">
+                <MudAlert Severity="Severity.Error" Icon="@Icons.Material.Filled.Warning">
+                    <strong>@_approaching7.Count</strong> employee(s) probation ends in &lt;7 days
+                </MudAlert>
+            </MudItem>
+        }
+        @if (_approaching14.Any())
+        {
+            <MudItem xs="12" sm="6" md="4">
+                <MudAlert Severity="Severity.Warning" Icon="@Icons.Material.Filled.Schedule">
+                    <strong>@_approaching14.Count</strong> employee(s) probation ends in 7-14 days
+                </MudAlert>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <MudTabPanel Text="Upcoming Reviews" Icon="@Icons.Material.Filled.Pending">
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else if (!_employees.Any())
+        {
+            <div class="d-flex flex-column align-center pa-6">
+                <MudIcon Icon="@Icons.Material.Filled.CheckCircleOutline" Size="Size.Large" Color="Color.Success" Class="mb-2" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary">No employees approaching probation end in the next 30 days.</MudText>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="_employees" Dense="true" Striped="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Department</MudTh>
+                    <MudTh>Hire Date</MudTh>
+                    <MudTh>Probation End</MudTh>
+                    <MudTh>Days Remaining</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.FirstName @context.LastName</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.EmployeeCode</MudText>
+                    </MudTd>
+                    <MudTd>@(context.Department?.Name ?? "—")</MudTd>
+                    <MudTd>@(context.HireDate.HasValue ? context.HireDate.Value.ToString("dd/MM/yyyy") : "—")</MudTd>
+                    <MudTd>@(context.ProbationEndDate.HasValue ? context.ProbationEndDate.Value.ToString("dd/MM/yyyy") : "—")</MudTd>
+                    <MudTd>
+                        @{
+                            var days = context.ProbationEndDate.HasValue
+                                ? (int)(context.ProbationEndDate.Value.Date - DateTime.Today).TotalDays
+                                : 0;
+                            var color = days < 7 ? Color.Error : days < 14 ? Color.Warning : Color.Success;
+                        }
+                        <MudChip T="string" Size="Size.Small" Color="@color">@days days</MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                   OnClick="() => OpenReviewDialog(context)"
+                                   StartIcon="@Icons.Material.Filled.RateReview">
+                            Start Review
+                        </MudButton>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="History" Icon="@Icons.Material.Filled.History">
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else if (!_reviews.Any())
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">No completed reviews.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_reviews" Dense="true" Striped="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Review Date</MudTh>
+                    <MudTh>Decision</MudTh>
+                    <MudTh>Extension</MudTh>
+                    <MudTh>Reviewed By</MudTh>
+                    <MudTh>Status</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">
+                            @(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")
+                        </MudText>
+                    </MudTd>
+                    <MudTd>@context.ReviewDate.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="@GetDecisionColor(context.Decision)">
+                            @context.Decision
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>@(context.ExtensionMonths.HasValue ? $"{context.ExtensionMonths} months" : "—")</MudTd>
+                    <MudTd>@(context.ReviewedBy != null ? $"{context.ReviewedBy.FirstName} {context.ReviewedBy.LastName}" : "—")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small"
+                                  Color="@(context.Status == "Completed" ? Color.Success : Color.Warning)">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudTabPanel>
+</MudTabs>
+
+<!-- Review Dialog -->
+@if (_reviewDialogOpen && _selectedEmployee != null)
+{
+    <MudDialog @bind-IsVisible="_reviewDialogOpen">
+        <TitleContent>
+            <MudText Typo="Typo.h6">
+                Probation Review: @_selectedEmployee.FirstName @_selectedEmployee.LastName
+            </MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudGrid>
+                <MudItem xs="12">
+                    <MudSelect T="ProbationDecision" @bind-Value="_decision" Label="Decision *" Variant="Variant.Outlined">
+                        <MudSelectItem Value="ProbationDecision.Confirm">Confirm Employment</MudSelectItem>
+                        <MudSelectItem Value="ProbationDecision.Extend">Extend Probation</MudSelectItem>
+                        <MudSelectItem Value="ProbationDecision.Terminate">Terminate</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                @if (_decision == ProbationDecision.Extend)
+                {
+                    <MudItem xs="12">
+                        <MudNumericField T="int" @bind-Value="_extensionMonths" Label="Extension Months *"
+                                         Variant="Variant.Outlined" Min="1" Max="6" />
+                    </MudItem>
+                }
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_managerComments" Label="Manager Comments"
+                                  Variant="Variant.Outlined" Lines="3" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_hrComments" Label="HR Comments"
+                                  Variant="Variant.Outlined" Lines="3" />
+                </MudItem>
+            </MudGrid>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _reviewDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitReview"
+                       Disabled="_isSubmitting">
+                Submit Review
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<Employee> _employees = new();
+    private List<ProbationReview> _reviews = new();
+    private List<Employee> _approaching7 = new();
+    private List<Employee> _approaching14 = new();
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private int? _currentEmployeeId;
+
+    private bool _reviewDialogOpen;
+    private Employee? _selectedEmployee;
+    private ProbationDecision _decision = ProbationDecision.Confirm;
+    private int _extensionMonths = 3;
+    private string _managerComments = string.Empty;
+    private string _hrComments = string.Empty;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Admin", href: null, disabled: true),
+        new BreadcrumbItem("Probation", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentEmployeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var threshold = DateTime.Today.AddDays(30);
+            _employees = await db.Employees
+                .Include(e => e.Department)
+                .Include(e => e.Designation)
+                .Where(e => !e.IsDeleted
+                    && e.ProbationEndDate.HasValue
+                    && e.ProbationEndDate.Value.Date >= DateTime.Today
+                    && e.ProbationEndDate.Value.Date <= threshold)
+                .OrderBy(e => e.ProbationEndDate)
+                .ToListAsync();
+
+            _approaching7 = _employees.Where(e => (e.ProbationEndDate!.Value.Date - DateTime.Today).TotalDays < 7).ToList();
+            _approaching14 = _employees.Where(e =>
+            {
+                var d = (e.ProbationEndDate!.Value.Date - DateTime.Today).TotalDays;
+                return d >= 7 && d < 14;
+            }).ToList();
+
+            _reviews = await db.ProbationReviews
+                .Include(r => r.Employee)
+                .Include(r => r.ReviewedBy)
+                .OrderByDescending(r => r.ReviewDate)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OpenReviewDialog(Employee employee)
+    {
+        _selectedEmployee = employee;
+        _decision = ProbationDecision.Confirm;
+        _extensionMonths = 3;
+        _managerComments = string.Empty;
+        _hrComments = string.Empty;
+        _reviewDialogOpen = true;
+    }
+
+    private async Task SubmitReview()
+    {
+        if (_selectedEmployee == null || _currentEmployeeId == null) return;
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var employee = await db.Employees.FindAsync(_selectedEmployee.Id);
+            if (employee == null) return;
+
+            var review = new ProbationReview
+            {
+                EmployeeId = _selectedEmployee.Id,
+                ReviewDate = DateTime.UtcNow,
+                ProbationEndDate = employee.ProbationEndDate ?? DateTime.UtcNow,
+                Decision = _decision,
+                ExtensionMonths = _decision == ProbationDecision.Extend ? _extensionMonths : null,
+                ManagerComments = _managerComments,
+                HRComments = _hrComments,
+                ReviewedById = _currentEmployeeId.Value,
+                ReviewedAt = DateTime.UtcNow,
+                Status = "Completed"
+            };
+
+            // Update employee status based on decision
+            switch (_decision)
+            {
+                case ProbationDecision.Confirm:
+                    employee.EmploymentStatus = EmploymentStatus.Confirmed;
+                    employee.ConfirmationDate = DateTime.UtcNow;
+                    break;
+                case ProbationDecision.Extend:
+                    var newEnd = (employee.ProbationEndDate ?? DateTime.UtcNow).AddMonths(_extensionMonths);
+                    review.NewProbationEndDate = newEnd;
+                    employee.ProbationEndDate = newEnd;
+                    break;
+                case ProbationDecision.Terminate:
+                    employee.EmploymentStatus = EmploymentStatus.Terminated;
+                    break;
+            }
+
+            db.ProbationReviews.Add(review);
+            await db.SaveChangesAsync();
+
+            _reviewDialogOpen = false;
+            Snackbar.Add("Probation review submitted!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private Color GetDecisionColor(ProbationDecision d) => d switch
+    {
+        ProbationDecision.Confirm => Color.Success,
+        ProbationDecision.Extend => Color.Warning,
+        ProbationDecision.Terminate => Color.Error,
+        _ => Color.Default
+    };
+}

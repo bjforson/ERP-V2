@@ -1,0 +1,277 @@
+@page "/expenses/review"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrFinance)]
+@rendermode InteractiveServer
+@using NickHR.Core.Enums
+@using NickHR.Core.Interfaces
+@using NickHR.Core.Constants
+@inject IExpenseClaimService ExpenseService
+@inject ICurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Expense Review</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    <MudIcon Icon="@Icons.Material.Filled.RateReview" Class="mr-2" />
+    Expense Claims Review
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid Class="mb-3" AlignItems="Center">
+    <MudItem xs="12" sm="4">
+        <MudSelect T="ExpenseClaimStatus?" @bind-Value="_filterStatus" Label="Filter by Status"
+                   Variant="Variant.Outlined" Dense="true" Clearable="true"
+                   AdornmentIcon="@Icons.Material.Filled.FilterList">
+            @foreach (ExpenseClaimStatus s in Enum.GetValues(typeof(ExpenseClaimStatus)))
+            {
+                <MudSelectItem Value="@((ExpenseClaimStatus?)s)">@s</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="12" sm="2">
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="LoadAsync"
+                   StartIcon="@Icons.Material.Filled.Refresh">Refresh</MudButton>
+    </MudItem>
+</MudGrid>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_claims.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No expense claims in the review queue.</MudAlert>
+}
+else
+{
+    <MudTable Items="_claims" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="2">
+        <HeaderContent>
+            <MudTh>Date</MudTh>
+            <MudTh>Employee</MudTh>
+            <MudTh>Category</MudTh>
+            <MudTh>Description</MudTh>
+            <MudTh>Amount</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Date">@context.ClaimDate.ToLocalTime().ToString("dd MMM yyyy")</MudTd>
+            <MudTd DataLabel="Employee">@context.EmployeeName</MudTd>
+            <MudTd DataLabel="Category">
+                <MudChip T="string" Size="Size.Small" Color="Color.Default">@context.Category</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Description">
+                <MudTooltip Text="@context.Description">
+                    <MudText Typo="Typo.body2">@(context.Description.Length > 40 ? context.Description[..37] + "..." : context.Description)</MudText>
+                </MudTooltip>
+            </MudTd>
+            <MudTd DataLabel="Amount"><strong>GH₵ @context.Amount.ToString("N2")</strong></MudTd>
+            <MudTd DataLabel="Status">
+                <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">@context.Status</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Actions">
+                @if (context.Status is ExpenseClaimStatus.Submitted or ExpenseClaimStatus.UnderReview)
+                {
+                    <div class="d-flex gap-1">
+                        <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success"
+                                       Size="Size.Small" Title="Approve"
+                                       OnClick="() => OpenApproveDialog(context)" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Cancel" Color="Color.Error"
+                                       Size="Size.Small" Title="Reject"
+                                       OnClick="() => OpenRejectDialog(context)" />
+                    </div>
+                }
+                else if (context.Status == ExpenseClaimStatus.Approved)
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.Payment" Color="Color.Primary"
+                                   Size="Size.Small" Title="Mark Paid"
+                                   OnClick="() => OpenMarkPaidDialog(context)" />
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                }
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText>No claims found.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+}
+
+<!-- Approve Dialog -->
+@if (_approveTarget != null)
+{
+    <MudDialog @bind-IsVisible="_showApproveDialog">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Approve Expense Claim</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Class="mb-2">Employee: <strong>@_approveTarget.EmployeeName</strong></MudText>
+            <MudText Class="mb-3">Requested: <strong>GH₵ @_approveTarget.Amount.ToString("N2")</strong></MudText>
+            <MudNumericField T="decimal" @bind-Value="_approvedAmount" Label="Approved Amount (GH₵)"
+                             Variant="Variant.Outlined" Min="0.01m" Format="N2" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _showApproveDialog = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ConfirmApprove">Approve</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Reject Dialog -->
+@if (_rejectTarget != null)
+{
+    <MudDialog @bind-IsVisible="_showRejectDialog">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Reject Expense Claim</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Class="mb-3">Employee: <strong>@_rejectTarget.EmployeeName</strong> — GH₵ @_rejectTarget.Amount.ToString("N2")</MudText>
+            <MudTextField @bind-Value="_rejectReason" Label="Rejection Reason" Variant="Variant.Outlined"
+                          Lines="3" Required="true" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _showRejectDialog = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ConfirmReject">Reject</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Mark Paid Dialog -->
+@if (_paidTarget != null)
+{
+    <MudDialog @bind-IsVisible="_showPaidDialog">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Mark as Paid</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Class="mb-3">Employee: <strong>@_paidTarget.EmployeeName</strong> — Approved: GH₵ @_paidTarget.ApprovedAmount.ToString("N2")</MudText>
+            <MudTextField @bind-Value="_paymentReference" Label="Payment Reference" Variant="Variant.Outlined"
+                          Placeholder="e.g. TXN-20241201-001" Required="true" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _showPaidDialog = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ConfirmMarkPaid">Confirm Payment</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private bool _isLoading = true;
+    private List<ExpenseClaimDto> _claims = new();
+    private ExpenseClaimStatus? _filterStatus;
+
+    private ExpenseClaimDto? _approveTarget;
+    private bool _showApproveDialog;
+    private decimal _approvedAmount;
+
+    private ExpenseClaimDto? _rejectTarget;
+    private bool _showRejectDialog;
+    private string _rejectReason = string.Empty;
+
+    private ExpenseClaimDto? _paidTarget;
+    private bool _showPaidDialog;
+    private string _paymentReference = string.Empty;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Expense Claims", href: null, disabled: true),
+        new BreadcrumbItem("Review", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _claims = await ExpenseService.GetForReviewAsync(_filterStatus);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OpenApproveDialog(ExpenseClaimDto claim)
+    {
+        _approveTarget = claim;
+        _approvedAmount = claim.Amount;
+        _showApproveDialog = true;
+    }
+
+    private void OpenRejectDialog(ExpenseClaimDto claim)
+    {
+        _rejectTarget = claim;
+        _rejectReason = string.Empty;
+        _showRejectDialog = true;
+    }
+
+    private void OpenMarkPaidDialog(ExpenseClaimDto claim)
+    {
+        _paidTarget = claim;
+        _paymentReference = string.Empty;
+        _showPaidDialog = true;
+    }
+
+    private async Task ConfirmApprove()
+    {
+        if (_approveTarget == null || _approvedAmount <= 0) return;
+        var approverId = CurrentUser.EmployeeId;
+        if (approverId == null) return;
+        try
+        {
+            await ExpenseService.ApproveAsync(_approveTarget.Id, approverId.Value, _approvedAmount);
+            Snackbar.Add("Claim approved.", Severity.Success);
+            _showApproveDialog = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (_rejectTarget == null || string.IsNullOrWhiteSpace(_rejectReason)) return;
+        var rejectedById = CurrentUser.EmployeeId;
+        if (rejectedById == null) return;
+        try
+        {
+            await ExpenseService.RejectAsync(_rejectTarget.Id, rejectedById.Value, _rejectReason);
+            Snackbar.Add("Claim rejected.", Severity.Warning);
+            _showRejectDialog = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task ConfirmMarkPaid()
+    {
+        if (_paidTarget == null || string.IsNullOrWhiteSpace(_paymentReference)) return;
+        try
+        {
+            await ExpenseService.MarkPaidAsync(_paidTarget.Id, _paymentReference);
+            Snackbar.Add("Claim marked as paid.", Severity.Success);
+            _showPaidDialog = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private Color GetStatusColor(ExpenseClaimStatus status) => status switch
+    {
+        ExpenseClaimStatus.Submitted => Color.Default,
+        ExpenseClaimStatus.UnderReview => Color.Info,
+        ExpenseClaimStatus.Approved => Color.Success,
+        ExpenseClaimStatus.Rejected => Color.Error,
+        ExpenseClaimStatus.Paid => Color.Primary,
+        _ => Color.Default
+    };
+}

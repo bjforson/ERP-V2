@@ -1,0 +1,1356 @@
+@page "/profile"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+@using NickHR.Services.ProfileChange
+@using System.Net.Http.Headers
+
+@inject IDbContextFactory<NickHRDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IHttpClientFactory HttpClientFactory
+@inject NickHR.WebApp.Services.AuthStateProvider AuthState
+@inject IConfiguration Configuration
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IServiceProvider ServiceProvider
+@inject CurrentEmployeeService CurrentEmployee
+@inject ProfileChangeService ProfileChangeSvc
+@inject UserManager<ApplicationUser> UserManager
+
+<PageTitle>NICKSCAN ERP — NickHR — My Profile</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.Person" Class="mr-2" />My Profile
+</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_employee == null)
+{
+    <MudAlert Severity="Severity.Warning">No employee record found.</MudAlert>
+}
+else
+{
+    @if (_pendingChangeRequests.Count > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4"
+                  Icon="@Icons.Material.Filled.HourglassTop">
+            You have <strong>@_pendingChangeRequests.Count</strong> change@(_pendingChangeRequests.Count == 1 ? "" : "s") awaiting HR approval.
+            <MudTable Items="_pendingChangeRequests" Dense="true" Class="mt-2" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Field</MudTh>
+                    <MudTh>Requested Value</MudTh>
+                    <MudTh>Submitted</MudTh>
+                    <MudTh>Status</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.FieldLabel</MudTd>
+                    <MudTd>@(context.NewValue ?? "(clear)")</MudTd>
+                    <MudTd>@context.CreatedAt.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">@context.Status</MudChip>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudAlert>
+    }
+
+    <MudGrid>
+        <!-- Portrait Column -->
+        <MudItem xs="12" md="3">
+            <MudPaper Class="pa-4 d-flex flex-column align-center" Elevation="2">
+                @if (_employee.PhotoData != null && _employee.PhotoData.Length > 0)
+                {
+                    <MudAvatar Style="width:150px;height:150px;">
+                        <MudImage Src="@($"data:{_employee.PhotoContentType ?? "image/jpeg"};base64,{Convert.ToBase64String(_employee.PhotoData)}")"
+                                  Style="width:100%;height:100%;object-fit:cover;" />
+                    </MudAvatar>
+                }
+                else
+                {
+                    <MudAvatar Style="width:150px;height:150px;font-size:3rem;" Color="Color.Primary">
+                        @(_employee.FirstName.Length > 0 ? _employee.FirstName[0] : '?')
+                    </MudAvatar>
+                }
+                <MudText Typo="Typo.h6" Class="mt-3">@_employee.FirstName @_employee.LastName</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">@(_employee.Designation?.Title ?? "—")</MudText>
+                <MudChip T="string" Color="Color.Success" Size="Size.Small" Class="mt-2">@_employee.EmploymentStatus</MudChip>
+                <MudText Typo="Typo.caption" Class="mt-2">@_employee.EmployeeCode</MudText>
+                <MudDivider Class="mt-3 mb-2" Style="width:100%" />
+                <MudText Typo="Typo.caption" Class="mb-2">Change Portrait Photo</MudText>
+                <MudFileUpload T="IBrowserFile" Accept=".jpg,.jpeg,.png,.webp" FilesChanged="HandlePhotoUpload" MaximumFileCount="1">
+                    <ActivatorContent>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.CloudUpload"
+                                   Size="Size.Small" Disabled="_photoUploading" FullWidth="true">
+                            @if (_photoUploading)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                                @:Uploading...
+                            }
+                            else
+                            {
+                                @:Choose Photo
+                            }
+                        </MudButton>
+                    </ActivatorContent>
+                </MudFileUpload>
+                @if (!string.IsNullOrEmpty(_photoError))
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-1">@_photoError</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <!-- Tabs Column -->
+        <MudItem xs="12" md="9">
+            <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+
+                <!-- Tab 1: Personal Info -->
+                <MudTabPanel Text="Personal Info" Icon="@Icons.Material.Filled.Person">
+                    <MudGrid>
+                        <MudItem xs="12" Class="d-flex justify-end mb-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@(_editPersonal ? Icons.Material.Filled.Close : Icons.Material.Filled.Edit)"
+                                       OnClick="() => _editPersonal = !_editPersonal">
+                                @(_editPersonal ? "Cancel" : "Edit")
+                            </MudButton>
+                        </MudItem>
+
+                        @if (_editPersonal)
+                        {
+                            <MudItem xs="12">
+                                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-3">
+                                    Edit your details below and click Save.
+                                </MudAlert>
+                            </MudItem>
+                        }
+
+                        <!-- Core identity -->
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="First Name" @bind-Value="_employee.FirstName"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Middle Name" @bind-Value="_employee.MiddleName"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Last Name" @bind-Value="_employee.LastName"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Employee Code" Value="@_employee.EmployeeCode"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker Label="Date of Birth" @bind-Date="_dobDate"
+                                           ReadOnly="!_editPersonal" Variant="Variant.Outlined"
+                                           DateFormat="dd/MM/yyyy" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Gender" Value="@_employee.Gender.ToString()"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Marital Status" Value="@_employee.MaritalStatus.ToString()"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Nationality" @bind-Value="_employee.Nationality"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Ghana Card Number" @bind-Value="_employee.GhanaCardNumber"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="TIN" @bind-Value="_employee.TIN"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="SSNIT Number" @bind-Value="_employee.SSNITNumber"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        <!-- Ghana-specific extra fields -->
+                        <MudItem xs="12">
+                            <MudDivider Class="my-2" />
+                            <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Additional Details</b></MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Place of Birth" @bind-Value="_employee.PlaceOfBirth"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Religion" @bind-Value="_employee.Religion"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Ethnic Group" @bind-Value="_employee.EthnicGroup"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            @if (_editPersonal)
+                            {
+                                <MudSelect Label="Blood Group" @bind-Value="_employee.BloodGroup"
+                                           Variant="Variant.Outlined">
+                                    <MudSelectItem Value="@((string?)null)">— Not specified —</MudSelectItem>
+                                    @foreach (var bg in _bloodGroups)
+                                    {
+                                        <MudSelectItem Value="@bg">@bg</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            }
+                            else
+                            {
+                                <MudTextField Label="Blood Group" Value="@(_employee.BloodGroup ?? "—")"
+                                              ReadOnly="true" Variant="Variant.Outlined" />
+                            }
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Mother's Maiden Name" @bind-Value="_employee.MothersMaidenName"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Ghana Post GPS (Digital Address)" @bind-Value="_employee.GhanaPostGPS"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined"
+                                          Placeholder="e.g. GA-123-4567" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Medical Conditions / Allergies" @bind-Value="_employee.MedicalConditions"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" Lines="2" />
+                        </MudItem>
+
+                        <!-- Spouse / children -->
+                        <MudItem xs="12">
+                            <MudDivider Class="my-2" />
+                            <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Spouse &amp; Children</b></MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Spouse Name" @bind-Value="_employee.SpouseName"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Spouse Phone" @bind-Value="_employee.SpousePhone"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Spouse Employer" @bind-Value="_employee.SpouseEmployer"
+                                          ReadOnly="!_editPersonal" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField Label="Number of Children" @bind-Value="_employee.NumberOfChildren"
+                                             ReadOnly="!_editPersonal" Variant="Variant.Outlined" Min="0" />
+                        </MudItem>
+
+                        @if (_editPersonal)
+                        {
+                            <MudItem xs="12" Class="d-flex justify-end mt-2">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Save"
+                                           OnClick="SavePersonalInfoAsync">
+                                    Save Changes
+                                </MudButton>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudTabPanel>
+
+                <!-- Tab 2: Contact & Address -->
+                <MudTabPanel Text="Contact & Address" Icon="@Icons.Material.Filled.ContactPhone">
+                    <MudGrid>
+                        <MudItem xs="12" Class="d-flex justify-end mb-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@(_editContact ? Icons.Material.Filled.Close : Icons.Material.Filled.Edit)"
+                                       OnClick="() => _editContact = !_editContact">
+                                @(_editContact ? "Cancel" : "Edit")
+                            </MudButton>
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.subtitle1" Class="mb-2"><b>Contact Information</b></MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Primary Phone" @bind-Value="_employee.PrimaryPhone"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Secondary Phone" @bind-Value="_employee.SecondaryPhone"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Personal Email" @bind-Value="_employee.PersonalEmail"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Work Email" Value="@_employee.WorkEmail"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        <MudItem xs="12" Class="mt-3">
+                            <MudText Typo="Typo.subtitle1" Class="mb-2"><b>Address</b></MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Residential Address" @bind-Value="_employee.ResidentialAddress"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined" Lines="2" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Postal Address" @bind-Value="_employee.PostalAddress"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined" Lines="2" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Hometown" @bind-Value="_employee.Hometown"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Region" @bind-Value="_employee.Region"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Ghana Post GPS (Digital Address)" @bind-Value="_employee.GhanaPostGPS"
+                                          ReadOnly="!_editContact" Variant="Variant.Outlined"
+                                          Placeholder="e.g. GA-123-4567" />
+                        </MudItem>
+
+                        @if (_editContact)
+                        {
+                            <MudItem xs="12" Class="d-flex justify-end mt-2">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Save"
+                                           OnClick="SaveContactInfoAsync">
+                                    Save Changes
+                                </MudButton>
+                            </MudItem>
+                        }
+
+                        <MudItem xs="12" Class="mt-4">
+                            <MudDivider />
+                            <MudText Typo="Typo.subtitle1" Class="mt-3 mb-2"><b>Emergency Contacts</b></MudText>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                                       StartIcon="@Icons.Material.Filled.PersonAdd"
+                                       OnClick="OpenAddEmergencyContactDialog" Class="mb-3">
+                                Add Emergency Contact
+                            </MudButton>
+
+                            @if (_employee.EmergencyContacts.Any())
+                            {
+                                <MudTable Items="_employee.EmergencyContacts" Dense="true" Hover="true">
+                                    <HeaderContent>
+                                        <MudTh>Name</MudTh>
+                                        <MudTh>Relationship</MudTh>
+                                        <MudTh>Phone</MudTh>
+                                        <MudTh>Email</MudTh>
+                                    </HeaderContent>
+                                    <RowTemplate>
+                                        <MudTd>@context.FullName</MudTd>
+                                        <MudTd>@context.Relationship</MudTd>
+                                        <MudTd>@context.PrimaryPhone</MudTd>
+                                        <MudTd>@context.Email</MudTd>
+                                    </RowTemplate>
+                                </MudTable>
+                            }
+                            else
+                            {
+                                <MudText Color="Color.Secondary">No emergency contacts on file.</MudText>
+                            }
+                        </MudItem>
+                    </MudGrid>
+                </MudTabPanel>
+
+                <!-- Tab 3: Employment -->
+                <MudTabPanel Text="Employment" Icon="@Icons.Material.Filled.Work">
+                    <MudGrid>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Department" Value="@(_employee.Department?.Name ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Designation" Value="@(_employee.Designation?.Title ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Grade" Value="@(_employee.Grade?.Name ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Location" Value="@(_employee.Location?.Name ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Reporting Manager"
+                                          Value="@(_employee.ReportingManager != null ? $"{_employee.ReportingManager.FirstName} {_employee.ReportingManager.LastName}" : "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Employment Type" Value="@_employee.EmploymentType.ToString()"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Status" Value="@_employee.EmploymentStatus.ToString()"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Hire Date" Value="@(_employee.HireDate?.ToString("dd/MM/yyyy") ?? "N/A")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Confirmation Date"
+                                          Value="@(_employee.ConfirmationDate.HasValue ? _employee.ConfirmationDate.Value.ToString("dd/MM/yyyy") : "Not yet confirmed")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        @if (_employee.EmploymentHistory.Any())
+                        {
+                            <MudItem xs="12" Class="mt-4">
+                                <MudText Typo="Typo.subtitle1" Class="mb-3"><b>Employment History</b></MudText>
+                                <MudTimeline>
+                                    @foreach (var record in _employee.EmploymentHistory.OrderByDescending(h => h.StartDate))
+                                    {
+                                        <MudTimelineItem Color="Color.Primary">
+                                            <MudText Typo="Typo.subtitle2">@record.JobTitle at @record.CompanyName</MudText>
+                                            <MudText Typo="Typo.body2">
+                                                @record.StartDate.ToString("MMM yyyy") — @(record.EndDate.HasValue ? record.EndDate.Value.ToString("MMM yyyy") : "Present")
+                                            </MudText>
+                                            @if (!string.IsNullOrEmpty(record.Description))
+                                            {
+                                                <MudText Typo="Typo.caption">@record.Description</MudText>
+                                            }
+                                        </MudTimelineItem>
+                                    }
+                                </MudTimeline>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudTabPanel>
+
+                <!-- Tab 4: Compensation -->
+                <MudTabPanel Text="Compensation" Icon="@Icons.Material.Filled.Payments">
+                    <MudGrid>
+                        <MudItem xs="12" Class="d-flex justify-end mb-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@(_editCompensation ? Icons.Material.Filled.Close : Icons.Material.Filled.Edit)"
+                                       OnClick="() => _editCompensation = !_editCompensation">
+                                @(_editCompensation ? "Cancel" : "Edit Banking Details")
+                            </MudButton>
+                        </MudItem>
+
+                        @if (_editCompensation)
+                        {
+                            <MudItem xs="12">
+                                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
+                                    Banking and payment changes require HR approval before taking effect.
+                                </MudAlert>
+                            </MudItem>
+                        }
+
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Basic Salary" Value="@($"GH₵ {_employee.BasicSalary:N2}")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Bank Name" @bind-Value="_employee.BankName"
+                                          ReadOnly="!_editCompensation" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Bank Branch" @bind-Value="_employee.BankBranch"
+                                          ReadOnly="!_editCompensation" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Account Number"
+                                          Value="@(_editCompensation ? _employee.BankAccountNumber : MaskAccount(_employee.BankAccountNumber))"
+                                          ValueChanged="@((string? v) => { if (_editCompensation) _employee.BankAccountNumber = v; })"
+                                          ReadOnly="!_editCompensation" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Mobile Money Number" @bind-Value="_employee.MobileMoneyNumber"
+                                          ReadOnly="!_editCompensation" Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        @if (_editCompensation)
+                        {
+                            <MudItem xs="12" Class="d-flex justify-end mt-2">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Save"
+                                           OnClick="SaveCompensationInfoAsync">
+                                    Submit for Approval
+                                </MudButton>
+                            </MudItem>
+                        }
+
+                        <MudItem xs="12" Class="mt-2">
+                            <MudDivider />
+                            <MudText Typo="Typo.subtitle1" Class="mt-3 mb-2"><b>Pension Details</b></MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Tier 2 Pension Number" Value="@(_employee.Tier2PensionNumber ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Tier 2 Provider" Value="@(_employee.Tier2Provider ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Tier 3 Pension Number" Value="@(_employee.Tier3PensionNumber ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField Label="Tier 3 Provider" Value="@(_employee.Tier3Provider ?? "—")"
+                                          ReadOnly="true" Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        @if (_salaryHistory.Any())
+                        {
+                            <MudItem xs="12" Class="mt-4">
+                                <MudText Typo="Typo.subtitle1" Class="mb-3"><b>Salary History</b></MudText>
+                                <MudTable Items="_salaryHistory" Dense="true" Hover="true">
+                                    <HeaderContent>
+                                        <MudTh>Component</MudTh>
+                                        <MudTh>Amount</MudTh>
+                                        <MudTh>Effective From</MudTh>
+                                        <MudTh>Effective To</MudTh>
+                                        <MudTh>Status</MudTh>
+                                    </HeaderContent>
+                                    <RowTemplate>
+                                        <MudTd>@context.SalaryComponent?.Name</MudTd>
+                                        <MudTd>GH₵ @context.Amount.ToString("N2")</MudTd>
+                                        <MudTd>@context.EffectiveFrom.ToString("dd/MM/yyyy")</MudTd>
+                                        <MudTd>@(context.EffectiveTo.HasValue ? context.EffectiveTo.Value.ToString("dd/MM/yyyy") : "Current")</MudTd>
+                                        <MudTd>
+                                            <MudChip T="string" Color="@(context.IsActive ? Color.Success : Color.Default)" Size="Size.Small">
+                                                @(context.IsActive ? "Active" : "Inactive")
+                                            </MudChip>
+                                        </MudTd>
+                                    </RowTemplate>
+                                </MudTable>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudTabPanel>
+
+                <!-- Tab 5: Documents -->
+                <MudTabPanel Text="Documents" Icon="@Icons.Material.Filled.Folder">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.UploadFile"
+                               OnClick="OpenDocumentUploadDialog" Class="mb-3">
+                        Upload Document
+                    </MudButton>
+
+                    @if (_employee.EmployeeDocuments.Any())
+                    {
+                        <MudTable Items="_employee.EmployeeDocuments.OrderByDescending(d => d.UploadedAt)"
+                                  Dense="true" Hover="true">
+                            <HeaderContent>
+                                <MudTh>Type</MudTh>
+                                <MudTh>File Name</MudTh>
+                                <MudTh>Uploaded</MudTh>
+                                <MudTh>Size</MudTh>
+                                <MudTh>Description</MudTh>
+                                <MudTh>Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.DocumentType</MudChip>
+                                </MudTd>
+                                <MudTd>
+                                    <MudIcon Icon="@Icons.Material.Filled.InsertDriveFile" Size="Size.Small" Class="mr-1" />
+                                    @context.FileName
+                                </MudTd>
+                                <MudTd>@context.UploadedAt.ToString("dd MMM yyyy")</MudTd>
+                                <MudTd>@FormatFileSize(context.FileSize)</MudTd>
+                                <MudTd>@context.Description</MudTd>
+                                <MudTd>
+                                    <MudIconButton Icon="@Icons.Material.Filled.OpenInNew"
+                                                   Size="Size.Small" Color="Color.Primary"
+                                                   Title="View"
+                                                   OnClick="() => ViewDocument(context.FilePath)" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Secondary">No documents on file.</MudText>
+                    }
+                </MudTabPanel>
+
+                <!-- Tab 6: Qualifications -->
+                <MudTabPanel Text="Qualifications" Icon="@Icons.Material.Filled.School">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="OpenAddQualificationDialog" Class="mb-3">
+                        Add Qualification
+                    </MudButton>
+
+                    @if (_employee.EmployeeQualifications.Any(q => !q.IsDeleted))
+                    {
+                        <MudTable Items="_employee.EmployeeQualifications.Where(q => !q.IsDeleted).ToList()" Dense="true" Hover="true" T="EmployeeQualification">
+                            <HeaderContent>
+                                <MudTh>Type</MudTh>
+                                <MudTh>Institution</MudTh>
+                                <MudTh>Qualification</MudTh>
+                                <MudTh>Field</MudTh>
+                                <MudTh>Period</MudTh>
+                                <MudTh>Grade</MudTh>
+                                <MudTh>Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>
+                                    <MudChip T="string" Size="Size.Small">@context.QualificationType</MudChip>
+                                </MudTd>
+                                <MudTd>@context.Institution</MudTd>
+                                <MudTd>@context.Qualification</MudTd>
+                                <MudTd>@context.FieldOfStudy</MudTd>
+                                <MudTd>
+                                    @(context.StartDate.HasValue ? context.StartDate.Value.ToString("MMM yyyy") : "—")
+                                    —
+                                    @(context.EndDate.HasValue ? context.EndDate.Value.ToString("MMM yyyy") : "Present")
+                                </MudTd>
+                                <MudTd>@context.Grade</MudTd>
+                                <MudTd>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                                   Title="Edit" OnClick="@(() => OpenEditQualificationInline(context))" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                                   Title="Delete" OnClick="@(() => DeleteQualificationAsync(context.Id))" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Secondary">No qualifications on file.</MudText>
+                    }
+
+                    @if (_showInlineQualForm)
+                    {
+                        <MudPaper Class="pa-4 mt-3" Elevation="1">
+                            <MudText Typo="Typo.subtitle2" Class="mb-2">@(_editingQualId.HasValue ? "Edit Qualification" : "Add Qualification")</MudText>
+                            <MudGrid>
+                                <MudItem xs="12" sm="4">
+                                    <MudSelect @bind-Value="_iqType" Label="Type *" Variant="Variant.Outlined" T="string">
+                                        <MudSelectItem Value="@("Education")">Education</MudSelectItem>
+                                        <MudSelectItem Value="@("Certification")">Certification</MudSelectItem>
+                                        <MudSelectItem Value="@("Language")">Language</MudSelectItem>
+                                        <MudSelectItem Value="@("Professional")">Professional</MudSelectItem>
+                                    </MudSelect>
+                                </MudItem>
+                                <MudItem xs="12" sm="4">
+                                    <MudTextField @bind-Value="_iqInstitution" Label="Institution" Variant="Variant.Outlined" />
+                                </MudItem>
+                                <MudItem xs="12" sm="4">
+                                    <MudTextField @bind-Value="_iqQualification" Label="Qualification *" Variant="Variant.Outlined" />
+                                </MudItem>
+                                <MudItem xs="12" sm="4">
+                                    <MudTextField @bind-Value="_iqField" Label="Field of Study" Variant="Variant.Outlined" />
+                                </MudItem>
+                                <MudItem xs="12" sm="4">
+                                    <MudTextField @bind-Value="_iqGrade" Label="Grade / Score" Variant="Variant.Outlined" />
+                                </MudItem>
+                                <MudItem xs="12" sm="2">
+                                    <MudDatePicker @bind-Date="_iqStartDate" Label="Start Date" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                                </MudItem>
+                                <MudItem xs="12" sm="2">
+                                    <MudDatePicker @bind-Date="_iqEndDate" Label="End Date" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                                </MudItem>
+                                <MudItem xs="12" Class="d-flex gap-2">
+                                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveInlineQualification" Size="Size.Small">Save</MudButton>
+                                    <MudButton Variant="Variant.Text" OnClick="() => { _showInlineQualForm = false; _editingQualId = null; }" Size="Size.Small">Cancel</MudButton>
+                                </MudItem>
+                            </MudGrid>
+                        </MudPaper>
+                    }
+                </MudTabPanel>
+
+                <!-- Tab 7: Beneficiaries -->
+                <MudTabPanel Text="Beneficiaries" Icon="@Icons.Material.Filled.VolunteerActivism">
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-3">
+                        Per SSNIT regulations, only blood relations, spouses, or legal dependents can be nominated as beneficiaries.
+                    </MudAlert>
+
+                    @{
+                        var activeTotal = _employee.Beneficiaries.Where(b => b.IsActive).Sum(b => b.PercentageShare);
+                    }
+                    @if (_employee.Beneficiaries.Any(b => b.IsActive) && activeTotal != 100)
+                    {
+                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
+                            Active beneficiary shares total @activeTotal.ToString("N0")% — they must sum to 100%.
+                        </MudAlert>
+                    }
+                    else if (_employee.Beneficiaries.Any(b => b.IsActive) && activeTotal == 100)
+                    {
+                        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="mb-3">
+                            Shares total 100%. Allocation is complete.
+                        </MudAlert>
+                    }
+
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.PersonAdd"
+                               OnClick="OpenAddBeneficiaryDialog" Class="mb-3">
+                        Add Beneficiary
+                    </MudButton>
+
+                    @if (_employee.Beneficiaries.Any())
+                    {
+                        <MudTable Items="_employee.Beneficiaries.OrderByDescending(b => b.IsPrimary)"
+                                  Dense="true" Hover="true">
+                            <HeaderContent>
+                                <MudTh>Full Name</MudTh>
+                                <MudTh>Relationship</MudTh>
+                                <MudTh>Date of Birth</MudTh>
+                                <MudTh>Ghana Card</MudTh>
+                                <MudTh>Phone</MudTh>
+                                <MudTh>% Share</MudTh>
+                                <MudTh>Primary</MudTh>
+                                <MudTh>Active</MudTh>
+                                <MudTh>Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>@context.FullName</MudTd>
+                                <MudTd>@context.Relationship</MudTd>
+                                <MudTd>@(context.DateOfBirth.HasValue ? context.DateOfBirth.Value.ToString("dd/MM/yyyy") : "—")</MudTd>
+                                <MudTd>@(context.GhanaCardNumber ?? "—")</MudTd>
+                                <MudTd>@(context.Phone ?? "—")</MudTd>
+                                <MudTd>@context.PercentageShare.ToString("N0")%</MudTd>
+                                <MudTd>
+                                    @if (context.IsPrimary)
+                                    {
+                                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">Primary</MudChip>
+                                    }
+                                </MudTd>
+                                <MudTd>
+                                    <MudChip T="string" Color="@(context.IsActive ? Color.Success : Color.Default)" Size="Size.Small">
+                                        @(context.IsActive ? "Active" : "Inactive")
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                                   Color="Color.Primary" Title="Edit"
+                                                   OnClick="() => OpenEditBeneficiaryDialog(context)" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                                   Color="Color.Error" Title="Delete"
+                                                   OnClick="() => DeleteBeneficiaryAsync(context.Id)" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Secondary">No beneficiaries on file.</MudText>
+                    }
+                </MudTabPanel>
+
+                <!-- Tab 8: Dependents -->
+                <MudTabPanel Text="Dependents" Icon="@Icons.Material.Filled.FamilyRestroom">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.PersonAdd"
+                               OnClick="OpenAddDependentDialog" Class="mb-3">
+                        Add Dependent
+                    </MudButton>
+
+                    @if (_employee.Dependents.Any())
+                    {
+                        <MudTable Items="_employee.Dependents" Dense="true" Hover="true">
+                            <HeaderContent>
+                                <MudTh>Full Name</MudTh>
+                                <MudTh>Relationship</MudTh>
+                                <MudTh>Date of Birth</MudTh>
+                                <MudTh>Gender</MudTh>
+                                <MudTh>Active</MudTh>
+                                <MudTh>Actions</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd>@context.FullName</MudTd>
+                                <MudTd>@(context.Relationship ?? "—")</MudTd>
+                                <MudTd>@(context.DateOfBirth.HasValue ? context.DateOfBirth.Value.ToString("dd/MM/yyyy") : "—")</MudTd>
+                                <MudTd>@context.Gender.ToString()</MudTd>
+                                <MudTd>
+                                    <MudChip T="string" Color="@(context.IsActive ? Color.Success : Color.Default)" Size="Size.Small">
+                                        @(context.IsActive ? "Active" : "Inactive")
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                                   Color="Color.Primary" Title="Edit"
+                                                   OnClick="() => OpenEditDependentDialog(context)" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                                   Color="Color.Error" Title="Delete"
+                                                   OnClick="() => DeleteDependentAsync(context.Id)" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Secondary">No dependents on file.</MudText>
+                    }
+                </MudTabPanel>
+
+            </MudTabs>
+        </MudItem>
+    </MudGrid>
+}
+
+<!-- Dialogs -->
+@if (_showEmergencyContactDialog)
+{
+    <EmergencyContactDialog EmployeeId="@(_employee!.Id)"
+                            OnSaved="OnEmergencyContactSaved"
+                            OnClose="() => _showEmergencyContactDialog = false" />
+}
+
+@if (_showQualificationDialog)
+{
+    <QualificationDialog EmployeeId="@(_employee!.Id)"
+                         OnSaved="OnQualificationSaved"
+                         OnClose="() => _showQualificationDialog = false" />
+}
+
+@if (_showBeneficiaryDialog)
+{
+    <BeneficiaryDialog EmployeeId="@(_employee!.Id)"
+                       Existing="_editingBeneficiary"
+                       OnSaved="OnBeneficiarySaved"
+                       OnClose="() => _showBeneficiaryDialog = false" />
+}
+
+@if (_showDependentDialog)
+{
+    <DependentDialog EmployeeId="@(_employee!.Id)"
+                     Existing="_editingDependent"
+                     OnSaved="OnDependentSaved"
+                     OnClose="() => _showDependentDialog = false" />
+}
+
+@if (_showDocumentUploadDialog)
+{
+    <DocumentUploadDialog EmployeeId="@(_employee!.Id)"
+                          ApiBaseUrl="@(_apiBaseUrl)"
+                          AuthToken="@(_authToken)"
+                          OnSaved="OnDocumentUploaded"
+                          OnClose="() => _showDocumentUploadDialog = false" />
+}
+
+@code {
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        // Try multiple claim types for employee ID
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        // Get email from various claim types (JWT vs Cookie have different claim names)
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value
+                    ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+                    ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        // Look up by email
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        if (emp != null) return emp.Id;
+
+        // Also try: look up the ApplicationUser to get EmployeeId
+        var userManager = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<ApplicationUser>>();
+        var appUser = await userManager.FindByEmailAsync(email);
+        return appUser?.EmployeeId;
+    }
+
+    private bool _loading = true;
+    private Employee? _employee;
+    private bool _editPersonal = false;
+    private bool _editContact = false;
+    private bool _editCompensation = false;
+    private DateTime? _dobDate;
+    private List<EmployeeSalaryStructure> _salaryHistory = new();
+    private bool _photoUploading = false;
+
+    private bool _showEmergencyContactDialog = false;
+    private bool _showQualificationDialog = false;
+    private bool _showBeneficiaryDialog = false;
+    private bool _showDependentDialog = false;
+    private bool _showDocumentUploadDialog = false;
+
+    // Inline qualification edit form
+    private bool _showInlineQualForm = false;
+    private int? _editingQualId;
+    private string _iqType = "Education";
+    private string _iqInstitution = "";
+    private string _iqQualification = "";
+    private string _iqField = "";
+    private string _iqGrade = "";
+    private DateTime? _iqStartDate;
+    private DateTime? _iqEndDate;
+
+    private Beneficiary? _editingBeneficiary;
+    private Dependent? _editingDependent;
+
+    private string _apiBaseUrl = "https://localhost:5206";
+    private string? _authToken;
+
+    private static readonly string[] _bloodGroups = { "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-" };
+
+    // ── Profile Change Approval support ───────────────────────────────────────
+    private List<ProfileChangeRequest> _pendingChangeRequests = new();
+    private bool _isSuperAdmin = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _apiBaseUrl = Configuration["ApiBaseUrl"] ?? "https://localhost:5206";
+        _authToken = AuthState.GetToken();
+
+        // Determine if current user is SuperAdmin (auto-approve Tier 2)
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        _isSuperAdmin = authState.User.IsInRole("SuperAdmin");
+
+        await LoadEmployeeAsync();
+    }
+
+    private async Task LoadEmployeeAsync()
+    {
+        _loading = true;
+        var employeeId = await CurrentEmployee.GetEmployeeIdAsync();
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+
+        if (employeeId.HasValue)
+        {
+            _employee = await ctx.Employees
+                .Include(e => e.Department)
+                .Include(e => e.Designation)
+                .Include(e => e.Grade)
+                .Include(e => e.Location)
+                .Include(e => e.ReportingManager)
+                .Include(e => e.EmergencyContacts)
+                .Include(e => e.EmployeeDocuments)
+                .Include(e => e.EmployeeQualifications)
+                .Include(e => e.EmploymentHistory)
+                .Include(e => e.Beneficiaries)
+                .Include(e => e.Dependents)
+                .FirstOrDefaultAsync(e => e.Id == employeeId.Value && !e.IsDeleted);
+        }
+
+        if (_employee != null)
+        {
+            _dobDate = _employee.DateOfBirth;
+
+            _salaryHistory = await ctx.EmployeeSalaryStructures
+                .Include(s => s.SalaryComponent)
+                .Where(s => s.EmployeeId == _employee.Id)
+                .OrderByDescending(s => s.EffectiveFrom)
+                .ToListAsync();
+
+            // Load pending change requests for the banner
+            _pendingChangeRequests = await ProfileChangeSvc.GetMyRequestsAsync(_employee.Id);
+            _pendingChangeRequests = _pendingChangeRequests
+                .Where(r => r.Status == ChangeRequestStatus.Pending)
+                .ToList();
+        }
+
+        _loading = false;
+    }
+
+    private async Task SavePersonalInfoAsync()
+    {
+        if (_employee == null) return;
+
+        // Snapshot the current DB values to detect what changed
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        var dbEmp = await ctx.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == _employee.Id);
+        if (dbEmp == null) return;
+
+        // Field → new value pairs from the form (using _dobDate for DateOfBirth)
+        var fields = new (string Field, string? Value)[]
+        {
+            ("FirstName",         _employee.FirstName),
+            ("MiddleName",        _employee.MiddleName),
+            ("LastName",          _employee.LastName),
+            ("DateOfBirth",       _dobDate?.ToString("O")),
+            ("Nationality",       _employee.Nationality),
+            ("GhanaCardNumber",   _employee.GhanaCardNumber),
+            ("TIN",               _employee.TIN),
+            ("SSNITNumber",       _employee.SSNITNumber),
+            ("PlaceOfBirth",      _employee.PlaceOfBirth),
+            ("Religion",          _employee.Religion),
+            ("EthnicGroup",       _employee.EthnicGroup),
+            ("BloodGroup",        _employee.BloodGroup),
+            ("MothersMaidenName", _employee.MothersMaidenName),
+            ("GhanaPostGPS",      _employee.GhanaPostGPS),
+            ("MedicalConditions", _employee.MedicalConditions),
+            ("SpouseName",        _employee.SpouseName),
+            ("SpousePhone",       _employee.SpousePhone),
+            ("SpouseEmployer",    _employee.SpouseEmployer),
+            ("NumberOfChildren",  _employee.NumberOfChildren.ToString()),
+        };
+
+        int autoCount = 0, pendingCount = 0;
+
+        foreach (var (field, newVal) in fields)
+        {
+            // Get old value from DB snapshot
+            var oldProp = typeof(Employee).GetProperty(field);
+            var oldVal = oldProp?.GetValue(dbEmp)?.ToString();
+
+            // Skip unchanged
+            if (string.Equals(oldVal, newVal, StringComparison.Ordinal)) continue;
+
+            var req = await ProfileChangeSvc.SubmitChangeAsync(
+                _employee.Id, field, newVal, reason: null, _isSuperAdmin);
+
+            if (req.Status == ChangeRequestStatus.Approved) autoCount++;
+            else pendingCount++;
+        }
+
+        _editPersonal = false;
+        await LoadEmployeeAsync();
+
+        if (autoCount > 0 && pendingCount == 0)
+            Snackbar.Add("Personal information updated.", Severity.Success);
+        else if (pendingCount > 0 && autoCount == 0)
+            Snackbar.Add($"{pendingCount} change{(pendingCount > 1 ? "s" : "")} submitted for HR approval.", Severity.Warning);
+        else if (autoCount > 0 && pendingCount > 0)
+            Snackbar.Add($"{autoCount} field{(autoCount > 1 ? "s" : "")} updated; {pendingCount} change{(pendingCount > 1 ? "s" : "")} submitted for HR approval.", Severity.Warning);
+        else
+            Snackbar.Add("No changes detected.", Severity.Info);
+    }
+
+    private async Task SaveContactInfoAsync()
+    {
+        if (_employee == null) return;
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        var dbEmp = await ctx.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == _employee.Id);
+        if (dbEmp == null) return;
+
+        var fields = new (string Field, string? Value)[]
+        {
+            ("PrimaryPhone",       _employee.PrimaryPhone),
+            ("SecondaryPhone",     _employee.SecondaryPhone),
+            ("PersonalEmail",      _employee.PersonalEmail),
+            ("ResidentialAddress", _employee.ResidentialAddress),
+            ("PostalAddress",      _employee.PostalAddress),
+            ("Hometown",           _employee.Hometown),
+            ("Region",             _employee.Region),
+            ("GhanaPostGPS",       _employee.GhanaPostGPS),
+        };
+
+        int autoCount = 0, pendingCount = 0;
+
+        foreach (var (field, newVal) in fields)
+        {
+            var oldProp = typeof(Employee).GetProperty(field);
+            var oldVal = oldProp?.GetValue(dbEmp)?.ToString();
+
+            if (string.Equals(oldVal, newVal, StringComparison.Ordinal)) continue;
+
+            var req = await ProfileChangeSvc.SubmitChangeAsync(
+                _employee.Id, field, newVal, reason: null, _isSuperAdmin);
+
+            if (req.Status == ChangeRequestStatus.Approved) autoCount++;
+            else pendingCount++;
+        }
+
+        _editContact = false;
+        await LoadEmployeeAsync();
+
+        if (autoCount > 0 && pendingCount == 0)
+            Snackbar.Add("Contact information updated.", Severity.Success);
+        else if (pendingCount > 0 && autoCount == 0)
+            Snackbar.Add($"{pendingCount} change{(pendingCount > 1 ? "s" : "")} submitted for HR approval.", Severity.Warning);
+        else if (autoCount > 0 && pendingCount > 0)
+            Snackbar.Add($"{autoCount} field{(autoCount > 1 ? "s" : "")} updated; {pendingCount} change{(pendingCount > 1 ? "s" : "")} submitted for HR approval.", Severity.Warning);
+        else
+            Snackbar.Add("No changes detected.", Severity.Info);
+    }
+
+    private async Task SaveCompensationInfoAsync()
+    {
+        if (_employee == null) return;
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        var dbEmp = await ctx.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == _employee.Id);
+        if (dbEmp == null) return;
+
+        var fields = new (string Field, string? Value)[]
+        {
+            ("BankName",          _employee.BankName),
+            ("BankBranch",        _employee.BankBranch),
+            ("BankAccountNumber", _employee.BankAccountNumber),
+            ("MobileMoneyNumber", _employee.MobileMoneyNumber),
+        };
+
+        int autoCount = 0, pendingCount = 0;
+
+        foreach (var (field, newVal) in fields)
+        {
+            var oldProp = typeof(Employee).GetProperty(field);
+            var oldVal = oldProp?.GetValue(dbEmp)?.ToString();
+
+            if (string.Equals(oldVal, newVal, StringComparison.Ordinal)) continue;
+
+            var req = await ProfileChangeSvc.SubmitChangeAsync(
+                _employee.Id, field, newVal, reason: null, _isSuperAdmin);
+
+            if (req.Status == ChangeRequestStatus.Approved) autoCount++;
+            else pendingCount++;
+        }
+
+        _editCompensation = false;
+        await LoadEmployeeAsync();
+
+        if (pendingCount > 0)
+            Snackbar.Add($"Banking change{(pendingCount > 1 ? "s" : "")} submitted for HR approval.", Severity.Warning);
+        else if (autoCount > 0)
+            Snackbar.Add("Banking details updated.", Severity.Success);
+        else
+            Snackbar.Add("No changes detected.", Severity.Info);
+    }
+
+    private string? _photoError;
+
+    private async Task HandlePhotoUpload(IBrowserFile file)
+    {
+        if (_employee == null) { _photoError = "No employee loaded."; return; }
+        if (file == null) return;
+
+        _photoError = null;
+
+        if (file.Size > 10 * 1024 * 1024)
+        {
+            _photoError = "Photo must be under 10 MB.";
+            Snackbar.Add(_photoError, Severity.Warning);
+            return;
+        }
+
+        _photoUploading = true;
+        StateHasChanged();
+
+        try
+        {
+            // Read file into memory
+            using var ms = new MemoryStream();
+            await using var fileStream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            await fileStream.CopyToAsync(ms);
+            var photoBytes = ms.ToArray();
+
+            if (photoBytes.Length == 0)
+            {
+                _photoError = "File is empty.";
+                Snackbar.Add(_photoError, Severity.Error);
+                return;
+            }
+
+            // Save directly to database
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+            var emp = await ctx.Employees.FindAsync(_employee.Id);
+            if (emp != null)
+            {
+                emp.PhotoData = photoBytes;
+                emp.PhotoContentType = file.ContentType ?? "image/jpeg";
+                emp.PhotoUrl = $"db://photo/{emp.Id}";
+                emp.UpdatedAt = DateTime.UtcNow;
+                await ctx.SaveChangesAsync();
+
+                // Update local state immediately
+                _employee.PhotoData = emp.PhotoData;
+                _employee.PhotoContentType = emp.PhotoContentType;
+                _employee.PhotoUrl = emp.PhotoUrl;
+
+                Snackbar.Add($"Photo saved ({photoBytes.Length / 1024} KB)", Severity.Success);
+            }
+            else
+            {
+                _photoError = "Employee not found in database.";
+                Snackbar.Add(_photoError, Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            _photoError = $"Upload error: {ex.Message}";
+            Snackbar.Add(_photoError, Severity.Error);
+        }
+        finally
+        {
+            _photoUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ViewDocument(string filePath)
+    {
+        // Opens in new browser tab via JS interop would be ideal;
+        // for now navigation is handled by the anchor tag approach.
+        // The View button links to /api/files/{filePath}
+    }
+
+    // Dialog open/close
+    private void OpenAddEmergencyContactDialog() => _showEmergencyContactDialog = true;
+    private void OpenAddQualificationDialog() => _showQualificationDialog = true;
+
+    private void OpenAddBeneficiaryDialog()
+    {
+        _editingBeneficiary = null;
+        _showBeneficiaryDialog = true;
+    }
+
+    private void OpenEditBeneficiaryDialog(Beneficiary b)
+    {
+        _editingBeneficiary = b;
+        _showBeneficiaryDialog = true;
+    }
+
+    private void OpenAddDependentDialog()
+    {
+        _editingDependent = null;
+        _showDependentDialog = true;
+    }
+
+    private void OpenEditDependentDialog(Dependent d)
+    {
+        _editingDependent = d;
+        _showDependentDialog = true;
+    }
+
+    private void OpenDocumentUploadDialog() => _showDocumentUploadDialog = true;
+
+    // Callbacks
+    private async Task OnEmergencyContactSaved()
+    {
+        _showEmergencyContactDialog = false;
+        Snackbar.Add("Emergency contact added.", Severity.Success);
+        await LoadEmployeeAsync();
+    }
+
+    private async Task OnQualificationSaved()
+    {
+        _showQualificationDialog = false;
+        Snackbar.Add("Qualification added.", Severity.Success);
+        await LoadEmployeeAsync();
+    }
+
+    private async Task OnBeneficiarySaved()
+    {
+        _showBeneficiaryDialog = false;
+        _editingBeneficiary = null;
+        Snackbar.Add("Beneficiary saved.", Severity.Success);
+        await LoadEmployeeAsync();
+    }
+
+    private async Task OnDependentSaved()
+    {
+        _showDependentDialog = false;
+        _editingDependent = null;
+        Snackbar.Add("Dependent saved.", Severity.Success);
+        await LoadEmployeeAsync();
+    }
+
+    private async Task OnDocumentUploaded()
+    {
+        _showDocumentUploadDialog = false;
+        await LoadEmployeeAsync();
+    }
+
+    // === Inline Qualification Edit/Delete ===
+    private void OpenEditQualificationInline(EmployeeQualification q)
+    {
+        _editingQualId = q.Id;
+        _iqType = q.QualificationType ?? "Education";
+        _iqInstitution = q.Institution ?? "";
+        _iqQualification = q.Qualification ?? "";
+        _iqField = q.FieldOfStudy ?? "";
+        _iqGrade = q.Grade ?? "";
+        _iqStartDate = q.StartDate;
+        _iqEndDate = q.EndDate;
+        _showInlineQualForm = true;
+    }
+
+    private async Task SaveInlineQualification()
+    {
+        if (string.IsNullOrWhiteSpace(_iqQualification)) { Snackbar.Add("Qualification name is required.", Severity.Warning); return; }
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            if (_editingQualId.HasValue)
+            {
+                var entity = await db.EmployeeQualifications.FindAsync(_editingQualId.Value);
+                if (entity != null)
+                {
+                    entity.QualificationType = _iqType; entity.Institution = _iqInstitution;
+                    entity.Qualification = _iqQualification; entity.FieldOfStudy = _iqField;
+                    entity.Grade = _iqGrade; entity.StartDate = _iqStartDate; entity.EndDate = _iqEndDate;
+                    entity.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync();
+                    Snackbar.Add("Qualification updated.", Severity.Success);
+                }
+            }
+            _editingQualId = null;
+            _showInlineQualForm = false;
+            await LoadEmployeeAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteQualificationAsync(int id)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmployeeQualifications.FindAsync(id);
+            if (entity != null) { entity.IsDeleted = true; entity.UpdatedAt = DateTime.UtcNow; await db.SaveChangesAsync(); }
+            Snackbar.Add("Qualification removed.", Severity.Success);
+            await LoadEmployeeAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteBeneficiaryAsync(int id)
+    {
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        var b = await ctx.Beneficiaries.FindAsync(id);
+        if (b != null)
+        {
+            ctx.Beneficiaries.Remove(b);
+            await ctx.SaveChangesAsync();
+            Snackbar.Add("Beneficiary removed.", Severity.Success);
+            await LoadEmployeeAsync();
+        }
+    }
+
+    private async Task DeleteDependentAsync(int id)
+    {
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        var d = await ctx.Dependents.FindAsync(id);
+        if (d != null)
+        {
+            ctx.Dependents.Remove(d);
+            await ctx.SaveChangesAsync();
+            Snackbar.Add("Dependent removed.", Severity.Success);
+            await LoadEmployeeAsync();
+        }
+    }
+
+    private static string MaskAccount(string? account)
+    {
+        if (string.IsNullOrEmpty(account) || account.Length < 4) return account ?? "—";
+        return new string('*', account.Length - 4) + account[^4..];
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024:N1} KB";
+        return $"{bytes / (1024 * 1024):N1} MB";
+    }
+}

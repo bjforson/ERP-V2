@@ -1,0 +1,769 @@
+@page "/payroll/reports"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHROrPayroll)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+@using NickHR.Services.Payroll
+@using NickHR.Services.Payroll.Models
+@using NickHR.Services.Payroll.EFiling
+@using System.Text
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject NickHR.Services.Payroll.IPayrollProcessingService PayrollService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>NICKSCAN ERP — NickHR — SSNIT/PAYE Reports</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Assessment" Class="mr-2" />SSNIT / PAYE Reports
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+
+    <!-- Tab 1: SSNIT Report -->
+    <MudTabPanel Text="SSNIT Report" Icon="@Icons.Material.Filled.Shield">
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" @bind-Value="_ssnitMonth" Label="Month" Variant="Variant.Outlined" Dense="true">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var month = m;
+                        <MudSelectItem Value="@month">@(new DateTime(2000, month, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" md="2">
+                <MudNumericField T="int" @bind-Value="_ssnitYear" Label="Year" Variant="Variant.Outlined"
+                                 Min="2020" Max="2099" Dense="true" />
+            </MudItem>
+            <MudItem xs="12" sm="5" md="4" Class="d-flex align-center gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.BarChart"
+                           OnClick="GenerateSSNITReportAsync"
+                           Disabled="_ssnitLoading">
+                    @if (_ssnitLoading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                    }
+                    Generate
+                </MudButton>
+                @if (_ssnitReport != null)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.Download"
+                               OnClick="ExportSSNITCsvAsync">
+                        Export CSV
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Default"
+                               StartIcon="@Icons.Material.Filled.Print"
+                               OnClick="PrintSSNITAsync">
+                        Print
+                    </MudButton>
+                }
+            </MudItem>
+        </MudGrid>
+
+        @if (_ssnitReport != null)
+        {
+            <!-- Summary Cards -->
+            <MudGrid Class="mb-4">
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Employee Contribution (5.5%)</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_ssnitReport.TotalEmployeeContribution.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Employer Contribution (13%)</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Warning">GH₵ @_ssnitReport.TotalEmployerContribution.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1" Style="background-color:#1565C0">
+                        <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.8)">Grand Total</MudText>
+                        <MudText Typo="Typo.h6" Style="color:white">GH₵ @_ssnitReport.TotalContribution.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudTable Items="_ssnitReport.Entries" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="1">
+                <ToolBarContent>
+                    <MudText Typo="Typo.subtitle1">
+                        SSNIT Report — @(new DateTime(_ssnitReport.Year, _ssnitReport.Month, 1).ToString("MMMM yyyy"))
+                        &nbsp;<MudText Typo="Typo.caption" Color="Color.Secondary" Inline="true">
+                            (Generated @_ssnitReport.GeneratedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm"))
+                        </MudText>
+                    </MudText>
+                    <MudSpacer />
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@_ssnitReport.Entries.Count employees</MudText>
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>SSNIT Number</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SSNITReportEntry, object>(x => x.EmployeeName)">Employee Name</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SSNITReportEntry, object>(x => x.BasicSalary)">Basic Salary</MudTableSortLabel></MudTh>
+                    <MudTh>Employee 5.5%</MudTh>
+                    <MudTh>Employer 13%</MudTh>
+                    <MudTh>Total</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="SSNIT Number">@context.SSNITNumber</MudTd>
+                    <MudTd DataLabel="Employee Name">@context.EmployeeName</MudTd>
+                    <MudTd DataLabel="Basic Salary">GH₵ @context.BasicSalary.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Employee 5.5%">GH₵ @context.EmployeeContribution.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Employer 13%">GH₵ @context.EmployerContribution.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Total"><strong>GH₵ @context.TotalContribution.ToString("N2")</strong></MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd colspan="2"><strong>TOTALS (@_ssnitReport.Entries.Count employees)</strong></MudTd>
+                    <MudTd><strong>GH₵ @_ssnitReport.Entries.Sum(e => e.BasicSalary).ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_ssnitReport.TotalEmployeeContribution.ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_ssnitReport.TotalEmployerContribution.ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_ssnitReport.TotalContribution.ToString("N2")</strong></MudTd>
+                </FooterContent>
+                <NoRecordsContent>
+                    <MudText>No data found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+        else if (!_ssnitLoading)
+        {
+            <MudAlert Severity="Severity.Info">Select a month and year, then click Generate to view the SSNIT report.</MudAlert>
+        }
+    </MudTabPanel>
+
+    <!-- Tab 2: PAYE Report -->
+    <MudTabPanel Text="PAYE Report" Icon="@Icons.Material.Filled.Receipt">
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" @bind-Value="_payeMonth" Label="Month" Variant="Variant.Outlined" Dense="true">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var month = m;
+                        <MudSelectItem Value="@month">@(new DateTime(2000, month, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" md="2">
+                <MudNumericField T="int" @bind-Value="_payeYear" Label="Year" Variant="Variant.Outlined"
+                                 Min="2020" Max="2099" Dense="true" />
+            </MudItem>
+            <MudItem xs="12" sm="5" md="4" Class="d-flex align-center gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.BarChart"
+                           OnClick="GeneratePAYEReportAsync"
+                           Disabled="_payeLoading">
+                    @if (_payeLoading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                    }
+                    Generate
+                </MudButton>
+                @if (_payeReport != null)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.Download"
+                               OnClick="ExportPAYECsvAsync">
+                        Export CSV
+                    </MudButton>
+                }
+            </MudItem>
+        </MudGrid>
+
+        @if (_payeReport != null)
+        {
+            <!-- Summary Cards -->
+            <MudGrid Class="mb-4">
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Gross Pay</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_payeReport.TotalGrossPay.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Taxable Income</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Warning">GH₵ @_payeReport.TotalTaxableIncome.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1" Style="background-color:#b71c1c">
+                        <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.8)">Total PAYE</MudText>
+                        <MudText Typo="Typo.h6" Style="color:white">GH₵ @_payeReport.TotalPAYE.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudTable Items="_payeReport.Entries" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="1">
+                <ToolBarContent>
+                    <MudText Typo="Typo.subtitle1">
+                        PAYE Report — @(new DateTime(_payeReport.Year, _payeReport.Month, 1).ToString("MMMM yyyy"))
+                        &nbsp;<MudText Typo="Typo.caption" Color="Color.Secondary" Inline="true">
+                            (Generated @_payeReport.GeneratedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm"))
+                        </MudText>
+                    </MudText>
+                    <MudSpacer />
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@_payeReport.Entries.Count employees</MudText>
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>TIN</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<PAYEReportEntry, object>(x => x.EmployeeName)">Employee Name</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<PAYEReportEntry, object>(x => x.GrossPay)">Gross Pay</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<PAYEReportEntry, object>(x => x.TaxableIncome)">Taxable Income</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<PAYEReportEntry, object>(x => x.PAYEDeducted)">PAYE Deducted</MudTableSortLabel></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="TIN">@context.TIN</MudTd>
+                    <MudTd DataLabel="Employee Name">@context.EmployeeName</MudTd>
+                    <MudTd DataLabel="Gross Pay">GH₵ @context.GrossPay.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Taxable Income">GH₵ @context.TaxableIncome.ToString("N2")</MudTd>
+                    <MudTd DataLabel="PAYE Deducted"><strong>GH₵ @context.PAYEDeducted.ToString("N2")</strong></MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd colspan="2"><strong>TOTALS (@_payeReport.Entries.Count employees)</strong></MudTd>
+                    <MudTd><strong>GH₵ @_payeReport.TotalGrossPay.ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_payeReport.TotalTaxableIncome.ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_payeReport.TotalPAYE.ToString("N2")</strong></MudTd>
+                </FooterContent>
+                <NoRecordsContent>
+                    <MudText>No data found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+        else if (!_payeLoading)
+        {
+            <MudAlert Severity="Severity.Info">Select a month and year, then click Generate to view the PAYE report.</MudAlert>
+        }
+    </MudTabPanel>
+
+    <!-- Tab 3: Tier 2 Pension Report -->
+    <MudTabPanel Text="Tier 2 Pension" Icon="@Icons.Material.Filled.Savings">
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" @bind-Value="_tier2Month" Label="Month" Variant="Variant.Outlined" Dense="true">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var month = m;
+                        <MudSelectItem Value="@month">@(new DateTime(2000, month, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" md="2">
+                <MudNumericField T="int" @bind-Value="_tier2Year" Label="Year" Variant="Variant.Outlined"
+                                 Min="2020" Max="2099" Dense="true" />
+            </MudItem>
+            <MudItem xs="12" sm="5" md="4" Class="d-flex align-center gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.BarChart"
+                           OnClick="GenerateTier2ReportAsync"
+                           Disabled="_tier2Loading">
+                    @if (_tier2Loading)
+                    { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+                    Generate
+                </MudButton>
+                @if (_tier2Report != null)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.Download"
+                               OnClick="ExportTier2CsvAsync">
+                        Export CSV
+                    </MudButton>
+                }
+            </MudItem>
+        </MudGrid>
+
+        @if (_tier2Report != null)
+        {
+            <MudGrid Class="mb-4">
+                <MudItem xs="12" sm="6">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Tier 2 Contribution (5%)</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_tier2Report.TotalContribution.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Employees Enrolled</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Primary">@_tier2Report.Entries.Count</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudTable Items="_tier2Report.Entries" Dense="true" Hover="true" Elevation="1">
+                <ToolBarContent>
+                    <MudText Typo="Typo.subtitle1">Tier 2 Pension — @(new DateTime(_tier2Report.Year, _tier2Report.Month, 1).ToString("MMMM yyyy"))</MudText>
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>Pension Number</MudTh>
+                    <MudTh>Provider</MudTh>
+                    <MudTh>Employee Name</MudTh>
+                    <MudTh>Basic Salary</MudTh>
+                    <MudTh>Contribution (5%)</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Tier2PensionNumber</MudTd>
+                    <MudTd>@context.Provider</MudTd>
+                    <MudTd>@context.EmployeeName</MudTd>
+                    <MudTd>GH₵ @context.BasicSalary.ToString("N2")</MudTd>
+                    <MudTd><strong>GH₵ @context.Contribution.ToString("N2")</strong></MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd colspan="3"><strong>TOTALS</strong></MudTd>
+                    <MudTd><strong>GH₵ @_tier2Report.Entries.Sum(e => e.BasicSalary).ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_tier2Report.TotalContribution.ToString("N2")</strong></MudTd>
+                </FooterContent>
+            </MudTable>
+        }
+        else if (!_tier2Loading)
+        {
+            <MudAlert Severity="Severity.Info">Select a month and year, then click Generate to view the Tier 2 pension report.</MudAlert>
+        }
+    </MudTabPanel>
+
+    <!-- Tab 4: Tier 3 Pension Report -->
+    <MudTabPanel Text="Tier 3 Pension" Icon="@Icons.Material.Filled.AccountBalance">
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" @bind-Value="_tier3Month" Label="Month" Variant="Variant.Outlined" Dense="true">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var month = m;
+                        <MudSelectItem Value="@month">@(new DateTime(2000, month, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" md="2">
+                <MudNumericField T="int" @bind-Value="_tier3Year" Label="Year" Variant="Variant.Outlined"
+                                 Min="2020" Max="2099" Dense="true" />
+            </MudItem>
+            <MudItem xs="12" sm="5" md="4" Class="d-flex align-center gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.BarChart"
+                           OnClick="GenerateTier3ReportAsync"
+                           Disabled="_tier3Loading">
+                    @if (_tier3Loading)
+                    { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+                    Generate
+                </MudButton>
+                @if (_tier3Report != null)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.Download"
+                               OnClick="ExportTier3CsvAsync">
+                        Export CSV
+                    </MudButton>
+                }
+            </MudItem>
+        </MudGrid>
+
+        @if (_tier3Report != null)
+        {
+            <MudTable Items="_tier3Report.Entries" Dense="true" Hover="true" Elevation="1">
+                <ToolBarContent>
+                    <MudText Typo="Typo.subtitle1">Tier 3 Pension — @(new DateTime(_tier3Report.Year, _tier3Report.Month, 1).ToString("MMMM yyyy"))</MudText>
+                    <MudSpacer />
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Total: GH₵ @_tier3Report.TotalContribution.ToString("N2")</MudText>
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>Pension Number</MudTh>
+                    <MudTh>Provider</MudTh>
+                    <MudTh>Employee Name</MudTh>
+                    <MudTh>Voluntary Contribution</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Tier3PensionNumber</MudTd>
+                    <MudTd>@context.Provider</MudTd>
+                    <MudTd>@context.EmployeeName</MudTd>
+                    <MudTd><strong>GH₵ @context.VoluntaryContribution.ToString("N2")</strong></MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd colspan="3"><strong>TOTALS</strong></MudTd>
+                    <MudTd><strong>GH₵ @_tier3Report.TotalContribution.ToString("N2")</strong></MudTd>
+                </FooterContent>
+            </MudTable>
+        }
+        else if (!_tier3Loading)
+        {
+            <MudAlert Severity="Severity.Info">Select a month and year, then click Generate to view the Tier 3 pension report.</MudAlert>
+        }
+    </MudTabPanel>
+
+    <!-- Tab 5: GRA Annual Return -->
+    <MudTabPanel Text="GRA Annual Return" Icon="@Icons.Material.Filled.RequestQuote">
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="3" md="2">
+                <MudNumericField T="int" @bind-Value="_annualYear" Label="Year" Variant="Variant.Outlined"
+                                 Min="2020" Max="2099" Dense="true" />
+            </MudItem>
+            <MudItem xs="12" sm="5" md="4" Class="d-flex align-center gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.BarChart"
+                           OnClick="GenerateAnnualReturnAsync"
+                           Disabled="_annualLoading">
+                    @if (_annualLoading)
+                    { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+                    Generate
+                </MudButton>
+                @if (_annualReport != null)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.Download"
+                               OnClick="ExportAnnualCsvAsync">
+                        Export CSV
+                    </MudButton>
+                }
+            </MudItem>
+        </MudGrid>
+
+        @if (_annualReport != null)
+        {
+            <MudGrid Class="mb-4">
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Gross Pay</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_annualReport.GrandTotalGross.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Tax (PAYE)</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Error">GH₵ @_annualReport.GrandTotalTax.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Class="pa-4 text-center" Elevation="1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total SSNIT</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Warning">GH₵ @_annualReport.GrandTotalSSNIT.ToString("N2")</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudTable Items="_annualReport.Entries" Dense="true" Hover="true" Elevation="1">
+                <ToolBarContent>
+                    <MudText Typo="Typo.subtitle1">GRA Annual Return — @_annualReport.Year</MudText>
+                    <MudSpacer />
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@_annualReport.Entries.Count employees</MudText>
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>TIN</MudTh>
+                    <MudTh>Employee Name</MudTh>
+                    <MudTh>Total Gross Pay</MudTh>
+                    <MudTh>Total PAYE</MudTh>
+                    <MudTh>Total SSNIT</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.TIN</MudTd>
+                    <MudTd>@context.EmployeeName</MudTd>
+                    <MudTd>GH₵ @context.TotalGrossPay.ToString("N2")</MudTd>
+                    <MudTd>GH₵ @context.TotalTaxPaid.ToString("N2")</MudTd>
+                    <MudTd>GH₵ @context.TotalSSNIT.ToString("N2")</MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd colspan="2"><strong>TOTALS (@_annualReport.Entries.Count employees)</strong></MudTd>
+                    <MudTd><strong>GH₵ @_annualReport.GrandTotalGross.ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_annualReport.GrandTotalTax.ToString("N2")</strong></MudTd>
+                    <MudTd><strong>GH₵ @_annualReport.GrandTotalSSNIT.ToString("N2")</strong></MudTd>
+                </FooterContent>
+            </MudTable>
+        }
+        else if (!_annualLoading)
+        {
+            <MudAlert Severity="Severity.Info">Select a year and click Generate to view the GRA annual return.</MudAlert>
+        }
+    </MudTabPanel>
+
+    <!-- Tab: E-Filing Downloads -->
+    <MudTabPanel Text="E-Filing" Icon="@Icons.Material.Filled.CloudDownload">
+        <MudAlert Severity="Severity.Info" Class="mb-4">
+            Download files formatted for direct upload to SSNIT and GRA portals.
+        </MudAlert>
+        <MudGrid>
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" @bind-Value="_efileMonth" Label="Month" Variant="Variant.Outlined" Dense="true">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var month = m;
+                        <MudSelectItem Value="@month">@(new DateTime(2000, month, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" md="2">
+                <MudNumericField T="int" @bind-Value="_efileYear" Label="Year" Variant="Variant.Outlined"
+                                 Min="2020" Max="2099" Dense="true" />
+            </MudItem>
+        </MudGrid>
+        <MudStack Row="true" Class="mt-4" Spacing="3">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Download"
+                       OnClick="DownloadSSNITEFile">
+                SSNIT E-File
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary"
+                       StartIcon="@Icons.Material.Filled.Download"
+                       OnClick="DownloadGRAEFile">
+                GRA PAYE E-File
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Tertiary"
+                       StartIcon="@Icons.Material.Filled.Download"
+                       OnClick="DownloadGRAAnnualEFile">
+                GRA Annual Return E-File
+            </MudButton>
+        </MudStack>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    // E-Filing
+    private int _efileMonth = DateTime.Now.Month;
+    private int _efileYear = DateTime.Now.Year;
+
+    // SSNIT
+    private int _ssnitMonth = DateTime.Now.Month;
+    private int _ssnitYear = DateTime.Now.Year;
+    private bool _ssnitLoading = false;
+    private SSNITMonthlyReport? _ssnitReport;
+
+    // PAYE
+    private int _payeMonth = DateTime.Now.Month;
+    private int _payeYear = DateTime.Now.Year;
+    private bool _payeLoading = false;
+    private PAYEMonthlyReport? _payeReport;
+
+    // Tier 2
+    private int _tier2Month = DateTime.Now.Month;
+    private int _tier2Year = DateTime.Now.Year;
+    private bool _tier2Loading = false;
+    private Tier2Report? _tier2Report;
+
+    // Tier 3
+    private int _tier3Month = DateTime.Now.Month;
+    private int _tier3Year = DateTime.Now.Year;
+    private bool _tier3Loading = false;
+    private Tier3Report? _tier3Report;
+
+    // Annual Return
+    private int _annualYear = DateTime.Now.Year;
+    private bool _annualLoading = false;
+    private AnnualReturnReport? _annualReport;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Payroll", href: null, disabled: true),
+        new BreadcrumbItem("Reports", href: null, disabled: true)
+    };
+
+    private async Task GenerateSSNITReportAsync()
+    {
+        _ssnitLoading = true;
+        _ssnitReport = null;
+        try
+        {
+            _ssnitReport = await PayrollService.GenerateSSNITReportAsync(_ssnitMonth, _ssnitYear);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating SSNIT report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _ssnitLoading = false;
+        }
+    }
+
+    private async Task GeneratePAYEReportAsync()
+    {
+        _payeLoading = true;
+        _payeReport = null;
+        try
+        {
+            _payeReport = await PayrollService.GeneratePAYEReportAsync(_payeMonth, _payeYear);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating PAYE report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _payeLoading = false;
+        }
+    }
+
+    private async Task ExportSSNITCsvAsync()
+    {
+        if (_ssnitReport == null) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("SSNIT Number,Employee Name,Basic Salary,Employee Contribution (5.5%),Employer Contribution (13%),Total Contribution");
+        foreach (var e in _ssnitReport.Entries)
+        {
+            sb.AppendLine($"\"{e.SSNITNumber}\",\"{e.EmployeeName}\",{e.BasicSalary:N2},{e.EmployeeContribution:N2},{e.EmployerContribution:N2},{e.TotalContribution:N2}");
+        }
+        sb.AppendLine($"\"TOTALS\",\"{_ssnitReport.Entries.Count} employees\",{_ssnitReport.Entries.Sum(x => x.BasicSalary):N2},{_ssnitReport.TotalEmployeeContribution:N2},{_ssnitReport.TotalEmployerContribution:N2},{_ssnitReport.TotalContribution:N2}");
+
+        var fileName = $"SSNIT_Report_{_ssnitReport.Month:D2}_{_ssnitReport.Year}.csv";
+        await JS.InvokeVoidAsync("downloadFile", fileName, "text/csv", sb.ToString());
+    }
+
+    private async Task ExportPAYECsvAsync()
+    {
+        if (_payeReport == null) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("TIN,Employee Name,Gross Pay,Taxable Income,PAYE Deducted");
+        foreach (var e in _payeReport.Entries)
+        {
+            sb.AppendLine($"\"{e.TIN}\",\"{e.EmployeeName}\",{e.GrossPay:N2},{e.TaxableIncome:N2},{e.PAYEDeducted:N2}");
+        }
+        sb.AppendLine($"\"TOTALS\",\"{_payeReport.Entries.Count} employees\",{_payeReport.TotalGrossPay:N2},{_payeReport.TotalTaxableIncome:N2},{_payeReport.TotalPAYE:N2}");
+
+        var fileName = $"PAYE_Report_{_payeReport.Month:D2}_{_payeReport.Year}.csv";
+        await JS.InvokeVoidAsync("downloadFile", fileName, "text/csv", sb.ToString());
+    }
+
+    private async Task PrintSSNITAsync()
+    {
+        await JS.InvokeVoidAsync("print");
+    }
+
+    private async Task GenerateTier2ReportAsync()
+    {
+        _tier2Loading = true;
+        _tier2Report = null;
+        try
+        {
+            _tier2Report = await PayrollService.GenerateTier2ReportAsync(_tier2Month, _tier2Year);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating Tier 2 report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _tier2Loading = false;
+        }
+    }
+
+    private async Task GenerateTier3ReportAsync()
+    {
+        _tier3Loading = true;
+        _tier3Report = null;
+        try
+        {
+            _tier3Report = await PayrollService.GenerateTier3ReportAsync(_tier3Month, _tier3Year);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating Tier 3 report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _tier3Loading = false;
+        }
+    }
+
+    private async Task GenerateAnnualReturnAsync()
+    {
+        _annualLoading = true;
+        _annualReport = null;
+        try
+        {
+            _annualReport = await PayrollService.GenerateAnnualReturnAsync(_annualYear);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating annual return: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _annualLoading = false;
+        }
+    }
+
+    private async Task ExportTier2CsvAsync()
+    {
+        if (_tier2Report == null) return;
+        var sb = new StringBuilder();
+        sb.AppendLine("Pension Number,Provider,Employee Name,Basic Salary,Contribution (5%)");
+        foreach (var e in _tier2Report.Entries)
+            sb.AppendLine($"\"{e.Tier2PensionNumber}\",\"{e.Provider}\",\"{e.EmployeeName}\",{e.BasicSalary:N2},{e.Contribution:N2}");
+        sb.AppendLine($"\"\",\"\",\"TOTALS\",{_tier2Report.Entries.Sum(x => x.BasicSalary):N2},{_tier2Report.TotalContribution:N2}");
+        var fileName = $"Tier2_Report_{_tier2Report.Month:D2}_{_tier2Report.Year}.csv";
+        await JS.InvokeVoidAsync("downloadFile", fileName, "text/csv", sb.ToString());
+    }
+
+    private async Task ExportTier3CsvAsync()
+    {
+        if (_tier3Report == null) return;
+        var sb = new StringBuilder();
+        sb.AppendLine("Pension Number,Provider,Employee Name,Voluntary Contribution");
+        foreach (var e in _tier3Report.Entries)
+            sb.AppendLine($"\"{e.Tier3PensionNumber}\",\"{e.Provider}\",\"{e.EmployeeName}\",{e.VoluntaryContribution:N2}");
+        sb.AppendLine($"\"\",\"\",\"TOTALS\",{_tier3Report.TotalContribution:N2}");
+        var fileName = $"Tier3_Report_{_tier3Report.Month:D2}_{_tier3Report.Year}.csv";
+        await JS.InvokeVoidAsync("downloadFile", fileName, "text/csv", sb.ToString());
+    }
+
+    private async Task ExportAnnualCsvAsync()
+    {
+        if (_annualReport == null) return;
+        var sb = new StringBuilder();
+        sb.AppendLine("TIN,Employee Name,Total Gross Pay,Total PAYE,Total SSNIT");
+        foreach (var e in _annualReport.Entries)
+            sb.AppendLine($"\"{e.TIN}\",\"{e.EmployeeName}\",{e.TotalGrossPay:N2},{e.TotalTaxPaid:N2},{e.TotalSSNIT:N2}");
+        sb.AppendLine($"\"\",\"TOTALS\",{_annualReport.GrandTotalGross:N2},{_annualReport.GrandTotalTax:N2},{_annualReport.GrandTotalSSNIT:N2}");
+        var fileName = $"GRA_Annual_Return_{_annualReport.Year}.csv";
+        await JS.InvokeVoidAsync("downloadFile", fileName, "text/csv", sb.ToString());
+    }
+
+    private async Task DownloadSSNITEFile()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<EFilingService>();
+            var bytes = await svc.GenerateSSNITEFileAsync(_efileMonth, _efileYear);
+            var base64 = Convert.ToBase64String(bytes);
+            var fileName = $"SSNIT_EFile_{_efileYear}_{_efileMonth:D2}.csv";
+            await JS.InvokeVoidAsync("eval", $"{{var a=document.createElement('a');a.href='data:text/csv;base64,{base64}';a.download='{fileName}';a.click();}}");
+            Snackbar.Add("SSNIT e-file downloaded", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
+
+    private async Task DownloadGRAEFile()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<EFilingService>();
+            var bytes = await svc.GenerateGRAEFileAsync(_efileMonth, _efileYear);
+            var base64 = Convert.ToBase64String(bytes);
+            var fileName = $"GRA_PAYE_{_efileYear}_{_efileMonth:D2}.csv";
+            await JS.InvokeVoidAsync("eval", $"{{var a=document.createElement('a');a.href='data:text/csv;base64,{base64}';a.download='{fileName}';a.click();}}");
+            Snackbar.Add("GRA PAYE e-file downloaded", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
+
+    private async Task DownloadGRAAnnualEFile()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<EFilingService>();
+            var bytes = await svc.GenerateGRAAnnualEFileAsync(_efileYear);
+            var base64 = Convert.ToBase64String(bytes);
+            var fileName = $"GRA_Annual_{_efileYear}.csv";
+            await JS.InvokeVoidAsync("eval", $"{{var a=document.createElement('a');a.href='data:text/csv;base64,{base64}';a.download='{fileName}';a.click();}}");
+            Snackbar.Add("GRA annual return e-file downloaded", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add(ex.Message, Severity.Error); }
+    }
+}

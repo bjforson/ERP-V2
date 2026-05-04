@@ -1,0 +1,217 @@
+@page "/overtime/request"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+
+<PageTitle>NICKSCAN ERP — NickHR — Request Overtime</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Request Overtime</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_employeeId == null && !_isLoadingEmployee)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12" md="7">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Overtime Details</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudGrid>
+                        <MudItem xs="12">
+                            <MudDatePicker @bind-Date="_date" Label="Date *" Variant="Variant.Outlined"
+                                           DateFormat="dd/MM/yyyy" MinDate="DateTime.Today.AddDays(-7)"
+                                           MaxDate="DateTime.Today.AddDays(30)" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTimePicker @bind-Time="_startTime" Label="Start Time *" Variant="Variant.Outlined"
+                                           AmPm="false" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTimePicker @bind-Time="_endTime" Label="End Time *" Variant="Variant.Outlined"
+                                           AmPm="false" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            @if (_date.HasValue && _startTime.HasValue && _endTime.HasValue && _endTime > _startTime)
+                            {
+                                var hours = (_endTime.Value - _startTime.Value).TotalHours;
+                                var rate = GetRate();
+                                <MudAlert Severity="Severity.Info" Class="mb-0">
+                                    <strong>@hours.ToString("F1") hours</strong> at
+                                    <strong>@rate.ToString("F1")x rate</strong>
+                                    @if (_date.Value.DayOfWeek == DayOfWeek.Saturday || _date.Value.DayOfWeek == DayOfWeek.Sunday)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Class="ml-1">Weekend (2.0x)</MudChip>
+                                    }
+                                    else
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Class="ml-1">Weekday (1.5x)</MudChip>
+                                    }
+                                </MudAlert>
+                            }
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_reason" Label="Reason *" Variant="Variant.Outlined"
+                                          Lines="3" Required="true"
+                                          HelperText="Describe the work to be done during overtime" />
+                        </MudItem>
+                        <MudItem xs="12" Class="d-flex justify-end gap-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/overtime/my-requests">Cancel</MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                       OnClick="HandleSubmit" Disabled="_isSubmitting"
+                                       StartIcon="@Icons.Material.Filled.Send">
+                                Submit Request
+                            </MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" md="5">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Overtime Rates</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudList T="string" Dense="true">
+                        <MudListItem Icon="@Icons.Material.Filled.WorkOutline">
+                            <MudText Typo="Typo.body2">
+                                <strong>Weekday Overtime:</strong> 1.5x basic hourly rate
+                            </MudText>
+                        </MudListItem>
+                        <MudListItem Icon="@Icons.Material.Filled.Weekend">
+                            <MudText Typo="Typo.body2">
+                                <strong>Weekend / Public Holiday:</strong> 2.0x basic hourly rate
+                            </MudText>
+                        </MudListItem>
+                    </MudList>
+                    <MudDivider Class="my-3" />
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Overtime pay is processed in the next payroll run after approval.
+                    </MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private DateTime? _date = DateTime.Today;
+    private TimeSpan? _startTime;
+    private TimeSpan? _endTime;
+    private string _reason = string.Empty;
+    private bool _isSubmitting;
+    private bool _isLoadingEmployee = true;
+    private int? _employeeId;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Overtime", href: "/overtime/my-requests"),
+        new BreadcrumbItem("Request", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employeeId = await GetCurrentEmployeeIdAsync();
+        _isLoadingEmployee = false;
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private decimal GetRate() => _date.HasValue &&
+        (_date.Value.DayOfWeek == DayOfWeek.Saturday || _date.Value.DayOfWeek == DayOfWeek.Sunday)
+        ? 2.0m : 1.5m;
+
+    private async Task HandleSubmit()
+    {
+        if (_employeeId == null)
+        {
+            Snackbar.Add("Not linked to an employee record.", Severity.Warning);
+            return;
+        }
+        if (!_date.HasValue || !_startTime.HasValue || !_endTime.HasValue)
+        {
+            Snackbar.Add("Please fill in date and times.", Severity.Warning);
+            return;
+        }
+        if (_endTime <= _startTime)
+        {
+            Snackbar.Add("End time must be after start time.", Severity.Warning);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_reason))
+        {
+            Snackbar.Add("Reason is required.", Severity.Warning);
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var hours = (decimal)(_endTime.Value - _startTime.Value).TotalHours;
+            var request = new OvertimeRequest
+            {
+                EmployeeId = _employeeId.Value,
+                Date = _date.Value,
+                StartTime = _startTime.Value,
+                EndTime = _endTime.Value,
+                PlannedHours = hours,
+                Rate = GetRate(),
+                Reason = _reason,
+                Status = OvertimeRequestStatus.Pending
+            };
+
+            db.OvertimeRequests.Add(request);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Overtime request submitted successfully!", Severity.Success);
+            Navigation.NavigateTo("/overtime/my-requests");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

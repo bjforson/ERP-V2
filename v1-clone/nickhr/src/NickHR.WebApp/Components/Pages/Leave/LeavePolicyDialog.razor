@@ -1,0 +1,183 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-2" />
+            Edit Leave Policy: @Policy?.Name
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Name"
+                                  Label="Policy Name"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Name is required"
+                                  MaxLength="200"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="LeaveType" @bind-Value="_model.LeaveType" Label="Leave Type" Variant="Variant.Outlined" Disabled="true">
+                        @foreach (var lt in Enum.GetValues<LeaveType>())
+                        {
+                            <MudSelectItem T="LeaveType" Value="@lt">@lt.ToString()</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Description"
+                                  Label="Description"
+                                  Variant="Variant.Outlined"
+                                  Lines="2"
+                                  MaxLength="500" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="_model.DefaultDays"
+                                     Label="Default Days"
+                                     Variant="Variant.Outlined"
+                                     Min="0"
+                                     Step="0.5m"
+                                     Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="_model.MaxAccumulation"
+                                     Label="Max Accumulation"
+                                     Variant="Variant.Outlined"
+                                     Min="0"
+                                     Step="0.5m" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="_model.CarryForwardMax"
+                                     Label="Carry Forward Max"
+                                     Variant="Variant.Outlined"
+                                     Min="0"
+                                     Step="0.5m" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="int" @bind-Value="_model.MinServiceMonthsRequired"
+                                     Label="Min Service Months"
+                                     Variant="Variant.Outlined"
+                                     Min="0" />
+                </MudItem>
+                <MudItem xs="12" sm="4" Class="d-flex align-center">
+                    <MudCheckBox @bind-Value="_model.IsCarryForwardAllowed" Label="Carry Forward Allowed" Color="Color.Primary" />
+                </MudItem>
+                <MudItem xs="12" sm="4" Class="d-flex align-center">
+                    <MudCheckBox @bind-Value="_model.RequiresMedicalCertificate" Label="Requires Medical Cert" Color="Color.Primary" />
+                </MudItem>
+                <MudItem xs="12" sm="4" Class="d-flex align-center">
+                    <MudCheckBox @bind-Value="_model.IsActive" Label="Active" Color="Color.Primary" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_isSaving || !_isValid)">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save Changes
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public LeavePolicy? Policy { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+
+    private PolicyFormModel _model = new();
+
+    protected override void OnInitialized()
+    {
+        if (Policy != null)
+        {
+            _model = new PolicyFormModel
+            {
+                Name = Policy.Name,
+                LeaveType = Policy.LeaveType,
+                Description = Policy.Description,
+                DefaultDays = Policy.DefaultDays,
+                MaxAccumulation = Policy.MaxAccumulation,
+                CarryForwardMax = Policy.CarryForwardMax,
+                IsCarryForwardAllowed = Policy.IsCarryForwardAllowed,
+                RequiresMedicalCertificate = Policy.RequiresMedicalCertificate,
+                MinServiceMonthsRequired = Policy.MinServiceMonthsRequired,
+                IsActive = Policy.IsActive
+            };
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.LeavePolicies.FindAsync(Policy!.Id);
+            if (entity == null)
+            {
+                Snackbar.Add("Policy not found.", Severity.Error);
+                return;
+            }
+
+            entity.Name = _model.Name;
+            entity.Description = _model.Description;
+            entity.DefaultDays = _model.DefaultDays;
+            entity.MaxAccumulation = _model.MaxAccumulation;
+            entity.CarryForwardMax = _model.CarryForwardMax;
+            entity.IsCarryForwardAllowed = _model.IsCarryForwardAllowed;
+            entity.RequiresMedicalCertificate = _model.RequiresMedicalCertificate;
+            entity.MinServiceMonthsRequired = _model.MinServiceMonthsRequired;
+            entity.IsActive = _model.IsActive;
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Leave policy updated successfully.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving policy: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class PolicyFormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public LeaveType LeaveType { get; set; }
+        public string? Description { get; set; }
+        public decimal DefaultDays { get; set; }
+        public decimal MaxAccumulation { get; set; }
+        public decimal CarryForwardMax { get; set; }
+        public bool IsCarryForwardAllowed { get; set; }
+        public bool RequiresMedicalCertificate { get; set; }
+        public int MinServiceMonthsRequired { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

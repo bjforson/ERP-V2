@@ -1,0 +1,128 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Discipline
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Gavel" Class="mr-2" />
+            New Disciplinary Case
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" @bind-Value="_model.EmployeeId" Label="Employee *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Employee is required">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int" Value="@e.Id">@e.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_incidentDate" Label="Incident Date *"
+                                   Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                   Required="true" RequiredError="Date is required" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Description" Label="Description *"
+                                  Variant="Variant.Outlined" Lines="4" Required="true"
+                                  RequiredError="Description is required" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Witnesses" Label="Witnesses"
+                                  Variant="Variant.Outlined" Lines="2" MaxLength="1000"
+                                  Placeholder="Names of witnesses (if any)" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Evidence" Label="Evidence"
+                                  Variant="Variant.Outlined" Lines="2" MaxLength="1000"
+                                  Placeholder="Evidence collected (documents, CCTV, etc.)" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Create Case
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private DateTime? _incidentDate = DateTime.Today;
+
+    private CaseFormModel _model = new();
+    private List<EmpOption> _employees = new();
+
+    protected override async Task OnInitializedAsync() => await LoadEmployees();
+
+    private async Task LoadEmployees()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid || !_incidentDate.HasValue) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = new DisciplinaryCase
+            {
+                EmployeeId = _model.EmployeeId,
+                IncidentDate = _incidentDate.Value,
+                Description = _model.Description,
+                Witnesses = _model.Witnesses,
+                Evidence = _model.Evidence,
+                Status = "Open"
+            };
+            db.DisciplinaryCases.Add(entity);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Case created.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class CaseFormModel
+    {
+        public int EmployeeId { get; set; }
+        public string Description { get; set; } = "";
+        public string? Witnesses { get; set; }
+        public string? Evidence { get; set; }
+    }
+
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

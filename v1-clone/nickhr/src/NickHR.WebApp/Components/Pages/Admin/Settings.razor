@@ -1,0 +1,160 @@
+@page "/admin/settings"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SuperAdminOnly)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Company Settings</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Company Settings</MudText>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (!_categories.Any())
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        No settings configured. Add settings to the CompanySettings table via seeding.
+    </MudAlert>
+}
+else
+{
+    <MudGrid>
+        @foreach (var category in _categories)
+        {
+            <MudItem xs="12" md="6">
+                <MudCard Elevation="2" Class="mb-4">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">
+                                <MudIcon Icon="@GetCategoryIcon(category)" Class="mr-2" />
+                                @category
+                            </MudText>
+                        </CardHeaderContent>
+                        <CardHeaderActions>
+                            <MudIconButton Icon="@Icons.Material.Filled.Save" Color="Color.Primary"
+                                           title="Save Changes" OnClick="@(() => SaveCategory(category))"
+                                           Disabled="@_isSaving" />
+                        </CardHeaderActions>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        @foreach (var setting in _settingsByCategory[category])
+                        {
+                            <div class="mb-3">
+                                <MudTextField @bind-Value="setting.Value"
+                                              Label="@setting.Key"
+                                              HelperText="@setting.Description"
+                                              Dense="true"
+                                              Variant="Variant.Outlined" />
+                            </div>
+                        }
+                    </MudCardContent>
+                    <MudCardActions>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Save"
+                                   OnClick="@(() => SaveCategory(category))"
+                                   Disabled="@_isSaving">
+                            @if (_isSaving && _savingCategory == category)
+                            { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+                            Save @category
+                        </MudButton>
+                    </MudCardActions>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+@code {
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private string _savingCategory = string.Empty;
+    private List<string> _categories = new();
+    private Dictionary<string, List<SettingRow>> _settingsByCategory = new();
+
+    protected override async Task OnInitializedAsync() => await LoadSettings();
+
+    private async Task LoadSettings()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var settings = await db.CompanySettings.OrderBy(s => s.Category).ThenBy(s => s.Key).ToListAsync();
+
+            _settingsByCategory = settings
+                .GroupBy(s => s.Category)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(s => new SettingRow { Id = s.Id, Key = s.Key, Value = s.Value, Description = s.Description }).ToList()
+                );
+            _categories = _settingsByCategory.Keys.OrderBy(k => k).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading settings: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveCategory(string category)
+    {
+        _isSaving = true;
+        _savingCategory = category;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (!_settingsByCategory.TryGetValue(category, out var rows)) return;
+
+            foreach (var row in rows)
+            {
+                var setting = await db.CompanySettings.FindAsync(row.Id);
+                if (setting != null)
+                {
+                    setting.Value = row.Value;
+                }
+            }
+            await db.SaveChangesAsync();
+            Snackbar.Add($"{category} settings saved.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving settings: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+            _savingCategory = string.Empty;
+        }
+    }
+
+    private string GetCategoryIcon(string category) => category.ToLower() switch
+    {
+        "company" => Icons.Material.Filled.Business,
+        "payroll" => Icons.Material.Filled.Payments,
+        "leave" => Icons.Material.Filled.BeachAccess,
+        "attendance" => Icons.Material.Filled.AccessTime,
+        _ => Icons.Material.Filled.Settings
+    };
+
+    private class SettingRow
+    {
+        public int Id { get; set; }
+        public string Key { get; set; } = string.Empty;
+        public string Value { get; set; } = string.Empty;
+        public string? Description { get; set; }
+    }
+}

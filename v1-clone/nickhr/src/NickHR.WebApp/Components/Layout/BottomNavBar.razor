@@ -1,0 +1,48 @@
+@inject NavigationManager Navigation
+
+<nav class="nickhr-bottom-nav" role="navigation" aria-label="Bottom navigation">
+    <a href="/" class="nickhr-bottom-nav-item @IsActive("/")" title="Dashboard">
+        <MudIcon Icon="@Icons.Material.Filled.Home" Size="Size.Small" />
+        <span class="label">Home</span>
+    </a>
+
+    <a href="/attendance/clock" class="nickhr-bottom-nav-item @IsActive("/attendance/clock")" title="Clock In/Out">
+        <MudIcon Icon="@Icons.Material.Filled.AccessTime" Size="Size.Small" />
+        <span class="label">Clock</span>
+    </a>
+
+    <a href="/leave/my-requests" class="nickhr-bottom-nav-item @IsActive("/leave")" title="Leave">
+        <MudIcon Icon="@Icons.Material.Filled.CalendarMonth" Size="Size.Small" />
+        <span class="label">Leave</span>
+    </a>
+
+    <a href="/profile" class="nickhr-bottom-nav-item @IsActive("/profile")" title="My Profile">
+        <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" />
+        <span class="label">Profile</span>
+    </a>
+
+    <button class="nickhr-bottom-nav-item" @onclick="ToggleMenu" title="Menu" style="background:none; border:none;">
+        <MudIcon Icon="@Icons.Material.Filled.Menu" Size="Size.Small" />
+        <span class="label">Menu</span>
+    </button>
+</nav>
+
+@code {
+    [Parameter]
+    public EventCallback OnMenuToggle { get; set; }
+
+    private string IsActive(string href)
+    {
+        var currentPath = new Uri(Navigation.Uri).PathAndQuery;
+
+        if (href == "/")
+            return currentPath == "/" ? "active" : "";
+
+        return currentPath.StartsWith(href, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+    }
+
+    private async Task ToggleMenu()
+    {
+        await OnMenuToggle.InvokeAsync();
+    }
+}

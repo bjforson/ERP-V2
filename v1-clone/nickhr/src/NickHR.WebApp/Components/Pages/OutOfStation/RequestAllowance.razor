@@ -1,0 +1,267 @@
+@page "/out-of-station/request"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Enums
+@using NickHR.Services.OutOfStation
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Request Out-of-Station Allowance</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.FlightTakeoff" Class="mr-2" />
+    Request Out-of-Station Allowance
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12" md="7">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Travel Details</MudText>
+                    @if (!string.IsNullOrEmpty(_gradeName))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            Grade: <strong>@_gradeName</strong>
+                        </MudText>
+                    }
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudGrid>
+                    <MudItem xs="12" md="6">
+                        <MudTextField @bind-Value="_destination" Label="Destination" Required="true"
+                                      Placeholder="e.g. Takoradi" HelperText="City or location you are travelling to" />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudSelect T="OutOfStationDestType" @bind-Value="_destType" Label="Destination Type" Required="true">
+                            <MudSelectItem Value="OutOfStationDestType.Domestic">Domestic</MudSelectItem>
+                            <MudSelectItem Value="OutOfStationDestType.International">International</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="_purpose" Label="Purpose of Travel" Required="true"
+                                      Lines="3" Placeholder="Describe the official purpose of this trip..." />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudDatePicker Label="Departure Date" @bind-Date="_departureDate"
+                                       MinDate="DateTime.Today" Required="true" />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudDatePicker Label="Return Date" @bind-Date="_returnDate"
+                                       MinDate="_departureDate ?? DateTime.Today" Required="true" />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudSelect T="TransportMode" @bind-Value="_transportMode" Label="Transport Mode" Required="true">
+                            <MudSelectItem Value="TransportMode.Road">
+                                <MudIcon Icon="@Icons.Material.Filled.DirectionsBus" Class="mr-1" Size="Size.Small" /> Road
+                            </MudSelectItem>
+                            <MudSelectItem Value="TransportMode.Air">
+                                <MudIcon Icon="@Icons.Material.Filled.Flight" Class="mr-1" Size="Size.Small" /> Air
+                            </MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="6" Class="d-flex align-end">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                   OnClick="PreviewCalculation" Disabled="_calculating"
+                                   StartIcon="@Icons.Material.Filled.Calculate" FullWidth="true">
+                            @(_calculating ? "Calculating..." : "Preview Allowance")
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="5">
+        @if (_breakdown != null)
+        {
+            <MudCard Elevation="2" Style="border-left: 4px solid var(--mud-palette-primary);">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Allowance Breakdown</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            @_breakdown.NumberOfNights night(s) / @_breakdown.NumberOfDays day(s) &bull; @_destType &bull; @_transportMode
+                        </MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudSimpleTable Dense="true" Hover="true">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Rate</th>
+                                <th style="text-align:right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Accommodation</td>
+                                <td>GH₵@_breakdown.AccommodationRate.ToString("N2") × @_breakdown.NumberOfNights night(s)</td>
+                                <td style="text-align:right">GH₵@_breakdown.AccommodationTotal.ToString("N2")</td>
+                            </tr>
+                            <tr>
+                                <td>Feeding</td>
+                                <td>GH₵@_breakdown.FeedingRate.ToString("N2") × @_breakdown.NumberOfDays day(s)</td>
+                                <td style="text-align:right">GH₵@_breakdown.FeedingTotal.ToString("N2")</td>
+                            </tr>
+                            <tr>
+                                <td>Transport (@_transportMode)</td>
+                                <td>GH₵@_breakdown.TransportRate.ToString("N2") × 2 trips</td>
+                                <td style="text-align:right">GH₵@_breakdown.TransportTotal.ToString("N2")</td>
+                            </tr>
+                            <tr>
+                                <td>Miscellaneous</td>
+                                <td>GH₵@_breakdown.MiscellaneousRate.ToString("N2") × @_breakdown.NumberOfDays day(s)</td>
+                                <td style="text-align:right">GH₵@_breakdown.MiscellaneousTotal.ToString("N2")</td>
+                            </tr>
+                        </tbody>
+                        <tfoot>
+                            <tr style="background:var(--mud-palette-primary);color:white;">
+                                <td colspan="2"><strong>TOTAL ALLOWANCE</strong></td>
+                                <td style="text-align:right"><strong>GH₵@_breakdown.TotalAllowance.ToString("N2")</strong></td>
+                            </tr>
+                        </tfoot>
+                    </MudSimpleTable>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                               OnClick="SubmitRequest" Disabled="_submitting"
+                               StartIcon="@Icons.Material.Filled.Send">
+                        @(_submitting ? "Submitting..." : "Submit Request")
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        }
+        else
+        {
+            <MudPaper Elevation="0" Class="pa-6 d-flex flex-column align-center justify-center mud-background-gray rounded" Style="min-height:200px;">
+                <MudIcon Icon="@Icons.Material.Filled.Calculate" Size="Size.Large" Color="Color.Default" Class="mb-2" />
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">
+                    Fill in travel details and click <em>Preview Allowance</em> to see your breakdown
+                </MudText>
+            </MudPaper>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private string _destination = string.Empty;
+    private OutOfStationDestType _destType = OutOfStationDestType.Domestic;
+    private string _purpose = string.Empty;
+    private DateTime? _departureDate;
+    private DateTime? _returnDate;
+    private TransportMode _transportMode = TransportMode.Road;
+    private OutOfStationAllowanceBreakdown? _breakdown;
+    private bool _calculating;
+    private bool _submitting;
+    private int _currentEmployeeId;
+    private string _gradeName = string.Empty;
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new("Home", "/"),
+        new("Out of Station", "/out-of-station/my"),
+        new("Request Allowance", null, true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var username = authState.User?.Identity?.Name
+            ?? authState.User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+
+        var emp = await db.Employees
+            .Include(e => e.Grade)
+            .FirstOrDefaultAsync(e => e.WorkEmail == username || e.PersonalEmail == username);
+
+        _currentEmployeeId = emp?.Id ?? 0;
+        _gradeName = emp?.Grade?.Name ?? string.Empty;
+    }
+
+    private async Task PreviewCalculation()
+    {
+        if (_currentEmployeeId == 0)
+        {
+            Snackbar.Add("Employee profile not found. Please contact HR.", Severity.Warning);
+            return;
+        }
+        if (_departureDate == null || _returnDate == null)
+        {
+            Snackbar.Add("Please select departure and return dates.", Severity.Warning);
+            return;
+        }
+        if (_returnDate < _departureDate)
+        {
+            Snackbar.Add("Return date must be on or after departure date.", Severity.Warning);
+            return;
+        }
+
+        _calculating = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<OutOfStationService>();
+            _breakdown = await svc.CalculateAllowanceAsync(
+                _currentEmployeeId, _destType,
+                _departureDate.Value, _returnDate.Value, _transportMode);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            _breakdown = null;
+        }
+        finally
+        {
+            _calculating = false;
+        }
+    }
+
+    private async Task SubmitRequest()
+    {
+        if (string.IsNullOrWhiteSpace(_destination))
+        {
+            Snackbar.Add("Please enter a destination.", Severity.Warning);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_purpose))
+        {
+            Snackbar.Add("Please describe the purpose of travel.", Severity.Warning);
+            return;
+        }
+        if (_breakdown == null)
+        {
+            Snackbar.Add("Please preview the allowance first.", Severity.Warning);
+            return;
+        }
+
+        _submitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<OutOfStationService>();
+            await svc.SubmitRequestAsync(
+                _currentEmployeeId, _destination, _destType, _purpose,
+                _departureDate!.Value, _returnDate!.Value, _transportMode);
+
+            Snackbar.Add("Out-of-station allowance request submitted successfully.", Severity.Success);
+            NavigationManager.NavigateTo("/out-of-station/my");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+}

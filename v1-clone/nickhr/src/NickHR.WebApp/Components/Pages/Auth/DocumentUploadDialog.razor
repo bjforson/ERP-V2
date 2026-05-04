@@ -1,0 +1,183 @@
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using System.Net.Http.Headers
+
+@inject IDbContextFactory<NickHRDbContext> DbFactory
+@inject IHttpClientFactory HttpClientFactory
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.UploadFile" Class="mr-2" />Upload Document
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudGrid>
+            <MudItem xs="12" sm="6">
+                <MudSelect Label="Document Type" @bind-Value="_documentType"
+                           Variant="Variant.Outlined" Required="true">
+                    <MudSelectItem Value="@("Ghana Card")">Ghana Card</MudSelectItem>
+                    <MudSelectItem Value="@("SSNIT Card")">SSNIT Card</MudSelectItem>
+                    <MudSelectItem Value="@("TIN Certificate")">TIN Certificate</MudSelectItem>
+                    <MudSelectItem Value="@("Passport")">Passport</MudSelectItem>
+                    <MudSelectItem Value="@("Driver's License")">Driver's License</MudSelectItem>
+                    <MudSelectItem Value="@("Employment Contract")">Employment Contract</MudSelectItem>
+                    <MudSelectItem Value="@("Offer Letter")">Offer Letter</MudSelectItem>
+                    <MudSelectItem Value="@("Certificate")">Certificate</MudSelectItem>
+                    <MudSelectItem Value="@("CV")">CV</MudSelectItem>
+                    <MudSelectItem Value="@("Other")">Other</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudTextField Label="Description (optional)" @bind-Value="_description"
+                              Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudText Typo="Typo.body2" Class="mb-2">Select file (PDF, Word, or image — max 10 MB):</MudText>
+                <InputFile id="docUploadInput" OnChange="HandleFileSelected"
+                           accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" />
+                @if (_selectedFile != null)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                        Selected: @_selectedFile.Name (@FormatSize(_selectedFile.Size))
+                    </MudText>
+                }
+            </MudItem>
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <MudItem xs="12">
+                    <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+                </MudItem>
+            }
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="() => OnClose.InvokeAsync()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   OnClick="UploadAsync" Disabled="@(_saving || _selectedFile == null)">
+            @if (_saving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Uploading...</span>
+            }
+            else
+            {
+                <span>Upload</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public int EmployeeId { get; set; }
+    [Parameter] public string ApiBaseUrl { get; set; } = "https://localhost:5206";
+    [Parameter] public string? AuthToken { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _documentType = "Ghana Card";
+    private string? _description;
+    private IBrowserFile? _selectedFile;
+    private bool _saving = false;
+    private string? _errorMessage;
+
+    private void HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        _errorMessage = null;
+        var file = e.File;
+        if (file.Size > 10 * 1024 * 1024)
+        {
+            _errorMessage = "File is too large. Maximum size is 10 MB.";
+            _selectedFile = null;
+            return;
+        }
+        _selectedFile = file;
+    }
+
+    private async Task UploadAsync()
+    {
+        if (_selectedFile == null || string.IsNullOrWhiteSpace(_documentType))
+            return;
+
+        _saving = true;
+        _errorMessage = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NickHR.API");
+            if (!string.IsNullOrEmpty(AuthToken))
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AuthToken);
+
+            await using var stream = _selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            var content = new MultipartFormDataContent();
+            var fileContent = new StreamContent(stream);
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_selectedFile.ContentType);
+            content.Add(fileContent, "file", _selectedFile.Name);
+
+            var response = await client.PostAsync($"api/files/upload?category=document&employeeId={EmployeeId}", content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _errorMessage = "Upload failed. Please try again.";
+                _saving = false;
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<UploadResult>();
+            if (result?.Success != true || string.IsNullOrEmpty(result.Path))
+            {
+                _errorMessage = "Upload failed: no path returned.";
+                _saving = false;
+                return;
+            }
+
+            // Save EmployeeDocument record
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+            var doc = new EmployeeDocument
+            {
+                EmployeeId = EmployeeId,
+                DocumentType = _documentType,
+                FileName = _selectedFile.Name,
+                FilePath = result.Path,
+                FileSize = _selectedFile.Size,
+                ContentType = _selectedFile.ContentType,
+                Description = _description,
+                UploadedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+                Version = 1
+            };
+            ctx.EmployeeDocuments.Add(doc);
+            await ctx.SaveChangesAsync();
+
+            Snackbar.Add("Document uploaded successfully.", Severity.Success);
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:N1} KB";
+        return $"{bytes / (1024.0 * 1024):N1} MB";
+    }
+
+    private class UploadResult
+    {
+        public bool Success { get; set; }
+        public string? Path { get; set; }
+        public string? FileName { get; set; }
+        public long FileSize { get; set; }
+    }
+}

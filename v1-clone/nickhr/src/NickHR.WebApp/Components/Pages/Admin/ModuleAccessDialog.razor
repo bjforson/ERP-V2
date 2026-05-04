@@ -1,0 +1,34 @@
+@*
+    W3B (2026-04-29) — wraps ModuleAccessPanel for the system-user table
+    in Admin/Users.razor. Offers identity provisioning and NickFinance
+    role grants for non-employee admins (auditors, finance leads who
+    aren't on the payroll, etc.).
+*@
+@using NickERP.Platform.Identity
+@using NickHR.WebApp.Components.Shared
+@using NickHR.WebApp.Services
+
+<MudDialog Style="min-width:560px;">
+    <DialogContent>
+        <MudText Typo="Typo.body1" Class="mb-2"><strong>@DisplayName</strong></MudText>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-3 d-block">
+            @Email
+        </MudText>
+        <ModuleAccessPanel Email="@Email"
+                           DisplayName="@DisplayName"
+                           GrantedByUserId="@GrantedByUserId"
+                           TenantId="1" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string Email { get; set; } = string.Empty;
+    [Parameter] public string DisplayName { get; set; } = string.Empty;
+    [Parameter] public Guid GrantedByUserId { get; set; }
+
+    private void Close() => MudDialog.Close();
+}

@@ -1,0 +1,162 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Exit
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.RecordVoiceOver" Class="mr-2" />
+            Record Exit Interview
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" @bind-Value="_interviewerId" Label="Interviewer *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Interviewer is required">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int" Value="@e.Id">@e.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_interviewDate" Label="Interview Date *"
+                                   Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                   Required="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_reasonForLeaving" Label="Reason for Leaving"
+                                  Variant="Variant.Outlined" Lines="3" MaxLength="500" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText Typo="Typo.body2" Class="mb-1">Overall Experience (1–5)</MudText>
+                    <MudRating @bind-SelectedValue="_overallExperience" MaxValue="5" Color="Color.Warning" />
+                    <MudText Typo="Typo.caption" Class="mt-1">@GetExperienceLabel(_overallExperience)</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6" Class="d-flex align-center">
+                    <MudCheckBox @bind-Value="_wouldRecommend" Label="Would recommend this company to others"
+                                 Color="Color.Success" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_feedback" Label="Feedback" Variant="Variant.Outlined"
+                                  Lines="4" Placeholder="General feedback about the working experience..." />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_suggestions" Label="Suggestions for Improvement"
+                                  Variant="Variant.Outlined" Lines="3"
+                                  Placeholder="Suggestions for improving the organization..." />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save Interview
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int SeparationId { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+
+    private int _interviewerId;
+    private DateTime? _interviewDate = DateTime.Today;
+    private string? _reasonForLeaving;
+    private int _overallExperience = 3;
+    private bool _wouldRecommend = true;
+    private string? _feedback;
+    private string? _suggestions;
+
+    private List<EmpOption> _employees = new();
+
+    protected override async Task OnInitializedAsync() => await LoadEmployees();
+
+    private async Task LoadEmployees()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid || !_interviewDate.HasValue) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            // Check if already exists
+            var existing = await db.ExitInterviews.FirstOrDefaultAsync(e => e.SeparationId == SeparationId);
+            if (existing != null)
+            {
+                existing.InterviewerId = _interviewerId;
+                existing.InterviewDate = _interviewDate.Value;
+                existing.ReasonForLeaving = _reasonForLeaving;
+                existing.OverallExperience = _overallExperience;
+                existing.WouldRecommend = _wouldRecommend;
+                existing.Feedback = _feedback;
+                existing.Suggestions = _suggestions;
+            }
+            else
+            {
+                var entity = new ExitInterview
+                {
+                    SeparationId = SeparationId,
+                    InterviewerId = _interviewerId,
+                    InterviewDate = _interviewDate.Value,
+                    ReasonForLeaving = _reasonForLeaving,
+                    OverallExperience = _overallExperience,
+                    WouldRecommend = _wouldRecommend,
+                    Feedback = _feedback,
+                    Suggestions = _suggestions
+                };
+                db.ExitInterviews.Add(entity);
+            }
+            await db.SaveChangesAsync();
+            Snackbar.Add("Exit interview recorded.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private string GetExperienceLabel(int val) => val switch
+    {
+        1 => "1 — Very Poor",
+        2 => "2 — Poor",
+        3 => "3 — Average",
+        4 => "4 — Good",
+        5 => "5 — Excellent",
+        _ => ""
+    };
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

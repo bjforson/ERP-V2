@@ -1,0 +1,158 @@
+@page "/analytics/demographics"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Workforce Demographics</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.PieChart" Class="mr-2" />Workforce Demographics
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else
+{
+    <MudGrid>
+        <!-- Gender Distribution -->
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Gender Distribution</MudText></MudCardHeader>
+                <MudCardContent>
+                    @foreach (var g in _genderDist)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                            <MudText Style="min-width:80px">@g.Key</MudText>
+                            <MudProgressLinear Value="@g.Value" Max="@_total" Color="@(g.Key == "Male" ? Color.Primary : g.Key == "Female" ? Color.Secondary : Color.Tertiary)" Style="flex:1" />
+                            <MudText Style="min-width:60px">@g.Value (@((g.Value * 100.0 / Math.Max(1, _total)).ToString("F0"))%)</MudText>
+                        </MudStack>
+                    }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Employment Type -->
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Employment Type</MudText></MudCardHeader>
+                <MudCardContent>
+                    @foreach (var t in _empTypeDist)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                            <MudText Style="min-width:100px">@t.Key</MudText>
+                            <MudProgressLinear Value="@t.Value" Max="@_total" Color="Color.Primary" Style="flex:1" />
+                            <MudText Style="min-width:40px">@t.Value</MudText>
+                        </MudStack>
+                    }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Age Distribution -->
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Age Distribution</MudText></MudCardHeader>
+                <MudCardContent>
+                    @foreach (var a in _ageDist)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                            <MudText Style="min-width:80px">@a.Key</MudText>
+                            <MudProgressLinear Value="@a.Value" Max="@_total" Color="Color.Info" Style="flex:1" />
+                            <MudText Style="min-width:40px">@a.Value</MudText>
+                        </MudStack>
+                    }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Tenure Distribution -->
+        <MudItem xs="12" sm="6">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Tenure Distribution</MudText></MudCardHeader>
+                <MudCardContent>
+                    @foreach (var t in _tenureDist)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                            <MudText Style="min-width:120px">@t.Key</MudText>
+                            <MudProgressLinear Value="@t.Value" Max="@_total" Color="Color.Success" Style="flex:1" />
+                            <MudText Style="min-width:40px">@t.Value</MudText>
+                        </MudStack>
+                    }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Regional Spread -->
+        <MudItem xs="12" sm="6">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Regional Spread</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudTable Items="_regionDist" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Region/Location</MudTh><MudTh>Employees</MudTh><MudTh>%</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Key</MudTd>
+                            <MudTd>@context.Value</MudTd>
+                            <MudTd>@((context.Value * 100.0 / Math.Max(1, _total)).ToString("F1"))%</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private bool _loading = true;
+    private int _total;
+    private List<KeyValuePair<string, int>> _genderDist = new(), _empTypeDist = new(), _ageDist = new(), _tenureDist = new(), _regionDist = new();
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new("Home", "/"), new("Analytics", null), new("Demographics", null, true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var employees = await db.Employees
+            .Where(e => e.EmploymentStatus == EmploymentStatus.Active)
+            .Include(e => e.Location)
+            .ToListAsync();
+
+        _total = employees.Count;
+
+        _genderDist = employees.GroupBy(e => e.Gender.ToString())
+            .Select(g => new KeyValuePair<string, int>(g.Key, g.Count())).OrderByDescending(k => k.Value).ToList();
+
+        _empTypeDist = employees.GroupBy(e => e.EmploymentType.ToString())
+            .Select(g => new KeyValuePair<string, int>(g.Key, g.Count())).OrderByDescending(k => k.Value).ToList();
+
+        var now = DateTime.UtcNow;
+        _ageDist = employees.Where(e => e.DateOfBirth.HasValue)
+            .Select(e => (int)((now - e.DateOfBirth!.Value).TotalDays / 365.25))
+            .GroupBy(age => age < 25 ? "Under 25" : age < 35 ? "25-34" : age < 45 ? "35-44" : age < 55 ? "45-54" : "55+")
+            .Select(g => new KeyValuePair<string, int>(g.Key, g.Count())).ToList();
+
+        _tenureDist = employees.Where(e => e.HireDate.HasValue)
+            .Select(e => (now - e.HireDate!.Value).TotalDays / 365.25)
+            .GroupBy(t => t < 1 ? "< 1 year" : t < 3 ? "1-2 years" : t < 5 ? "3-4 years" : t < 10 ? "5-9 years" : "10+ years")
+            .Select(g => new KeyValuePair<string, int>(g.Key, g.Count())).ToList();
+
+        _regionDist = employees.GroupBy(e => e.Location?.Name ?? e.Region ?? "Not Set")
+            .Select(g => new KeyValuePair<string, int>(g.Key, g.Count())).OrderByDescending(k => k.Value).ToList();
+
+        _loading = false;
+    }
+}

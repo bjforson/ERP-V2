@@ -1,0 +1,96 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Performance
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Person" Class="mr-2" />
+            Self Assessment
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_employeeName != null)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-3">Employee: @_employeeName</MudText>
+        }
+        <MudGrid Spacing="2">
+            <MudItem xs="12">
+                <MudText Typo="Typo.body2" Class="mb-1">Self Rating (1–5)</MudText>
+                <MudRating @bind-SelectedValue="_selfRatingInt" MaxValue="5" Color="Color.Warning" />
+                <MudText Typo="Typo.caption" Class="mt-1">Selected: @_selfRatingInt / 5</MudText>
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_selfComments" Label="Self Assessment Comments"
+                              Variant="Variant.Outlined" Lines="5" MaxLength="2000"
+                              Placeholder="Describe your achievements, challenges, and areas for improvement..." />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Submit Self Assessment
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int AppraisalId { get; set; }
+
+    private bool _isSaving;
+    private int _selfRatingInt = 3;
+    private string? _selfComments;
+    private string? _employeeName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var appraisal = await db.AppraisalForms
+                .Include(a => a.Employee)
+                .FirstOrDefaultAsync(a => a.Id == AppraisalId);
+            if (appraisal != null)
+            {
+                _employeeName = appraisal.Employee.FirstName + " " + appraisal.Employee.LastName;
+                _selfRatingInt = appraisal.SelfRating.HasValue ? (int)appraisal.SelfRating.Value : 3;
+                _selfComments = appraisal.SelfComments;
+            }
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit()
+    {
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.AppraisalForms.FindAsync(AppraisalId);
+            if (entity == null) { Snackbar.Add("Appraisal not found.", Severity.Error); return; }
+            entity.SelfRating = _selfRatingInt;
+            entity.SelfComments = _selfComments;
+            entity.SubmittedAt = DateTime.UtcNow;
+            if (entity.Status == AppraisalStatus.NotStarted)
+                entity.Status = AppraisalStatus.InProgress;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Self assessment submitted.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

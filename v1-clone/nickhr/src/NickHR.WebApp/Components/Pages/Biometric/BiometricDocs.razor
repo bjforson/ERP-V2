@@ -1,0 +1,90 @@
+@page "/admin/biometric"
+@using NickHR.Core.Constants
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+<PageTitle>NICKSCAN ERP — NickHR — Biometric Integration</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Fingerprint" Class="mr-2" />Biometric Integration API
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12">
+        <MudCard Elevation="2">
+            <MudCardHeader><MudText Typo="Typo.h6">API Documentation</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudAlert Severity="Severity.Info" Class="mb-4">
+                    These endpoints allow biometric devices to integrate with NickHR attendance system.
+                    No authentication required for device endpoints (configure network-level security).
+                </MudAlert>
+
+                <!-- Clock In -->
+                <MudExpansionPanel Text="POST /api/attendance/biometric/clock-in" IsInitiallyExpanded="true">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Clock in an employee from a biometric device.</MudText>
+                    <MudText Typo="Typo.caption" Class="mb-1"><strong>Request Body:</strong></MudText>
+                    <MudPaper Elevation="0" Class="pa-3 mb-3" Style="background:#263238; color:#e0e0e0; font-family:monospace; font-size:13px">
+                        <pre>{
+  "employeeCode": "EMP001",
+  "timestamp": "2024-01-15T08:00:00Z",
+  "deviceId": "BIO-DEVICE-01"
+}</pre>
+                    </MudPaper>
+                    <MudText Typo="Typo.caption" Class="mb-1"><strong>Response (200):</strong></MudText>
+                    <MudPaper Elevation="0" Class="pa-3" Style="background:#263238; color:#e0e0e0; font-family:monospace; font-size:13px">
+                        <pre>{
+  "success": true,
+  "message": "Clocked in.",
+  "data": { "id": 1, "clockIn": "2024-01-15T08:00:00Z" }
+}</pre>
+                    </MudPaper>
+                </MudExpansionPanel>
+
+                <!-- Clock Out -->
+                <MudExpansionPanel Text="POST /api/attendance/biometric/clock-out" Class="mt-2">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Clock out an employee from a biometric device.</MudText>
+                    <MudText Typo="Typo.caption" Class="mb-1"><strong>Request Body:</strong></MudText>
+                    <MudPaper Elevation="0" Class="pa-3 mb-3" Style="background:#263238; color:#e0e0e0; font-family:monospace; font-size:13px">
+                        <pre>{
+  "employeeCode": "EMP001",
+  "timestamp": "2024-01-15T17:00:00Z",
+  "deviceId": "BIO-DEVICE-01"
+}</pre>
+                    </MudPaper>
+                    <MudText Typo="Typo.caption" Class="mb-1"><strong>Response (200):</strong></MudText>
+                    <MudPaper Elevation="0" Class="pa-3" Style="background:#263238; color:#e0e0e0; font-family:monospace; font-size:13px">
+                        <pre>{
+  "success": true,
+  "message": "Clocked out.",
+  "data": { "id": 1, "clockIn": "...", "clockOut": "...", "workHours": 9.0 }
+}</pre>
+                    </MudPaper>
+                </MudExpansionPanel>
+
+                <!-- Status -->
+                <MudExpansionPanel Text="GET /api/attendance/biometric/status/{employeeCode}" Class="mt-2">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Get today's attendance status.</MudText>
+                    <MudText Typo="Typo.caption" Class="mb-1"><strong>Response (200):</strong></MudText>
+                    <MudPaper Elevation="0" Class="pa-3" Style="background:#263238; color:#e0e0e0; font-family:monospace; font-size:13px">
+                        <pre>{
+  "success": true,
+  "data": {
+    "employeeCode": "EMP001",
+    "date": "2024-01-15",
+    "clockIn": "2024-01-15T08:00:00Z",
+    "clockOut": null,
+    "workHours": null,
+    "status": "Clocked In"
+  }
+}</pre>
+                    </MudPaper>
+                </MudExpansionPanel>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Admin", null), new("Biometric", null, true) };
+}

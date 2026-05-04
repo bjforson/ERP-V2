@@ -1,0 +1,256 @@
+@page "/grades"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Grades</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Salary Grades</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">Grades (@_grades.Count)</MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenAddDialog">
+                Add Grade
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_grades" Dense="true" Hover="true" Striped="true"
+                      T="GradeRow" SortLabel="Sort By"
+                      InitialTableState="@(new TableState { SortLabel = "Level", SortDirection = SortDirection.Ascending })">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<GradeRow, object>(x => x.Grade.Name)">Name</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel InitialDirection="SortDirection.Ascending" SortBy="new Func<GradeRow, object>(x => x.Grade.Level)">Level</MudTableSortLabel></MudTh>
+                    <MudTh>Min Salary</MudTh>
+                    <MudTh>Mid Salary</MudTh>
+                    <MudTh>Max Salary</MudTh>
+                    <MudTh>Description</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<GradeRow, object>(x => x.Grade.IsActive)">Status</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<GradeRow, object>(x => x.EmployeeCount)">Employees</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<GradeRow, object>(x => x.DesignationCount)">Designations</MudTableSortLabel></MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Name">
+                        <MudText Typo="Typo.body2" Style="font-weight: 600;">@context.Grade.Name</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Level">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">L@context.Grade.Level</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Min Salary">@FormatSalary(context.Grade.MinSalary)</MudTd>
+                    <MudTd DataLabel="Mid Salary">@FormatSalary(context.Grade.MidSalary)</MudTd>
+                    <MudTd DataLabel="Max Salary">@FormatSalary(context.Grade.MaxSalary)</MudTd>
+                    <MudTd DataLabel="Description">
+                        <MudText Typo="Typo.body2">@(context.Grade.Description ?? "-")</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        @if (context.Grade.IsActive)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">Active</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Filled">Inactive</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Employees">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@context.EmployeeCount</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Designations">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Outlined">@context.DesignationCount</MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning"
+                                       OnClick="@(() => OpenEditDialog(context.Grade))" Title="Edit" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       OnClick="@(() => DeleteGrade(context))" Title="Delete" />
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50, 100 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No grades found. Click "Add Grade" to create one.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<GradeRow> _grades = new();
+    private bool _isLoading = true;
+
+    public class GradeRow
+    {
+        public Grade Grade { get; set; } = null!;
+        public int EmployeeCount { get; set; }
+        public int DesignationCount { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGrades();
+    }
+
+    private async Task LoadGrades()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var grades = await db.Grades
+                .Where(g => !g.IsDeleted)
+                .OrderBy(g => g.Level)
+                .ToListAsync();
+
+            var gradeIds = grades.Select(g => g.Id).ToList();
+
+            var employeeCounts = await db.Employees
+                .Where(e => !e.IsDeleted && e.GradeId != null && gradeIds.Contains(e.GradeId.Value))
+                .GroupBy(e => e.GradeId!.Value)
+                .Select(g => new { GradeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.GradeId, x => x.Count);
+
+            var designationCounts = await db.Designations
+                .Where(d => !d.IsDeleted && d.GradeId != null && gradeIds.Contains(d.GradeId.Value))
+                .GroupBy(d => d.GradeId!.Value)
+                .Select(g => new { GradeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.GradeId, x => x.Count);
+
+            _grades = grades.Select(g => new GradeRow
+            {
+                Grade = g,
+                EmployeeCount = employeeCounts.TryGetValue(g.Id, out var ec) ? ec : 0,
+                DesignationCount = designationCounts.TryGetValue(g.Id, out var dc) ? dc : 0
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading grades: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenAddDialog()
+    {
+        var parameters = new DialogParameters
+        {
+            ["Grade"] = new Grade { IsActive = true },
+            ["IsEdit"] = false
+        };
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<GradeDialog>("Add Grade", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            await LoadGrades();
+            Snackbar.Add("Grade added successfully.", Severity.Success);
+        }
+    }
+
+    private async Task OpenEditDialog(Grade grade)
+    {
+        var copy = new Grade
+        {
+            Id = grade.Id,
+            Name = grade.Name,
+            Level = grade.Level,
+            MinSalary = grade.MinSalary,
+            MidSalary = grade.MidSalary,
+            MaxSalary = grade.MaxSalary,
+            Description = grade.Description,
+            IsActive = grade.IsActive,
+            CreatedAt = grade.CreatedAt,
+            UpdatedAt = grade.UpdatedAt
+        };
+
+        var parameters = new DialogParameters
+        {
+            ["Grade"] = copy,
+            ["IsEdit"] = true
+        };
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<GradeDialog>("Edit Grade", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            await LoadGrades();
+            Snackbar.Add("Grade updated successfully.", Severity.Success);
+        }
+    }
+
+    private async Task DeleteGrade(GradeRow row)
+    {
+        if (row.EmployeeCount > 0)
+        {
+            Snackbar.Add($"Cannot delete '{row.Grade.Name}' — it has {row.EmployeeCount} assigned employee(s).", Severity.Warning);
+            return;
+        }
+        if (row.DesignationCount > 0)
+        {
+            Snackbar.Add($"Cannot delete '{row.Grade.Name}' — it has {row.DesignationCount} linked designation(s).", Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Confirm Delete",
+            $"Are you sure you want to delete the grade \"{row.Grade.Name}\"?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirmed != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.Grades.FindAsync(row.Grade.Id);
+            if (entity == null) return;
+
+            entity.IsDeleted = true;
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            await LoadGrades();
+            Snackbar.Add("Grade deleted.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error deleting grade: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private static string FormatSalary(decimal amount) =>
+        $"GH\u20B5 {amount:N2}";
+}

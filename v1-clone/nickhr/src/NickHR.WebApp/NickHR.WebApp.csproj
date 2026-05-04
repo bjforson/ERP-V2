@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.7" />
+    <PackageReference Include="MudBlazor" Version="8.13.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
+    <PackageReference Include="Blazored.LocalStorage" Version="4.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickHR.Core\NickHR.Core.csproj" />
+    <ProjectReference Include="..\NickHR.Infrastructure\NickHR.Infrastructure.csproj" />
+    <ProjectReference Include="..\NickHR.Services\NickHR.Services.csproj" />
+    <ProjectReference Include="..\NickHR.Services.Payroll\NickHR.Services.Payroll.csproj" />
+    <ProjectReference Include="..\NickHR.Shared\NickHR.Shared.csproj" />
+    <!-- W3B: NickHR consumes the cross-app NickERP.Platform.Identity layer
+         (users, roles, role grants, user phones, security audit log). NickHR
+         is a read+write CONSUMER of the schema; the bootstrap CLI in
+         NickFinance.Database.Bootstrap remains the migration owner. -->
+    <ProjectReference Include="..\..\..\platform\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+  </ItemGroup>
+
+</Project>

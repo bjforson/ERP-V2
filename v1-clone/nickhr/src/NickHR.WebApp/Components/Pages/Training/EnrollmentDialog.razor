@@ -1,0 +1,226 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Training
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.People" Class="mr-2" />
+            Manage Enrollments — @_programTitle
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.subtitle2" Class="mb-3">
+            Enrolled: @_enrollments.Count @(_maxParticipants > 0 ? $"/ {_maxParticipants}" : "")
+        </MudText>
+
+        @* Add new enrollee *@
+        <MudCard Elevation="1" Class="mb-4">
+            <MudCardContent>
+                <MudText Typo="Typo.body2" Class="mb-2"><strong>Enroll New Employee</strong></MudText>
+                <MudGrid Spacing="2" AlignItems="AlignItems.Center">
+                    <MudItem xs="12" sm="8">
+                        <MudSelect T="int?" @bind-Value="_newEmployeeId" Label="Select Employee"
+                                   Variant="Variant.Outlined" Dense="true" Clearable="true">
+                            @foreach (var e in _availableEmployees)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)e.Id)">@e.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="4">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                                   OnClick="Enroll" Disabled="@(!_newEmployeeId.HasValue || _isSaving)">
+                            Enroll
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+
+        @* Current enrollees *@
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-4">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_enrollments" Dense="true" Hover="true" T="EnrollmentRow">
+                <HeaderContent>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Score</MudTh>
+                    <MudTh>Certification</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">@context.EmployeeName</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudSelect T="string" Value="@context.Status" Dense="true" Variant="Variant.Outlined"
+                                   Style="min-width:130px;"
+                                   ValueChanged="@((string v) => UpdateStatus(context, v))">
+                            <MudSelectItem T="string" Value="@("Enrolled")">Enrolled</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("Attended")">Attended</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("Completed")">Completed</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("NoShow")">No Show</MudSelectItem>
+                        </MudSelect>
+                    </MudTd>
+                    <MudTd DataLabel="Score">
+                        @if (context.Score.HasValue)
+                        {
+                            <span>@context.Score.Value.ToString("N1")</span>
+                        }
+                        else
+                        {
+                            <span class="mud-text-secondary">—</span>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Certification">@(context.CertificationName ?? "—")</MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       OnClick="@(() => RemoveEnrollment(context.AttendanceId))" />
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Class="pa-4 mud-text-secondary">No enrollments yet.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close" Variant="Variant.Filled" Color="Color.Primary">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int ProgramId { get; set; }
+
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private string _programTitle = "";
+    private int _maxParticipants;
+    private int? _newEmployeeId;
+    private List<EnrollmentRow> _enrollments = new();
+    private List<EmpOption> _availableEmployees = new();
+    private List<EmpOption> _allEmployees = new();
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var program = await db.TrainingPrograms.FindAsync(ProgramId);
+            if (program != null)
+            {
+                _programTitle = program.Title;
+                _maxParticipants = program.MaxParticipants;
+            }
+
+            _enrollments = await db.TrainingAttendances
+                .Include(a => a.Employee)
+                .Where(a => a.TrainingProgramId == ProgramId)
+                .Select(a => new EnrollmentRow
+                {
+                    AttendanceId = a.Id,
+                    EmployeeId = a.EmployeeId,
+                    EmployeeName = a.Employee.FirstName + " " + a.Employee.LastName,
+                    Status = a.Status,
+                    Score = a.Score,
+                    CertificationName = a.CertificationName
+                })
+                .ToListAsync();
+
+            _allEmployees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+
+            var enrolledIds = _enrollments.Select(e => e.EmployeeId).ToHashSet();
+            _availableEmployees = _allEmployees.Where(e => !enrolledIds.Contains(e.Id)).ToList();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task Enroll()
+    {
+        if (!_newEmployeeId.HasValue) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var attendance = new TrainingAttendance
+            {
+                TrainingProgramId = ProgramId,
+                EmployeeId = _newEmployeeId.Value,
+                Status = "Enrolled"
+            };
+            db.TrainingAttendances.Add(attendance);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Employee enrolled.", Severity.Success);
+            _newEmployeeId = null;
+            await LoadData();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private async Task UpdateStatus(EnrollmentRow row, string newStatus)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.TrainingAttendances.FindAsync(row.AttendanceId);
+            if (entity == null) return;
+            entity.Status = newStatus;
+            row.Status = newStatus;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Status updated.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task RemoveEnrollment(int attendanceId)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.TrainingAttendances.FindAsync(attendanceId);
+            if (entity == null) return;
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Enrollment removed.", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private void Close() => MudDialog.Close(DialogResult.Ok(true));
+
+    private class EnrollmentRow
+    {
+        public int AttendanceId { get; set; }
+        public int EmployeeId { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public string Status { get; set; } = "Enrolled";
+        public decimal? Score { get; set; }
+        public string? CertificationName { get; set; }
+    }
+
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

@@ -1,0 +1,315 @@
+@page "/attendance/reports"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Attendance Reports</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Attendance Reports</MudText>
+
+<!-- Filters -->
+<MudCard Elevation="1" Class="mb-4">
+    <MudCardContent>
+        <MudGrid>
+            <MudItem xs="12" sm="3">
+                <MudDatePicker @bind-Date="_startDate" Label="Start Date" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudDatePicker @bind-Date="_endDate" Label="End Date" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="int?" @bind-Value="_departmentFilter" Label="Department" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" Clearable="true">
+                    @foreach (var dept in _departments)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)dept.Id)">@dept.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2" Class="d-flex align-end">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
+                           OnClick="RunReport" FullWidth="true">
+                    Generate
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_reportRun)
+{
+    <!-- Summary cards -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="6" sm="3">
+            <MudCard Elevation="1">
+                <MudCardContent Class="text-center">
+                    <MudText Typo="Typo.h4" Color="Color.Primary">@_summaries.Count</MudText>
+                    <MudText Typo="Typo.body2">Employees</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudCard Elevation="1">
+                <MudCardContent Class="text-center">
+                    <MudText Typo="Typo.h4" Color="Color.Success">@_totalPresent</MudText>
+                    <MudText Typo="Typo.body2">Total Present Days</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudCard Elevation="1">
+                <MudCardContent Class="text-center">
+                    <MudText Typo="Typo.h4" Color="Color.Info">@_totalHours.ToString("F0")h</MudText>
+                    <MudText Typo="Typo.body2">Total Hours</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudCard Elevation="1">
+                <MudCardContent Class="text-center">
+                    <MudText Typo="Typo.h4" Color="Color.Warning">@_totalOvertime.ToString("F0")h</MudText>
+                    <MudText Typo="Typo.body2">Total Overtime</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <MudCard Elevation="2">
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@_summaries" Dense="true" Hover="true" Striped="true" T="EmployeeSummary" CustomFooter="true">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeSummary, object>(x => x.EmployeeName)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh>Department</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeSummary, object>(x => x.DaysPresent)">Days Present</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeSummary, object>(x => x.DaysAbsent)">Days Absent</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeSummary, object>(x => x.LateCount)">Late Count</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeSummary, object>(x => x.TotalHours)">Total Hours</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmployeeSummary, object>(x => x.OvertimeHours)">Overtime</MudTableSortLabel></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.EmployeeName</MudText>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.EmployeeCode</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Department">@(context.Department ?? "—")</MudTd>
+                    <MudTd DataLabel="Days Present">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success">@context.DaysPresent</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Days Absent">
+                        @if (context.DaysAbsent > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error">@context.DaysAbsent</MudChip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2">0</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Late Count">
+                        @if (context.LateCount > 3)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">
+                                <MudIcon Icon="@Icons.Material.Filled.Warning" Size="Size.Small" Class="mr-1" />
+                                @context.LateCount
+                            </MudChip>
+                        }
+                        else if (context.LateCount > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.LateCount</MudChip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2">0</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Total Hours">@context.TotalHours.ToString("F1")h</MudTd>
+                    <MudTd DataLabel="Overtime">
+                        @if (context.OvertimeHours > 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Warning">@context.OvertimeHours.ToString("F1")h</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2">—</MudText>
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTFootRow>
+                        <MudTd colspan="2" Style="font-weight:700;background:#f5f5f5;">Totals</MudTd>
+                        <MudTd Style="font-weight:700;background:#f5f5f5;">@_totalPresent</MudTd>
+                        <MudTd Style="font-weight:700;background:#f5f5f5;">@_totalAbsent</MudTd>
+                        <MudTd Style="font-weight:700;background:#f5f5f5;">@_totalLate</MudTd>
+                        <MudTd Style="font-weight:700;background:#f5f5f5;">@_totalHours.ToString("F1")h</MudTd>
+                        <MudTd Style="font-weight:700;background:#f5f5f5;">@_totalOvertime.ToString("F1")h</MudTd>
+                    </MudTFootRow>
+                </FooterContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50, 100 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No attendance records for the selected period.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+else
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        Select a date range and click Generate to view the attendance report.
+    </MudAlert>
+}
+
+@code {
+    private DateTime? _startDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _endDate = DateTime.Today;
+    private int? _departmentFilter;
+    private bool _isLoading = false;
+    private bool _reportRun = false;
+
+    private List<EmployeeSummary> _summaries = new();
+    private List<DeptOption> _departments = new();
+
+    // Totals
+    private int _totalPresent = 0;
+    private int _totalAbsent = 0;
+    private int _totalLate = 0;
+    private decimal _totalHours = 0;
+    private decimal _totalOvertime = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDepartments();
+    }
+
+    private async Task LoadDepartments()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _departments = await db.Departments
+                .OrderBy(d => d.Name)
+                .Select(d => new DeptOption { Id = d.Id, Name = d.Name })
+                .ToListAsync();
+        }
+        catch { }
+    }
+
+    private async Task RunReport()
+    {
+        if (!_startDate.HasValue || !_endDate.HasValue)
+        {
+            Snackbar.Add("Please select both start and end dates.", Severity.Warning);
+            return;
+        }
+
+        if (_endDate < _startDate)
+        {
+            Snackbar.Add("End date must be after start date.", Severity.Warning);
+            return;
+        }
+
+        _isLoading = true;
+        _reportRun = false;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var start = _startDate.Value.Date;
+            var end = _endDate.Value.Date.AddDays(1); // exclusive upper bound for UTC dates
+
+            var query = db.AttendanceRecords
+                .Include(a => a.Employee).ThenInclude(e => e.Department)
+                .Where(a => a.Date >= start && a.Date < end);
+
+            if (_departmentFilter.HasValue)
+                query = query.Where(a => a.Employee.DepartmentId == _departmentFilter.Value);
+
+            var records = await query
+                .Select(a => new
+                {
+                    a.EmployeeId,
+                    EmployeeName = a.Employee.FirstName + " " + a.Employee.LastName,
+                    EmployeeCode = a.Employee.EmployeeCode,
+                    Department = a.Employee.Department != null ? a.Employee.Department.Name : null,
+                    a.AttendanceType,
+                    a.WorkHours,
+                    a.OvertimeHours
+                })
+                .ToListAsync();
+
+            _summaries = records
+                .GroupBy(r => r.EmployeeId)
+                .Select(g => new EmployeeSummary
+                {
+                    EmployeeId = g.Key,
+                    EmployeeName = g.First().EmployeeName,
+                    EmployeeCode = g.First().EmployeeCode,
+                    Department = g.First().Department,
+                    DaysPresent = g.Count(r => r.AttendanceType == AttendanceType.Present ||
+                                               r.AttendanceType == AttendanceType.Late ||
+                                               r.AttendanceType == AttendanceType.HalfDay),
+                    DaysAbsent = g.Count(r => r.AttendanceType == AttendanceType.Absent),
+                    LateCount = g.Count(r => r.AttendanceType == AttendanceType.Late),
+                    TotalHours = g.Where(r => r.WorkHours.HasValue).Sum(r => r.WorkHours!.Value),
+                    OvertimeHours = g.Where(r => r.OvertimeHours.HasValue).Sum(r => r.OvertimeHours!.Value)
+                })
+                .OrderBy(s => s.EmployeeName)
+                .ToList();
+
+            _totalPresent = _summaries.Sum(s => s.DaysPresent);
+            _totalAbsent = _summaries.Sum(s => s.DaysAbsent);
+            _totalLate = _summaries.Sum(s => s.LateCount);
+            _totalHours = _summaries.Sum(s => s.TotalHours);
+            _totalOvertime = _summaries.Sum(s => s.OvertimeHours);
+
+            _reportRun = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private class EmployeeSummary
+    {
+        public int EmployeeId { get; set; }
+        public string EmployeeName { get; set; } = string.Empty;
+        public string EmployeeCode { get; set; } = string.Empty;
+        public string? Department { get; set; }
+        public int DaysPresent { get; set; }
+        public int DaysAbsent { get; set; }
+        public int LateCount { get; set; }
+        public decimal TotalHours { get; set; }
+        public decimal OvertimeHours { get; set; }
+    }
+
+    private class DeptOption
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+}

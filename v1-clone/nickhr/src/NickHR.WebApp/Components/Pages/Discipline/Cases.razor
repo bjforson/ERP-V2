@@ -1,0 +1,385 @@
+@page "/discipline/cases"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Discipline
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Disciplinary Cases</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Disciplinary Cases</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Cases
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_cases.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenCreateDialog">
+                New Case
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_cases" Dense="true" Hover="true" Striped="true" T="CaseRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<CaseRow, object>(x => x.EmployeeName)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<CaseRow, object>(x => x.IncidentDate)">Incident Date</MudTableSortLabel></MudTh>
+                    <MudTh>Description</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Action Type</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.EmployeeName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Incident Date">@context.IncidentDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Description">
+                        <MudText Typo="Typo.body2">
+                            @(context.Description.Length > 70 ? context.Description[..70] + "…" : context.Description)
+                        </MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetCaseStatusColor(context.Status)" Variant="Variant.Filled">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Action Type">
+                        @if (context.Action.HasValue)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error">@context.Action.Value</MudChip>
+                        }
+                        else
+                        {
+                            <span class="mud-text-secondary">Pending</span>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                   OnClick="@(() => OpenUpdateStatus(context.Id))">
+                            Update
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                   Class="ml-1" OnClick="@(() => OpenRecordAction(context.Id))">
+                            Action
+                        </MudButton>
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       Class="ml-1" OnClick="@(() => DeleteCase(context.Id))" />
+                    </MudTd>
+                </RowTemplate>
+                <ChildRowContent>
+                    <MudTr>
+                        <MudTd colspan="6" Class="pa-0">
+                            <MudCollapse Expanded="true">
+                                <MudCard Elevation="0" Class="mud-background-gray px-4 py-2">
+                                    <MudGrid Spacing="1">
+                                        @if (!string.IsNullOrWhiteSpace(context.Witnesses))
+                                        {
+                                            <MudItem xs="6">
+                                                <MudText Typo="Typo.body2"><strong>Witnesses:</strong> @context.Witnesses</MudText>
+                                            </MudItem>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(context.Evidence))
+                                        {
+                                            <MudItem xs="6">
+                                                <MudText Typo="Typo.body2"><strong>Evidence:</strong> @context.Evidence</MudText>
+                                            </MudItem>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(context.HearingNotes))
+                                        {
+                                            <MudItem xs="12">
+                                                <MudText Typo="Typo.body2"><strong>Hearing Notes:</strong> @context.HearingNotes</MudText>
+                                            </MudItem>
+                                        }
+                                        <MudItem xs="12">
+                                            <MudText Typo="Typo.caption" Color="Color.Secondary">Warnings recorded: @context.WarningCount</MudText>
+                                        </MudItem>
+                                    </MudGrid>
+                                </MudCard>
+                            </MudCollapse>
+                        </MudTd>
+                    </MudTr>
+                </ChildRowContent>
+                <NoRecordsContent>
+                    <MudText Class="pa-4 mud-text-secondary">No disciplinary cases found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@* Inline dialogs for Update Status *@
+@if (_showStatusDialog)
+{
+    <MudDialog @bind-IsVisible="_showStatusDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent><MudText Typo="Typo.h6">Update Case Status</MudText></TitleContent>
+        <DialogContent>
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudSelect T="string" @bind-Value="_newStatus" Label="Status" Variant="Variant.Outlined">
+                        @foreach (var s in new[] { "Open", "UnderInvestigation", "HearingScheduled", "ActionTaken", "Closed", "Appealed" })
+                        {
+                            <MudSelectItem T="string" Value="@s">@s</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudDatePicker @bind-Date="_hearingDate" Label="Hearing Date (if applicable)"
+                                   Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_hearingNotes" Label="Hearing Notes" Variant="Variant.Outlined" Lines="3" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_panelMembers" Label="Panel Members" Variant="Variant.Outlined" MaxLength="500" />
+                </MudItem>
+            </MudGrid>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showStatusDialog = false)" Variant="Variant.Text">Cancel</MudButton>
+            <MudButton OnClick="SaveStatus" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">Save</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@* Inline dialog for Record Action *@
+@if (_showActionDialog)
+{
+    <MudDialog @bind-IsVisible="_showActionDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent><MudText Typo="Typo.h6">Record Disciplinary Action</MudText></TitleContent>
+        <DialogContent>
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudSelect T="DisciplinaryAction" @bind-Value="_actionType" Label="Action Type" Variant="Variant.Outlined">
+                        @foreach (DisciplinaryAction a in Enum.GetValues(typeof(DisciplinaryAction)))
+                        {
+                            <MudSelectItem T="DisciplinaryAction" Value="@a">@a</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_actionDescription" Label="Description *" Variant="Variant.Outlined"
+                                  Lines="3" Required="true" />
+                </MudItem>
+            </MudGrid>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showActionDialog = false)" Variant="Variant.Text">Cancel</MudButton>
+            <MudButton OnClick="SaveAction" Color="Color.Error" Variant="Variant.Filled" Disabled="@_isSaving">Record Action</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private List<CaseRow> _cases = new();
+
+    // Status dialog
+    private bool _showStatusDialog;
+    private int _activeCaseId;
+    private string _newStatus = "Open";
+    private DateTime? _hearingDate;
+    private string? _hearingNotes;
+    private string? _panelMembers;
+
+    // Action dialog
+    private bool _showActionDialog;
+    private DisciplinaryAction _actionType = DisciplinaryAction.VerbalWarning;
+    private string _actionDescription = "";
+
+    protected override async Task OnInitializedAsync() => await LoadCases();
+
+    private async Task LoadCases()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _cases = await db.DisciplinaryCases
+                .Include(c => c.Employee)
+                .Include(c => c.Warnings)
+                .OrderByDescending(c => c.IncidentDate)
+                .Select(c => new CaseRow
+                {
+                    Id = c.Id,
+                    EmployeeName = c.Employee.FirstName + " " + c.Employee.LastName,
+                    IncidentDate = c.IncidentDate,
+                    Description = c.Description,
+                    Witnesses = c.Witnesses,
+                    Evidence = c.Evidence,
+                    Status = c.Status,
+                    Action = c.Action,
+                    ActionDate = c.ActionDate,
+                    HearingDate = c.HearingDate,
+                    HearingNotes = c.HearingNotes,
+                    PanelMembers = c.PanelMembers,
+                    WarningCount = c.Warnings.Count()
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var dialog = await DialogService.ShowAsync<CaseDialog>("New Disciplinary Case",
+            new DialogParameters(),
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadCases();
+    }
+
+    private void OpenUpdateStatus(int id)
+    {
+        _activeCaseId = id;
+        var row = _cases.First(c => c.Id == id);
+        _newStatus = row.Status;
+        _hearingDate = row.HearingDate;
+        _hearingNotes = row.HearingNotes;
+        _panelMembers = row.PanelMembers;
+        _showStatusDialog = true;
+    }
+
+    private async Task SaveStatus()
+    {
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.DisciplinaryCases.FindAsync(_activeCaseId);
+            if (entity == null) return;
+            entity.Status = _newStatus;
+            entity.HearingDate = _hearingDate;
+            entity.HearingNotes = _hearingNotes;
+            entity.PanelMembers = _panelMembers;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Case updated.", Severity.Success);
+            _showStatusDialog = false;
+            await LoadCases();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void OpenRecordAction(int id)
+    {
+        _activeCaseId = id;
+        _actionType = DisciplinaryAction.VerbalWarning;
+        _actionDescription = "";
+        _showActionDialog = true;
+    }
+
+    private async Task SaveAction()
+    {
+        if (string.IsNullOrWhiteSpace(_actionDescription))
+        {
+            Snackbar.Add("Description is required.", Severity.Warning);
+            return;
+        }
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var caseEntity = await db.DisciplinaryCases.Include(c => c.Employee).FirstOrDefaultAsync(c => c.Id == _activeCaseId);
+            if (caseEntity == null) return;
+
+            // Create warning record
+            var firstEmp = await db.Employees.Where(e => !e.IsDeleted).Select(e => e.Id).FirstOrDefaultAsync();
+            var warning = new Warning
+            {
+                DisciplinaryCaseId = _activeCaseId,
+                EmployeeId = caseEntity.EmployeeId,
+                WarningType = _actionType,
+                IssueDate = DateTime.Today,
+                Description = _actionDescription,
+                IssuedById = firstEmp > 0 ? firstEmp : caseEntity.EmployeeId
+            };
+            db.Warnings.Add(warning);
+
+            // Update case
+            caseEntity.Action = _actionType;
+            caseEntity.ActionDate = DateTime.Today;
+            caseEntity.Status = "ActionTaken";
+            await db.SaveChangesAsync();
+            Snackbar.Add("Action recorded.", Severity.Success);
+            _showActionDialog = false;
+            await LoadCases();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private async Task DeleteCase(int id)
+    {
+        bool? confirmed = await DialogService.ShowMessageBox("Delete Case",
+            "Delete this disciplinary case?", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.DisciplinaryCases.FindAsync(id);
+            if (entity == null) return;
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Case deleted.", Severity.Success);
+            await LoadCases();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private Color GetCaseStatusColor(string status) => status switch
+    {
+        "Open" => Color.Warning,
+        "UnderInvestigation" => Color.Info,
+        "HearingScheduled" => Color.Info,
+        "ActionTaken" => Color.Error,
+        "Closed" => Color.Success,
+        "Appealed" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private class CaseRow
+    {
+        public int Id { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public DateTime IncidentDate { get; set; }
+        public string Description { get; set; } = "";
+        public string? Witnesses { get; set; }
+        public string? Evidence { get; set; }
+        public string Status { get; set; } = "Open";
+        public DisciplinaryAction? Action { get; set; }
+        public DateTime? ActionDate { get; set; }
+        public DateTime? HearingDate { get; set; }
+        public string? HearingNotes { get; set; }
+        public string? PanelMembers { get; set; }
+        public int WarningCount { get; set; }
+    }
+}

@@ -1,0 +1,235 @@
+@page "/designations"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Designations</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Designations</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">Designations (@_designations.Count)</MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenAddDialog">
+                Add Designation
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_designations" Dense="true" Hover="true" Striped="true"
+                      T="DesignationRow" SortLabel="Sort By">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DesignationRow, object>(x => x.Designation.Title)">Title</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DesignationRow, object>(x => x.Designation.Code)">Code</MudTableSortLabel></MudTh>
+                    <MudTh>Description</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DesignationRow, object>(x => x.GradeName)">Grade</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DesignationRow, object>(x => x.Designation.IsActive)">Status</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DesignationRow, object>(x => x.EmployeeCount)">Employees</MudTableSortLabel></MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Title">
+                        <MudText Typo="Typo.body2" Style="font-weight: 600;">@context.Designation.Title</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Code">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                            @context.Designation.Code
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Description">
+                        <MudText Typo="Typo.body2">@(context.Designation.Description ?? "-")</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Grade">@(context.GradeName ?? "-")</MudTd>
+                    <MudTd DataLabel="Status">
+                        @if (context.Designation.IsActive)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">Active</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Filled">Inactive</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Employees">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@context.EmployeeCount</MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning"
+                                       OnClick="@(() => OpenEditDialog(context.Designation))" Title="Edit" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       OnClick="@(() => DeleteDesignation(context))" Title="Delete" />
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50, 100 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No designations found. Click "Add Designation" to create one.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<DesignationRow> _designations = new();
+    private bool _isLoading = true;
+
+    public class DesignationRow
+    {
+        public Designation Designation { get; set; } = null!;
+        public string? GradeName { get; set; }
+        public int EmployeeCount { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDesignations();
+    }
+
+    private async Task LoadDesignations()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var designations = await db.Designations
+                .Where(d => !d.IsDeleted)
+                .Include(d => d.Grade)
+                .OrderBy(d => d.Title)
+                .ToListAsync();
+
+            var designationIds = designations.Select(d => d.Id).ToList();
+
+            var employeeCounts = await db.Employees
+                .Where(e => !e.IsDeleted && e.DesignationId != null && designationIds.Contains(e.DesignationId.Value))
+                .GroupBy(e => e.DesignationId!.Value)
+                .Select(g => new { DesignationId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.DesignationId, x => x.Count);
+
+            _designations = designations.Select(d => new DesignationRow
+            {
+                Designation = d,
+                GradeName = d.Grade?.Name,
+                EmployeeCount = employeeCounts.TryGetValue(d.Id, out var count) ? count : 0
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading designations: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenAddDialog()
+    {
+        var parameters = new DialogParameters
+        {
+            ["Designation"] = new Designation { IsActive = true },
+            ["IsEdit"] = false
+        };
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<DesignationDialog>("Add Designation", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            await LoadDesignations();
+            Snackbar.Add("Designation added successfully.", Severity.Success);
+        }
+    }
+
+    private async Task OpenEditDialog(Designation designation)
+    {
+        // Create a copy to avoid mutating the list item directly
+        var copy = new Designation
+        {
+            Id = designation.Id,
+            Title = designation.Title,
+            Code = designation.Code,
+            Description = designation.Description,
+            GradeId = designation.GradeId,
+            IsActive = designation.IsActive,
+            CreatedAt = designation.CreatedAt,
+            UpdatedAt = designation.UpdatedAt
+        };
+
+        var parameters = new DialogParameters
+        {
+            ["Designation"] = copy,
+            ["IsEdit"] = true
+        };
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<DesignationDialog>("Edit Designation", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            await LoadDesignations();
+            Snackbar.Add("Designation updated successfully.", Severity.Success);
+        }
+    }
+
+    private async Task DeleteDesignation(DesignationRow row)
+    {
+        if (row.EmployeeCount > 0)
+        {
+            Snackbar.Add($"Cannot delete '{row.Designation.Title}' — it has {row.EmployeeCount} assigned employee(s).", Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Confirm Delete",
+            $"Are you sure you want to delete the designation \"{row.Designation.Title}\"?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirmed != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.Designations.FindAsync(row.Designation.Id);
+            if (entity == null) return;
+
+            entity.IsDeleted = true;
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            await LoadDesignations();
+            Snackbar.Add("Designation deleted.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error deleting designation: {ex.Message}", Severity.Error);
+        }
+    }
+}

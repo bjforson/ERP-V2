@@ -1,0 +1,327 @@
+@page "/surveys/create"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Enums
+@using System.Text.Json
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>NICKSCAN ERP — NickHR — Create Survey</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.AddCircle" Class="mr-2" />Create Survey
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <!-- Survey Details -->
+    <MudItem xs="12" md="8">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Survey Details</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudStack Spacing="3">
+                    <MudTextField @bind-Value="_form.Title" Label="Title" Variant="Variant.Outlined"
+                                  Required="true" MaxLength="200" Counter="200" />
+                    <MudTextField @bind-Value="_form.Description" Label="Description" Variant="Variant.Outlined"
+                                  Lines="3" MaxLength="1000" Counter="1000" />
+                    <MudGrid>
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker @bind-Date="_form.StartDate" Label="Start Date" Variant="Variant.Outlined"
+                                           Required="true" DateFormat="dd/MM/yyyy" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker @bind-Date="_form.EndDate" Label="End Date" Variant="Variant.Outlined"
+                                           Required="true" DateFormat="dd/MM/yyyy" />
+                        </MudItem>
+                    </MudGrid>
+                    <MudSwitch @bind-Value="_form.IsAnonymous" Label="Anonymous Responses"
+                               Color="Color.Primary" />
+                </MudStack>
+            </MudCardContent>
+        </MudCard>
+
+        <!-- Question Builder -->
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Questions</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.AddCircle"
+                               OnClick="AddQuestion">
+                        Add Question
+                    </MudButton>
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (!_questions.Any())
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center" Class="pa-4">
+                        No questions yet. Click "Add Question" to start building your survey.
+                    </MudText>
+                }
+
+                @for (int i = 0; i < _questions.Count; i++)
+                {
+                    var q = _questions[i];
+                    var idx = i;
+                    <MudCard Outlined="true" Class="mb-3">
+                        <MudCardContent>
+                            <MudStack Spacing="2">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                    <MudText Typo="Typo.subtitle2" Color="Color.Primary">Question @(idx + 1)</MudText>
+                                    <MudStack Row="true" Spacing="0">
+                                        <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small"
+                                                       Disabled="idx == 0" OnClick="() => MoveQuestion(idx, -1)" />
+                                        <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small"
+                                                       Disabled="idx == _questions.Count - 1" OnClick="() => MoveQuestion(idx, 1)" />
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                                       Color="Color.Error" OnClick="() => RemoveQuestion(idx)" />
+                                    </MudStack>
+                                </MudStack>
+                                <MudTextField @bind-Value="q.QuestionText" Label="Question Text"
+                                              Variant="Variant.Outlined" Required="true" MaxLength="500" />
+                                <MudSelect T="SurveyQuestionType" @bind-Value="q.QuestionType" Label="Question Type"
+                                           Variant="Variant.Outlined">
+                                    <MudSelectItem Value="SurveyQuestionType.Rating">Rating (1-5)</MudSelectItem>
+                                    <MudSelectItem Value="SurveyQuestionType.Text">Text Response</MudSelectItem>
+                                    <MudSelectItem Value="SurveyQuestionType.MultipleChoice">Multiple Choice</MudSelectItem>
+                                    <MudSelectItem Value="SurveyQuestionType.YesNo">Yes / No</MudSelectItem>
+                                </MudSelect>
+
+                                @if (q.QuestionType == SurveyQuestionType.MultipleChoice)
+                                {
+                                    <MudText Typo="Typo.body2">Options:</MudText>
+                                    @for (int oi = 0; oi < q.Options.Count; oi++)
+                                    {
+                                        var optIdx = oi;
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                            <MudTextField @bind-Value="q.Options[optIdx]"
+                                                          Label="@($"Option {optIdx + 1}")"
+                                                          Variant="Variant.Outlined" Dense="true" Style="flex:1" />
+                                            <MudIconButton Icon="@Icons.Material.Filled.RemoveCircle"
+                                                           Size="Size.Small" Color="Color.Error"
+                                                           Disabled="q.Options.Count <= 2"
+                                                           OnClick="() => RemoveOption(q, optIdx)" />
+                                        </MudStack>
+                                    }
+                                    <MudButton Variant="Variant.Text" Color="Color.Primary"
+                                               StartIcon="@Icons.Material.Filled.Add"
+                                               OnClick="() => q.Options.Add(string.Empty)"
+                                               Size="Size.Small">
+                                        Add Option
+                                    </MudButton>
+                                }
+                            </MudStack>
+                        </MudCardContent>
+                    </MudCard>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Preview & Actions sidebar -->
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="2" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Summary</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.body2"><strong>Title:</strong> @(_form.Title ?? "Not set")</MudText>
+                    <MudText Typo="Typo.body2"><strong>Questions:</strong> @_questions.Count</MudText>
+                    <MudText Typo="Typo.body2"><strong>Period:</strong>
+                        @(_form.StartDate?.ToString("dd MMM yyyy") ?? "?") — @(_form.EndDate?.ToString("dd MMM yyyy") ?? "?")
+                    </MudText>
+                    <MudText Typo="Typo.body2"><strong>Anonymous:</strong> @(_form.IsAnonymous ? "Yes" : "No")</MudText>
+                </MudStack>
+            </MudCardContent>
+        </MudCard>
+
+        <MudStack Spacing="2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Default" FullWidth="true"
+                       StartIcon="@Icons.Material.Filled.SaveAlt"
+                       OnClick="() => SaveAsync(SurveyStatus.Draft)"
+                       Disabled="_saving">
+                Save as Draft
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true"
+                       StartIcon="@Icons.Material.Filled.PlayArrow"
+                       OnClick="() => SaveAsync(SurveyStatus.Active)"
+                       Disabled="_saving">
+                @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+                Activate Survey
+            </MudButton>
+            <MudButton Variant="Variant.Text" Color="Color.Default" FullWidth="true"
+                       Href="/surveys">
+                Cancel
+            </MudButton>
+        </MudStack>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private bool _saving = false;
+    private SurveyFormModel _form = new();
+    private List<QuestionModel> _questions = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Surveys", href: "/surveys"),
+        new BreadcrumbItem("Create", href: null, disabled: true)
+    };
+
+    private void AddQuestion()
+    {
+        _questions.Add(new QuestionModel
+        {
+            QuestionType = SurveyQuestionType.Rating,
+            Options = new List<string> { "", "" }
+        });
+    }
+
+    private void RemoveQuestion(int idx)
+    {
+        if (idx >= 0 && idx < _questions.Count)
+            _questions.RemoveAt(idx);
+    }
+
+    private void MoveQuestion(int idx, int direction)
+    {
+        var newIdx = idx + direction;
+        if (newIdx < 0 || newIdx >= _questions.Count) return;
+        var temp = _questions[idx];
+        _questions[idx] = _questions[newIdx];
+        _questions[newIdx] = temp;
+    }
+
+    private void RemoveOption(QuestionModel q, int optIdx)
+    {
+        if (q.Options.Count > 2)
+            q.Options.RemoveAt(optIdx);
+    }
+
+    private async Task SaveAsync(SurveyStatus status)
+    {
+        if (string.IsNullOrWhiteSpace(_form.Title))
+        {
+            Snackbar.Add("Survey title is required.", Severity.Warning);
+            return;
+        }
+        if (_form.StartDate == null || _form.EndDate == null)
+        {
+            Snackbar.Add("Start and End dates are required.", Severity.Warning);
+            return;
+        }
+        if (_form.EndDate < _form.StartDate)
+        {
+            Snackbar.Add("End date must be after start date.", Severity.Warning);
+            return;
+        }
+        if (!_questions.Any())
+        {
+            Snackbar.Add("Please add at least one question.", Severity.Warning);
+            return;
+        }
+        if (_questions.Any(q => string.IsNullOrWhiteSpace(q.QuestionText)))
+        {
+            Snackbar.Add("All questions must have text.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var userName = authState.User.Identity?.Name;
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var creator = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == userName && !e.IsDeleted);
+            if (creator == null)
+            {
+                Snackbar.Add("Unable to identify current user.", Severity.Error);
+                return;
+            }
+
+            var survey = new Survey
+            {
+                Title = _form.Title.Trim(),
+                Description = _form.Description?.Trim(),
+                IsAnonymous = _form.IsAnonymous,
+                StartDate = DateTime.SpecifyKind(_form.StartDate.Value, DateTimeKind.Utc),
+                EndDate = DateTime.SpecifyKind(_form.EndDate.Value, DateTimeKind.Utc),
+                Status = status,
+                CreatedById = creator.Id,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            for (int i = 0; i < _questions.Count; i++)
+            {
+                var q = _questions[i];
+                string? optionsJson = null;
+                if (q.QuestionType == SurveyQuestionType.MultipleChoice)
+                {
+                    var validOpts = q.Options.Where(o => !string.IsNullOrWhiteSpace(o)).ToList();
+                    optionsJson = JsonSerializer.Serialize(validOpts);
+                }
+
+                survey.Questions.Add(new SurveyQuestion
+                {
+                    QuestionText = q.QuestionText.Trim(),
+                    QuestionType = q.QuestionType,
+                    Options = optionsJson,
+                    OrderIndex = i,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            db.Surveys.Add(survey);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add($"Survey {(status == SurveyStatus.Draft ? "saved as draft" : "activated")} successfully!", Severity.Success);
+            NavigationManager.NavigateTo("/surveys");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving survey: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private class SurveyFormModel
+    {
+        public string Title { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public bool IsAnonymous { get; set; } = false;
+        public DateTime? StartDate { get; set; } = DateTime.Today;
+        public DateTime? EndDate { get; set; } = DateTime.Today.AddDays(14);
+    }
+
+    private class QuestionModel
+    {
+        public string QuestionText { get; set; } = string.Empty;
+        public SurveyQuestionType QuestionType { get; set; } = SurveyQuestionType.Rating;
+        public List<string> Options { get; set; } = new();
+    }
+}

@@ -1,0 +1,1382 @@
+@page "/employees/{Id:int}/edit"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@using NickHR.WebApp.Components.Shared
+@using NickHR.WebApp.Services
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject AuthStateProvider AuthStateProvider
+@inject IIdentityProvisioningService Provisioning
+
+<PageTitle>NICKSCAN ERP — NickHR — Edit Employee</PageTitle>
+
+<div class="d-flex align-center justify-space-between mb-4">
+    <MudText Typo="Typo.h5">
+        <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-2" />Edit Employee
+    </MudText>
+    <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack"
+               OnClick="@(() => Nav.NavigateTo($"/employees/{Id}"))">Back to Profile</MudButton>
+</div>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_employee == null)
+{
+    <MudAlert Severity="Severity.Warning">Employee not found.</MudAlert>
+}
+else
+{
+    <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+
+        <MudTabPanel Text="Personal" Icon="@Icons.Material.Filled.Person">
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.FirstName" Label="First Name" Required="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.MiddleName" Label="Middle Name" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.LastName" Label="Last Name" Required="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudDatePicker @bind-Date="_dobDate" Label="Date of Birth" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.Gender" Label="Gender" Variant="Variant.Outlined">
+                        @foreach (var g in Enum.GetValues<Gender>())
+                        {
+                            <MudSelectItem Value="g">@g</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.MaritalStatus" Label="Marital Status" Variant="Variant.Outlined">
+                        @foreach (var m in Enum.GetValues<MaritalStatus>())
+                        {
+                            <MudSelectItem Value="m">@m</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Nationality" Label="Nationality" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.GhanaCardNumber" Label="Ghana Card Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.TIN" Label="TIN" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.SSNITNumber" Label="SSNIT Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.BloodGroup" Label="Blood Group" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Religion" Label="Religion" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.EthnicGroup" Label="Ethnic Group" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.PlaceOfBirth" Label="Place of Birth" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.MothersMaidenName" Label="Mother's Maiden Name" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.SpouseName" Label="Spouse Name" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.SpousePhone" Label="Spouse Phone" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.SpouseEmployer" Label="Spouse Employer" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField @bind-Value="_employee.NumberOfChildren" Label="Number of Children" Variant="Variant.Outlined" Min="0" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.PassportNumber" Label="Passport Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudDatePicker @bind-Date="_passportExpiryDate" Label="Passport Expiry" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.DriversLicenseNumber" Label="Driver's License No." Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudDatePicker @bind-Date="_licenseExpiryDate" Label="License Expiry" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.MedicalConditions" Label="Medical Conditions / Allergies" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Contact" Icon="@Icons.Material.Filled.ContactPhone">
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.PrimaryPhone" Label="Primary Phone" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.SecondaryPhone" Label="Secondary Phone" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.PersonalEmail" Label="Personal Email" Variant="Variant.Outlined" InputType="InputType.Email" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.WorkEmail" Label="Work Email" Variant="Variant.Outlined" InputType="InputType.Email" />
+                </MudItem>
+                <MudItem xs="12" md="8">
+                    <MudTextField @bind-Value="_employee.ResidentialAddress" Label="Residential Address" Variant="Variant.Outlined" Lines="2" />
+                </MudItem>
+                <MudItem xs="12" md="8">
+                    <MudTextField @bind-Value="_employee.PostalAddress" Label="Postal Address" Variant="Variant.Outlined" Lines="2" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.GhanaPostGPS" Label="Ghana Post GPS" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Hometown" Label="Hometown" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Region" Label="Region" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Employment" Icon="@Icons.Material.Filled.Work">
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.EmployeeCode" Label="Employee Code" Required="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.DepartmentId" Label="Department" Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var d in _departments)
+                        {
+                            <MudSelectItem Value="@((int?)d.Id)">@d.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.DesignationId" Label="Designation" Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var d in _designations)
+                        {
+                            <MudSelectItem Value="@((int?)d.Id)">@d.Title</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.GradeId" Label="Grade" Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var g in _grades)
+                        {
+                            <MudSelectItem Value="@((int?)g.Id)">@g.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <div class="d-flex align-center gap-2 mt-1">
+                        <MudButton Variant="Variant.Text" Color="Color.Secondary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                                   OnClick="SuggestGrade">Auto-suggest</MudButton>
+                        @if (_suggestGradeMessage != null)
+                        {
+                            <MudText Typo="Typo.caption" Color="@_suggestGradeMessageColor">@_suggestGradeMessage</MudText>
+                        }
+                    </div>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.LocationId" Label="Location" Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var l in _locations)
+                        {
+                            <MudSelectItem Value="@((int?)l.Id)">@l.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.ReportingManagerId" Label="Reporting Manager" Variant="Variant.Outlined" Clearable="true"
+                              HelperText="@($"Showing Grade {Math.Max((_employee?.Grade?.Level ?? 0) + 1, 4)}+ employees")">
+                        @foreach (var e in _managers)
+                        {
+                            <MudSelectItem Value="@((int?)e.Id)">@e.FirstName @e.LastName — @(e.Designation?.Title ?? "No Designation")</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.EmploymentType" Label="Employment Type" Variant="Variant.Outlined">
+                        @foreach (var t in Enum.GetValues<EmploymentType>())
+                        {
+                            <MudSelectItem Value="t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect @bind-Value="_employee.EmploymentStatus" Label="Employment Status" Variant="Variant.Outlined">
+                        @foreach (var s in Enum.GetValues<EmploymentStatus>())
+                        {
+                            <MudSelectItem Value="s">@s</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudDatePicker @bind-Date="_hireDate" Label="Hire Date" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudDatePicker @bind-Date="_confirmationDate" Label="Confirmation Date" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudDatePicker @bind-Date="_probationEndDate" Label="Probation End Date" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Compensation" Icon="@Icons.Material.Filled.AttachMoney">
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudNumericField @bind-Value="_employee.BasicSalary" @bind-Value:after="OnBasicSalaryChanged"
+                                     Label="Basic Salary (GHS)" Variant="Variant.Outlined" Format="N2" Min="0" />
+                    @if (_salarySuggestedGrade != null)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Class="mt-1" Icon="@Icons.Material.Filled.Lightbulb">
+                            Suggested grade: <strong>@_salarySuggestedGrade.Name</strong> (GH₵@_employee.BasicSalary.ToString("N0") fits @_salarySuggestedGrade.Name band GH₵@_salarySuggestedGrade.MinSalary.ToString("N0")–@_salarySuggestedGrade.MaxSalary.ToString("N0"))
+                        </MudAlert>
+                    }
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.BankName" Label="Bank Name" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.BankBranch" Label="Bank Branch" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.BankAccountNumber" Label="Bank Account Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.MobileMoneyNumber" Label="Mobile Money Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Tier2PensionNumber" Label="Tier 2 Pension Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Tier2Provider" Label="Tier 2 Provider" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Tier3PensionNumber" Label="Tier 3 Pension Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_employee.Tier3Provider" Label="Tier 3 Provider" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <!-- Photo Tab -->
+        <MudTabPanel Text="Photo" Icon="@Icons.Material.Filled.CameraAlt">
+            <MudGrid>
+                <MudItem xs="12" Class="d-flex flex-column align-center">
+                    @if (_employee.PhotoData != null && _employee.PhotoData.Length > 0)
+                    {
+                        <MudAvatar Style="width:150px;height:150px;">
+                            <MudImage Src="@($"data:{_employee.PhotoContentType ?? "image/jpeg"};base64,{Convert.ToBase64String(_employee.PhotoData)}")"
+                                      Style="width:100%;height:100%;object-fit:cover;" />
+                        </MudAvatar>
+                    }
+                    else
+                    {
+                        <MudAvatar Style="width:150px;height:150px;font-size:3rem;" Color="Color.Primary">
+                            @(_employee.FirstName.Length > 0 ? _employee.FirstName[0] : '?')
+                        </MudAvatar>
+                    }
+                    <MudText Typo="Typo.caption" Class="mt-3 mb-2">Upload Portrait Photo</MudText>
+                    <MudFileUpload T="IBrowserFile" Accept=".jpg,.jpeg,.png,.webp" FilesChanged="HandlePhotoUpload" MaximumFileCount="1">
+                        <ActivatorContent>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.CloudUpload"
+                                       Disabled="_photoUploading">
+                                @if (_photoUploading) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+                                Choose Photo
+                            </MudButton>
+                        </ActivatorContent>
+                    </MudFileUpload>
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <!-- Qualifications Tab -->
+        <MudTabPanel Text="Qualifications" Icon="@Icons.Material.Filled.School">
+            <div class="d-flex justify-space-between align-center mb-3">
+                <MudText Typo="Typo.subtitle2">Employee Qualifications</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="AddQualification">Add Qualification</MudButton>
+            </div>
+            @if (_employee.EmployeeQualifications?.Any(q => !q.IsDeleted) == true)
+            {
+                <MudTable Items="_employee.EmployeeQualifications.Where(q => !q.IsDeleted).ToList()" Dense="true" Hover="true" T="EmployeeQualification">
+                    <HeaderContent>
+                        <MudTh>Type</MudTh><MudTh>Institution</MudTh><MudTh>Qualification</MudTh><MudTh>Field</MudTh><MudTh>Year</MudTh><MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.QualificationType</MudTd>
+                        <MudTd>@context.Institution</MudTd>
+                        <MudTd>@context.Qualification</MudTd>
+                        <MudTd>@context.FieldOfStudy</MudTd>
+                        <MudTd>@context.EndDate?.Year</MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => DeleteQualification(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else { <MudText Typo="Typo.body2" Color="Color.Secondary">No qualifications recorded.</MudText> }
+
+            @if (_showQualForm)
+            {
+                <MudPaper Class="pa-4 mt-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Add Qualification</MudText>
+                    <MudGrid>
+                        <MudItem xs="12" sm="4">
+                            <MudSelect @bind-Value="_newQualType" Label="Type *" Variant="Variant.Outlined" T="string">
+                                <MudSelectItem Value="@("Education")">Education</MudSelectItem>
+                                <MudSelectItem Value="@("Certification")">Certification</MudSelectItem>
+                                <MudSelectItem Value="@("Language")">Language</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudAutocomplete T="string" @bind-Value="_newQualInstitution" Label="Institution *" Variant="Variant.Outlined"
+                                             SearchFunc="SearchInstitutions" MaxItems="15" Dense="true"
+                                             Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.School"
+                                             Placeholder="Type to search Ghana universities..." CoerceText="false" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newQualName" Label="Qualification *" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newQualField" Label="Field of Study" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudDatePicker @bind-Date="_newQualEndDate" Label="End Date" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4" Class="d-flex align-end gap-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveQualification" Size="Size.Small">Save</MudButton>
+                            <MudButton Variant="Variant.Text" OnClick="() => _showQualForm = false" Size="Size.Small">Cancel</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+        </MudTabPanel>
+
+        <!-- Dependents Tab -->
+        <MudTabPanel Text="Dependents" Icon="@Icons.Material.Filled.FamilyRestroom">
+            <div class="d-flex justify-space-between align-center mb-3">
+                <MudText Typo="Typo.subtitle2">Dependents</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="AddDependent">Add Dependent</MudButton>
+            </div>
+            @if (_employee.Dependents?.Any(d => !d.IsDeleted) == true)
+            {
+                <MudTable Items="_employee.Dependents.Where(d => !d.IsDeleted).ToList()" Dense="true" Hover="true" T="Dependent">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh><MudTh>Relationship</MudTh><MudTh>Date of Birth</MudTh><MudTh>Gender</MudTh><MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.FullName</MudTd>
+                        <MudTd>@context.Relationship</MudTd>
+                        <MudTd>@context.DateOfBirth?.ToString("dd/MM/yyyy")</MudTd>
+                        <MudTd>@context.Gender</MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                           OnClick="@(() => EditDependent(context))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => DeleteDependent(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else { <MudText Typo="Typo.body2" Color="Color.Secondary">No dependents recorded.</MudText> }
+
+            @if (_showDepForm)
+            {
+                <MudPaper Class="pa-4 mt-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">@(_editingDepId.HasValue ? "Edit Dependent" : "Add Dependent")</MudText>
+                    <MudGrid>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newDepName" Label="Full Name *" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudSelect @bind-Value="_newDepRelationship" Label="Relationship *" Variant="Variant.Outlined" T="string">
+                                <MudSelectItem Value="@("Child")">Child</MudSelectItem>
+                                <MudSelectItem Value="@("Spouse")">Spouse</MudSelectItem>
+                                <MudSelectItem Value="@("Parent")">Parent</MudSelectItem>
+                                <MudSelectItem Value="@("Sibling")">Sibling</MudSelectItem>
+                                <MudSelectItem Value="@("Other")">Other</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudDatePicker @bind-Date="_newDepDob" Label="Date of Birth" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudSelect @bind-Value="_newDepGender" Label="Gender" Variant="Variant.Outlined" T="Gender">
+                                @foreach (var g in Enum.GetValues<Gender>()) { <MudSelectItem Value="g">@g</MudSelectItem> }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="4" Class="d-flex align-end gap-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveDependent" Size="Size.Small">Save</MudButton>
+                            <MudButton Variant="Variant.Text" OnClick="() => { _showDepForm = false; _editingDepId = null; }" Size="Size.Small">Cancel</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+        </MudTabPanel>
+
+        <!-- Beneficiaries Tab -->
+        <MudTabPanel Text="Beneficiaries" Icon="@Icons.Material.Filled.VolunteerActivism">
+            <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-3">
+                Per SSNIT regulations, only blood relations, spouses, or legal dependents can be nominated. Total share must equal 100%.
+            </MudAlert>
+            <div class="d-flex justify-space-between align-center mb-3">
+                <MudText Typo="Typo.subtitle2">Beneficiaries</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="AddBeneficiary">Add Beneficiary</MudButton>
+            </div>
+            @{ var activeBens = _employee.Beneficiaries?.Where(b => !b.IsDeleted).ToList() ?? new(); }
+            @if (activeBens.Any())
+            {
+                var totalShare = activeBens.Sum(b => b.PercentageShare);
+                @if (totalShare != 100)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">Total share is @totalShare% — should be 100%</MudAlert>
+                }
+                <MudTable Items="activeBens" Dense="true" Hover="true" T="Beneficiary">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh><MudTh>Relationship</MudTh><MudTh>Phone</MudTh><MudTh>Share %</MudTh><MudTh>Primary</MudTh><MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.FullName</MudTd>
+                        <MudTd>@context.Relationship</MudTd>
+                        <MudTd>@context.Phone</MudTd>
+                        <MudTd>@context.PercentageShare%</MudTd>
+                        <MudTd><MudIcon Icon="@(context.IsPrimary ? Icons.Material.Filled.Check : Icons.Material.Filled.Close)" Color="@(context.IsPrimary ? Color.Success : Color.Default)" /></MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                           OnClick="@(() => EditBeneficiary(context))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => DeleteBeneficiary(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else { <MudText Typo="Typo.body2" Color="Color.Secondary">No beneficiaries recorded.</MudText> }
+
+            @if (_showBenForm)
+            {
+                <MudPaper Class="pa-4 mt-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">@(_editingBenId.HasValue ? "Edit Beneficiary" : "Add Beneficiary")</MudText>
+                    <MudGrid>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newBenName" Label="Full Name *" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudSelect @bind-Value="_newBenRelationship" Label="Relationship *" Variant="Variant.Outlined" T="string">
+                                <MudSelectItem Value="@("Spouse")">Spouse</MudSelectItem>
+                                <MudSelectItem Value="@("Child")">Child</MudSelectItem>
+                                <MudSelectItem Value="@("Parent")">Parent</MudSelectItem>
+                                <MudSelectItem Value="@("Sibling")">Sibling</MudSelectItem>
+                                <MudSelectItem Value="@("Other")">Other</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newBenPhone" Label="Phone" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudNumericField @bind-Value="_newBenShare" Label="Share % *" Variant="Variant.Outlined" Min="1m" Max="100m" T="decimal" />
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudCheckBox @bind-Value="_newBenPrimary" Label="Primary Beneficiary" Color="Color.Primary" T="bool" />
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudTextField @bind-Value="_newBenGhanaCard" Label="Ghana Card #" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="3" Class="d-flex align-end gap-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveBeneficiary" Size="Size.Small">Save</MudButton>
+                            <MudButton Variant="Variant.Text" OnClick="() => { _showBenForm = false; _editingBenId = null; }" Size="Size.Small">Cancel</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+        </MudTabPanel>
+
+        <!-- Documents Tab -->
+        <MudTabPanel Text="Documents" Icon="@Icons.Material.Filled.Folder">
+            <div class="d-flex justify-space-between align-center mb-3">
+                <MudText Typo="Typo.subtitle2">Employee Documents</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.UploadFile" OnClick="() => _showDocForm = true">Upload Document</MudButton>
+            </div>
+            @if (_employee.EmployeeDocuments?.Any(d => !d.IsDeleted) == true)
+            {
+                <MudTable Items="_employee.EmployeeDocuments.Where(d => !d.IsDeleted).ToList()" Dense="true" Hover="true" T="EmployeeDocument">
+                    <HeaderContent>
+                        <MudTh>Type</MudTh><MudTh>File Name</MudTh><MudTh>Description</MudTh><MudTh>Size</MudTh><MudTh>Uploaded</MudTh><MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.DocumentType</MudTd>
+                        <MudTd>@context.FileName</MudTd>
+                        <MudTd>@context.Description</MudTd>
+                        <MudTd>@FormatDocSize(context.FileSize)</MudTd>
+                        <MudTd>@context.UploadedAt.ToString("dd/MM/yyyy")</MudTd>
+                        <MudTd>
+                            @if (context.FileData != null && context.FileData.Length > 0)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Download" Size="Size.Small" Color="Color.Primary" Title="Download"
+                                               OnClick="@(() => DownloadDocument(context))" />
+                            }
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" Title="Delete"
+                                           OnClick="@(() => DeleteDocument(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else { <MudText Typo="Typo.body2" Color="Color.Secondary">No documents uploaded.</MudText> }
+
+            @if (_showDocForm)
+            {
+                <MudPaper Class="pa-4 mt-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Upload Document</MudText>
+                    <MudGrid>
+                        <MudItem xs="12" sm="4">
+                            <MudSelect @bind-Value="_newDocType" Label="Document Type *" Variant="Variant.Outlined" T="string">
+                                <MudSelectItem Value="@("Ghana Card")">Ghana Card</MudSelectItem>
+                                <MudSelectItem Value="@("SSNIT Card")">SSNIT Card</MudSelectItem>
+                                <MudSelectItem Value="@("TIN Certificate")">TIN Certificate</MudSelectItem>
+                                <MudSelectItem Value="@("Passport")">Passport</MudSelectItem>
+                                <MudSelectItem Value="@("Driver's License")">Driver's License</MudSelectItem>
+                                <MudSelectItem Value="@("Employment Contract")">Employment Contract</MudSelectItem>
+                                <MudSelectItem Value="@("Offer Letter")">Offer Letter</MudSelectItem>
+                                <MudSelectItem Value="@("Certificate")">Certificate</MudSelectItem>
+                                <MudSelectItem Value="@("CV")">CV</MudSelectItem>
+                                <MudSelectItem Value="@("Other")">Other</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newDocDescription" Label="Description" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudFileUpload T="IBrowserFile" FilesChanged="f => _docFile = f" MaximumFileCount="1">
+                                <ActivatorContent>
+                                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AttachFile">
+                                        @(_docFile != null ? _docFile.Name : "Choose File")
+                                    </MudButton>
+                                </ActivatorContent>
+                            </MudFileUpload>
+                        </MudItem>
+                        <MudItem xs="12" Class="d-flex gap-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveDocument" Size="Size.Small">Upload</MudButton>
+                            <MudButton Variant="Variant.Text" OnClick="CancelDocForm" Size="Size.Small">Cancel</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+        </MudTabPanel>
+
+        <!-- Emergency Contacts Tab -->
+        <MudTabPanel Text="Emergency Contacts" Icon="@Icons.Material.Filled.Emergency">
+            <div class="d-flex justify-space-between align-center mb-3">
+                <MudText Typo="Typo.subtitle2">Emergency Contacts</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="AddEmergencyContact">Add Contact</MudButton>
+            </div>
+            @if (_employee.EmergencyContacts?.Any(c => !c.IsDeleted) == true)
+            {
+                <MudTable Items="_employee.EmergencyContacts.Where(c => !c.IsDeleted).ToList()" Dense="true" Hover="true" T="EmergencyContact">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh><MudTh>Relationship</MudTh><MudTh>Primary Phone</MudTh><MudTh>Secondary Phone</MudTh><MudTh>Email</MudTh><MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.FullName</MudTd>
+                        <MudTd>@context.Relationship</MudTd>
+                        <MudTd>@context.PrimaryPhone</MudTd>
+                        <MudTd>@context.SecondaryPhone</MudTd>
+                        <MudTd>@context.Email</MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                           OnClick="@(() => EditEmergencyContact(context))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => DeleteEmergencyContact(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else { <MudText Typo="Typo.body2" Color="Color.Secondary">No emergency contacts recorded.</MudText> }
+
+            @if (_showECForm)
+            {
+                <MudPaper Class="pa-4 mt-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">@(_editingECId.HasValue ? "Edit Emergency Contact" : "Add Emergency Contact")</MudText>
+                    <MudGrid>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newECName" Label="Full Name *" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newECRelationship" Label="Relationship" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newECPrimaryPhone" Label="Primary Phone *" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newECSecondaryPhone" Label="Secondary Phone" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newECEmail" Label="Email" Variant="Variant.Outlined" InputType="InputType.Email" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudTextField @bind-Value="_newECAddress" Label="Address" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" Class="d-flex gap-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveEmergencyContact" Size="Size.Small">Save</MudButton>
+                            <MudButton Variant="Variant.Text" OnClick="() => { _showECForm = false; _editingECId = null; }" Size="Size.Small">Cancel</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+        </MudTabPanel>
+
+        @* W3B Phase 2 (2026-04-29) — NickFinance access (15-role catalog).
+           Pre-populated from existing identity.user_roles for this employee.
+           Apply runs on form Save. The wave-4 fast-path (ModuleAccessPanel
+           on EmployeeDetail) continues to coexist for "manage existing"
+           scenarios. *@
+        <MudTabPanel Text="Module access" Icon="@Icons.Material.Filled.Security">
+            @if (string.IsNullOrWhiteSpace(_employee?.WorkEmail))
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                    Add a work email under <strong>Contact</strong> before granting NickFinance access. Identity rows
+                    are keyed by lower-cased work email.
+                </MudAlert>
+            }
+            else
+            {
+                <NickFinanceAccessSection @ref="_nickFinanceAccessSection"
+                                          Email="@_employee.WorkEmail"
+                                          DisplayName="@($"{_employee.FirstName} {_employee.LastName}".Trim())"
+                                          UserId="@_identityUserId"
+                                          OnStateChanged="OnNickFinanceStateChanged" />
+            }
+        </MudTabPanel>
+
+    </MudTabs>
+
+    @if (_nickFinanceState is not null && !_nickFinanceState.IsValid)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mt-3">
+            NickFinance access tab has invalid grants — pick a site for every site-required role and
+            fill ExpiresAt + audit firm for ExternalAuditor before saving.
+        </MudAlert>
+    }
+
+    <div class="d-flex gap-3 mt-4">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="SaveAsync"
+                   Disabled="@(_saving || (_nickFinanceState is not null && !_nickFinanceState.IsValid))">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+            Save Changes
+        </MudButton>
+        <MudButton Variant="Variant.Outlined" OnClick="@(() => Nav.NavigateTo($"/employees/{Id}"))">Cancel</MudButton>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool _loading = true;
+    private bool _saving = false;
+    private bool _photoUploading = false;
+
+    // W3B Phase 2 — NickFinance access section.
+    private NickFinanceAccessSection? _nickFinanceAccessSection;
+    private NickFinanceAccessSectionState? _nickFinanceState;
+    /// <summary>
+    /// The identity.users.internal_user_id resolved from the employee's
+    /// work email. Null until the employee has been provisioned into the
+    /// shared identity store (the wave-4 fast-path on EmployeeDetail can
+    /// also do this). The section copes with null by rendering in
+    /// "intent capture" mode and Save then provisions before applying.
+    /// </summary>
+    private Guid? _identityUserId;
+
+    private Task OnNickFinanceStateChanged(NickFinanceAccessSectionState state)
+    {
+        _nickFinanceState = state;
+        return Task.CompletedTask;
+    }
+
+    // Qualification form
+    private bool _showQualForm = false;
+    private string _newQualType = "Education";
+    private string _newQualInstitution = "";
+    private string _newQualName = "";
+    private string _newQualField = "";
+    private DateTime? _newQualEndDate;
+
+    // Dependent form
+    private bool _showDepForm = false;
+    private string _newDepName = "";
+    private string _newDepRelationship = "Child";
+    private DateTime? _newDepDob;
+    private Gender _newDepGender = Gender.Male;
+
+    // Beneficiary form
+    private bool _showBenForm = false;
+    private int? _editingBenId;
+    private string _newBenName = "";
+    private string _newBenRelationship = "Spouse";
+    private string _newBenPhone = "";
+    private decimal _newBenShare = 0;
+    private bool _newBenPrimary = false;
+    private string _newBenGhanaCard = "";
+
+    // Dependent edit tracking
+    private int? _editingDepId;
+
+    // Document form
+    private bool _showDocForm = false;
+    private string _newDocType = "Ghana Card";
+    private string _newDocDescription = "";
+    private IBrowserFile? _docFile;
+
+    // Emergency Contact form
+    private bool _showECForm = false;
+    private int? _editingECId;
+    private string _newECName = "";
+    private string _newECRelationship = "";
+    private string _newECPrimaryPhone = "";
+    private string _newECSecondaryPhone = "";
+    private string _newECEmail = "";
+    private string _newECAddress = "";
+
+    // Ghana Educational Institutions
+    private static readonly string[] GhanaInstitutions = {
+        // Public Universities
+        "University of Ghana", "Kwame Nkrumah University of Science and Technology (KNUST)",
+        "University of Cape Coast", "University of Education, Winneba",
+        "University for Development Studies", "University of Professional Studies, Accra",
+        "University of Mines and Technology", "University of Health and Allied Sciences",
+        "University of Energy and Natural Resources", "University of Environment and Sustainable Development",
+        "Ghana Institute of Management and Public Administration (GIMPA)",
+        "Ghana Communication Technology University (GCTU)",
+        "CK Tedam University for Technology and Applied Sciences",
+        "Simon Diedong Dombo University for Business and Integrated Development Studies",
+        "Akenten Appiah Menkah University of Skills Training and Entrepreneurial Development",
+        // Technical Universities
+        "Accra Technical University", "Kumasi Technical University", "Takoradi Technical University",
+        "Koforidua Technical University", "Cape Coast Technical University", "Ho Technical University",
+        "Sunyani Technical University", "Tamale Technical University", "Bolgatanga Technical University",
+        "Wa Technical University",
+        // Private Universities
+        "Ashesi University", "Valley View University", "Central University",
+        "Pentecost University", "All Nations University", "Regent University College of Science and Technology",
+        "Methodist University College Ghana", "Presbyterian University College",
+        "Catholic University College of Ghana", "Christian Service University College",
+        "Wisconsin International University College", "Islamic University College",
+        "African University College of Communications", "Accra Institute of Technology",
+        "Lancaster University Ghana", "Webster University Ghana", "Zenith University College",
+        "BlueCrest University College", "Data Link University College", "Knutsford University College",
+        "Heritage Christian University College", "Jayee University College",
+        "Ghana Baptist University College", "Dominion University College",
+        "KAAF University", "Regional Maritime University", "Open University of West Africa",
+        "Ghana Armed Forces Command and Staff College", "Ghana Institute of Journalism",
+        "National Film and Television Institute (NAFTI)",
+        // Nursing/Health Training
+        "Korle Bu Nursing Training College", "Kumasi Nursing Training College",
+        "Tamale Nursing Training College", "Cape Coast Nursing Training College",
+        // Colleges of Education
+        "University of Ghana College of Education", "OLA College of Education",
+        "Wesley College of Education", "Komenda College of Education",
+        "Foso College of Education", "St. Louis College of Education",
+        // International (common)
+        "University of London", "University of South Africa (UNISA)",
+        "University of Leicester", "University of Sunderland",
+        "Coventry University", "University of Liverpool",
+        // Other
+        "Other (specify below)"
+    };
+    private Employee? _employee;
+
+    private List<Department> _departments = new();
+    private List<Designation> _designations = new();
+    private List<Grade> _grades = new();
+    private List<Location> _locations = new();
+    private List<Employee> _managers = new();
+
+    // Grade auto-suggest
+    private Grade? _suggestedGrade;
+    private Grade? _salarySuggestedGrade;
+    private string? _suggestGradeMessage;
+    private Color _suggestGradeMessageColor = Color.Info;
+
+    // DatePicker bridge properties
+    private DateTime? _dobDate
+    {
+        get => _employee?.DateOfBirth;
+        set { if (_employee != null) _employee.DateOfBirth = value; }
+    }
+    private DateTime? _hireDate
+    {
+        get => _employee?.HireDate;
+        set { if (_employee != null) _employee.HireDate = value; }
+    }
+    private DateTime? _confirmationDate
+    {
+        get => _employee?.ConfirmationDate;
+        set { if (_employee != null) _employee.ConfirmationDate = value; }
+    }
+    private DateTime? _probationEndDate
+    {
+        get => _employee?.ProbationEndDate;
+        set { if (_employee != null) _employee.ProbationEndDate = value; }
+    }
+    private DateTime? _passportExpiryDate
+    {
+        get => _employee?.PassportExpiry;
+        set { if (_employee != null) _employee.PassportExpiry = value; }
+    }
+    private DateTime? _licenseExpiryDate
+    {
+        get => _employee?.DriversLicenseExpiry;
+        set { if (_employee != null) _employee.DriversLicenseExpiry = value; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _employee = await db.Employees
+                .Include(e => e.Department)
+                .Include(e => e.Designation)
+                .Include(e => e.Grade)
+                .Include(e => e.Location)
+                .Include(e => e.ReportingManager)
+                .Include(e => e.EmergencyContacts)
+                .Include(e => e.Dependents)
+                .Include(e => e.Beneficiaries)
+                .Include(e => e.EmployeeQualifications)
+                .Include(e => e.EmployeeDocuments)
+                .FirstOrDefaultAsync(e => e.Id == Id);
+
+            _departments = await db.Departments.Where(d => d.IsActive).OrderBy(d => d.Name).ToListAsync();
+            _designations = await db.Designations.Where(d => d.IsActive).OrderBy(d => d.Title).ToListAsync();
+            _grades = await db.Grades.Where(g => g.IsActive).OrderBy(g => g.Level).ToListAsync();
+            _locations = await db.Locations.Where(l => l.IsActive).OrderBy(l => l.Name).ToListAsync();
+            // Intelligent filter: only show employees at a higher grade than the current employee
+            // If employee has no grade, show Grade 4+ (Supervisor and above)
+            var employeeGradeLevel = _employee?.Grade?.Level ?? 0;
+            var minManagerLevel = Math.Max(employeeGradeLevel + 1, 4); // At least Grade 4, or one above current
+
+            _managers = await db.Employees
+                .Include(e => e.Grade)
+                .Include(e => e.Designation)
+                .Where(e => (e.EmploymentStatus == EmploymentStatus.Active || e.EmploymentStatus == EmploymentStatus.Confirmed)
+                    && e.Id != Id
+                    && !e.IsDeleted
+                    && (
+                        (e.GradeId != null && e.Grade != null && e.Grade.Level >= minManagerLevel)
+                        || db.Employees.Any(sub => sub.ReportingManagerId == e.Id && !sub.IsDeleted) // Already has subordinates
+                    ))
+                .OrderBy(e => e.Grade!.Level).ThenBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .ToListAsync();
+
+            // W3B Phase 2: pre-resolve the identity uuid so the
+            // NickFinanceAccessSection can pre-populate existing grants
+            // on render. Returns null if the employee hasn't been
+            // provisioned into identity.users yet — the section then
+            // renders in "intent capture" mode.
+            if (_employee is not null && !string.IsNullOrWhiteSpace(_employee.WorkEmail))
+            {
+                _identityUserId = await Provisioning.GetUserIdByEmailAsync(_employee.WorkEmail, tenantId: 1L);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading employee: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Grade? FindMatchingGrade(decimal salary)
+    {
+        return _grades.FirstOrDefault(g => salary >= g.MinSalary && salary <= g.MaxSalary);
+    }
+
+    private void SuggestGrade()
+    {
+        if (_employee == null) return;
+        _suggestedGrade = FindMatchingGrade(_employee.BasicSalary);
+        if (_suggestedGrade != null)
+        {
+            _employee.GradeId = _suggestedGrade.Id;
+            _suggestGradeMessage = $"Auto-selected: {_suggestedGrade.Name} (salary GH₵{_employee.BasicSalary:N0})";
+            _suggestGradeMessageColor = Color.Success;
+            Snackbar.Add($"Suggested Grade: {_suggestedGrade.Name} based on salary GH₵{_employee.BasicSalary:N0}", Severity.Info);
+        }
+        else
+        {
+            _suggestGradeMessage = "No grade matches the current salary";
+            _suggestGradeMessageColor = Color.Warning;
+            Snackbar.Add("No grade matches the current salary", Severity.Warning);
+        }
+    }
+
+    private void OnBasicSalaryChanged()
+    {
+        if (_employee == null) return;
+        _salarySuggestedGrade = FindMatchingGrade(_employee.BasicSalary);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_employee == null) return;
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            db.Employees.Update(_employee);
+            await db.SaveChangesAsync();
+
+            // W3B Phase 2: apply NickFinance access changes after the
+            // employee row commits. Resolve / upsert the identity row
+            // first so the section has a real uuid to attach grants to.
+            if (_nickFinanceAccessSection is not null && !string.IsNullOrWhiteSpace(_employee.WorkEmail))
+            {
+                try
+                {
+                    var displayName = $"{_employee.FirstName} {_employee.LastName}".Trim();
+                    var identityUserId = _identityUserId
+                        ?? await Provisioning.ProvisionEmployeeAsync(_employee.WorkEmail, displayName, tenantId: 1L);
+                    _identityUserId = identityUserId;
+
+                    var grantedBy = await ResolveGrantedByUserIdAsync(scope.ServiceProvider);
+                    var ok = await _nickFinanceAccessSection.ApplyAsync(identityUserId, grantedBy);
+                    if (!ok)
+                    {
+                        Snackbar.Add(
+                            "Employee saved but a NickFinance role grant was blocked by an SoD violation — see banner above.",
+                            Severity.Warning);
+                        _saving = false;
+                        return; // Stay on the page so HR can adjust.
+                    }
+                }
+                catch (Exception nfx)
+                {
+                    Snackbar.Add($"Employee saved but NickFinance role grants failed: {nfx.Message}", Severity.Warning);
+                }
+            }
+
+            Snackbar.Add("Employee updated successfully.", Severity.Success);
+            Nav.NavigateTo($"/employees/{Id}");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    /// <summary>
+    /// Resolve the cookie-authenticated admin's identity.users id, auto-
+    /// provisioning a row if needed. Used as <c>granted_by_user_id</c> on
+    /// every NickFinance role grant created from this form.
+    /// </summary>
+    private async Task<Guid> ResolveGrantedByUserIdAsync(IServiceProvider sp)
+    {
+        try
+        {
+            var state = await AuthStateProvider.GetAuthenticationStateAsync();
+            var email = state.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                       ?? state.User.FindFirst("email")?.Value
+                       ?? state.User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(email)) return Guid.Empty;
+
+            var existing = await Provisioning.GetUserIdByEmailAsync(email, tenantId: 1L);
+            if (existing is not null) return existing.Value;
+
+            var userManager = sp.GetService<UserManager<ApplicationUser>>();
+            var displayName = email;
+            if (userManager is not null)
+            {
+                var u = await userManager.FindByEmailAsync(email);
+                if (u is not null) displayName = $"{u.FirstName} {u.LastName}".Trim();
+            }
+            return await Provisioning.ProvisionEmployeeAsync(email, displayName, tenantId: 1L);
+        }
+        catch
+        {
+            return Guid.Empty;
+        }
+    }
+
+    // === Institution Search ===
+    private Task<IEnumerable<string>> SearchInstitutions(string value, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Task.FromResult(GhanaInstitutions.AsEnumerable());
+        return Task.FromResult(GhanaInstitutions.Where(i => i.Contains(value, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    // === Beneficiary CRUD ===
+    private void AddBeneficiary() { _editingBenId = null; _showBenForm = true; _newBenName = ""; _newBenRelationship = "Spouse"; _newBenPhone = ""; _newBenShare = 0; _newBenPrimary = false; _newBenGhanaCard = ""; }
+
+    private void EditBeneficiary(Beneficiary ben)
+    {
+        _editingBenId = ben.Id;
+        _newBenName = ben.FullName;
+        _newBenRelationship = ben.Relationship ?? "Spouse";
+        _newBenPhone = ben.Phone ?? "";
+        _newBenShare = ben.PercentageShare;
+        _newBenPrimary = ben.IsPrimary;
+        _newBenGhanaCard = ben.GhanaCardNumber ?? "";
+        _showBenForm = true;
+    }
+
+    private async Task SaveBeneficiary()
+    {
+        if (string.IsNullOrWhiteSpace(_newBenName) || _newBenShare <= 0) { Snackbar.Add("Name and share % are required.", Severity.Warning); return; }
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            if (_editingBenId.HasValue)
+            {
+                var entity = await db.Beneficiaries.FindAsync(_editingBenId.Value);
+                if (entity != null)
+                {
+                    entity.FullName = _newBenName; entity.Relationship = _newBenRelationship;
+                    entity.Phone = _newBenPhone; entity.PercentageShare = _newBenShare;
+                    entity.IsPrimary = _newBenPrimary; entity.GhanaCardNumber = _newBenGhanaCard;
+                    entity.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync();
+                    var local = _employee!.Beneficiaries.FirstOrDefault(b => b.Id == _editingBenId.Value);
+                    if (local != null) { local.FullName = entity.FullName; local.Relationship = entity.Relationship; local.Phone = entity.Phone; local.PercentageShare = entity.PercentageShare; local.IsPrimary = entity.IsPrimary; local.GhanaCardNumber = entity.GhanaCardNumber; }
+                    Snackbar.Add("Beneficiary updated.", Severity.Success);
+                }
+            }
+            else
+            {
+                var ben = new Beneficiary
+                {
+                    EmployeeId = _employee!.Id, FullName = _newBenName, Relationship = _newBenRelationship,
+                    Phone = _newBenPhone, PercentageShare = _newBenShare, IsPrimary = _newBenPrimary,
+                    GhanaCardNumber = _newBenGhanaCard, IsActive = true
+                };
+                db.Beneficiaries.Add(ben);
+                await db.SaveChangesAsync();
+                _employee.Beneficiaries.Add(ben);
+                Snackbar.Add("Beneficiary added.", Severity.Success);
+            }
+            _editingBenId = null;
+            _showBenForm = false;
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteBeneficiary(Beneficiary ben)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Beneficiaries.FindAsync(ben.Id);
+            if (entity != null) { entity.IsDeleted = true; entity.UpdatedAt = DateTime.UtcNow; await db.SaveChangesAsync(); ben.IsDeleted = true; }
+            Snackbar.Add("Beneficiary removed.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    // === Qualification CRUD ===
+    private void AddQualification() { _showQualForm = true; _newQualType = "Education"; _newQualInstitution = ""; _newQualName = ""; _newQualField = ""; _newQualEndDate = null; }
+
+    private async Task SaveQualification()
+    {
+        if (string.IsNullOrWhiteSpace(_newQualInstitution) || string.IsNullOrWhiteSpace(_newQualName)) { Snackbar.Add("Institution and Qualification are required.", Severity.Warning); return; }
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var qual = new EmployeeQualification { EmployeeId = _employee!.Id, QualificationType = _newQualType, Institution = _newQualInstitution, Qualification = _newQualName, FieldOfStudy = _newQualField, EndDate = _newQualEndDate };
+            db.EmployeeQualifications.Add(qual);
+            await db.SaveChangesAsync();
+            _employee.EmployeeQualifications.Add(qual);
+            _showQualForm = false;
+            Snackbar.Add("Qualification added.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteQualification(EmployeeQualification qual)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmployeeQualifications.FindAsync(qual.Id);
+            if (entity != null) { entity.IsDeleted = true; entity.UpdatedAt = DateTime.UtcNow; await db.SaveChangesAsync(); qual.IsDeleted = true; }
+            Snackbar.Add("Qualification removed.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    // === Dependent CRUD ===
+    private void AddDependent() { _editingDepId = null; _showDepForm = true; _newDepName = ""; _newDepRelationship = "Child"; _newDepDob = null; _newDepGender = Gender.Male; }
+
+    private void EditDependent(Dependent dep)
+    {
+        _editingDepId = dep.Id;
+        _newDepName = dep.FullName;
+        _newDepRelationship = dep.Relationship ?? "Child";
+        _newDepDob = dep.DateOfBirth;
+        _newDepGender = dep.Gender;
+        _showDepForm = true;
+    }
+
+    private async Task SaveDependent()
+    {
+        if (string.IsNullOrWhiteSpace(_newDepName)) { Snackbar.Add("Name is required.", Severity.Warning); return; }
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            if (_editingDepId.HasValue)
+            {
+                var entity = await db.Dependents.FindAsync(_editingDepId.Value);
+                if (entity != null)
+                {
+                    entity.FullName = _newDepName; entity.Relationship = _newDepRelationship;
+                    entity.DateOfBirth = _newDepDob; entity.Gender = _newDepGender;
+                    entity.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync();
+                    var local = _employee!.Dependents.FirstOrDefault(d => d.Id == _editingDepId.Value);
+                    if (local != null) { local.FullName = entity.FullName; local.Relationship = entity.Relationship; local.DateOfBirth = entity.DateOfBirth; local.Gender = entity.Gender; }
+                    Snackbar.Add("Dependent updated.", Severity.Success);
+                }
+            }
+            else
+            {
+                var dep = new Dependent { EmployeeId = _employee!.Id, FullName = _newDepName, Relationship = _newDepRelationship, DateOfBirth = _newDepDob, Gender = _newDepGender, IsActive = true };
+                db.Dependents.Add(dep);
+                await db.SaveChangesAsync();
+                _employee.Dependents.Add(dep);
+                Snackbar.Add("Dependent added.", Severity.Success);
+            }
+            _editingDepId = null;
+            _showDepForm = false;
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteDependent(Dependent dep)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Dependents.FindAsync(dep.Id);
+            if (entity != null) { entity.IsDeleted = true; entity.UpdatedAt = DateTime.UtcNow; await db.SaveChangesAsync(); dep.IsDeleted = true; }
+            Snackbar.Add("Dependent removed.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    // === Document CRUD ===
+    private void CancelDocForm() { _showDocForm = false; _docFile = null; _newDocDescription = string.Empty; }
+
+    private async Task SaveDocument()
+    {
+        if (_docFile == null) { Snackbar.Add("Please choose a file.", Severity.Warning); return; }
+        if (string.IsNullOrWhiteSpace(_newDocType)) { Snackbar.Add("Document type is required.", Severity.Warning); return; }
+        try
+        {
+            using var ms = new MemoryStream();
+            await using var fs = _docFile.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+            await fs.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var doc = new EmployeeDocument
+            {
+                EmployeeId = _employee!.Id,
+                DocumentType = _newDocType,
+                FileName = _docFile.Name,
+                FilePath = $"db://doc/{_employee.Id}/{_docFile.Name}",
+                ContentType = _docFile.ContentType,
+                FileSize = bytes.Length,
+                Description = _newDocDescription,
+                FileData = bytes,
+                UploadedAt = DateTime.UtcNow
+            };
+            db.EmployeeDocuments.Add(doc);
+            await db.SaveChangesAsync();
+            _employee.EmployeeDocuments ??= new List<EmployeeDocument>();
+            _employee.EmployeeDocuments.Add(doc);
+            _showDocForm = false;
+            _docFile = null;
+            _newDocDescription = "";
+            Snackbar.Add("Document uploaded.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteDocument(EmployeeDocument doc)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmployeeDocuments.FindAsync(doc.Id);
+            if (entity != null) { entity.IsDeleted = true; entity.UpdatedAt = DateTime.UtcNow; await db.SaveChangesAsync(); doc.IsDeleted = true; }
+            Snackbar.Add("Document deleted.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DownloadDocument(EmployeeDocument doc)
+    {
+        if (doc.FileData == null || doc.FileData.Length == 0) return;
+        try
+        {
+            var base64 = Convert.ToBase64String(doc.FileData);
+            await JS.InvokeVoidAsync("downloadFileFromBase64", doc.FileName, doc.ContentType ?? "application/octet-stream", base64);
+        }
+        catch (Exception ex) { Snackbar.Add($"Download error: {ex.Message}", Severity.Error); }
+    }
+
+    private static string FormatDocSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024:N1} KB";
+        return $"{bytes / (1024 * 1024):N1} MB";
+    }
+
+    // === Emergency Contact CRUD ===
+    private void AddEmergencyContact() { _editingECId = null; _newECName = ""; _newECRelationship = ""; _newECPrimaryPhone = ""; _newECSecondaryPhone = ""; _newECEmail = ""; _newECAddress = ""; _showECForm = true; }
+
+    private void EditEmergencyContact(EmergencyContact ec)
+    {
+        _editingECId = ec.Id;
+        _newECName = ec.FullName;
+        _newECRelationship = ec.Relationship ?? "";
+        _newECPrimaryPhone = ec.PrimaryPhone;
+        _newECSecondaryPhone = ec.SecondaryPhone ?? "";
+        _newECEmail = ec.Email ?? "";
+        _newECAddress = ec.Address ?? "";
+        _showECForm = true;
+    }
+
+    private async Task SaveEmergencyContact()
+    {
+        if (string.IsNullOrWhiteSpace(_newECName) || string.IsNullOrWhiteSpace(_newECPrimaryPhone)) { Snackbar.Add("Name and primary phone are required.", Severity.Warning); return; }
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            if (_editingECId.HasValue)
+            {
+                var entity = await db.EmergencyContacts.FindAsync(_editingECId.Value);
+                if (entity != null)
+                {
+                    entity.FullName = _newECName; entity.Relationship = _newECRelationship;
+                    entity.PrimaryPhone = _newECPrimaryPhone; entity.SecondaryPhone = _newECSecondaryPhone;
+                    entity.Email = _newECEmail; entity.Address = _newECAddress;
+                    entity.UpdatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync();
+                    var local = _employee!.EmergencyContacts.FirstOrDefault(c => c.Id == _editingECId.Value);
+                    if (local != null) { local.FullName = entity.FullName; local.Relationship = entity.Relationship; local.PrimaryPhone = entity.PrimaryPhone; local.SecondaryPhone = entity.SecondaryPhone; local.Email = entity.Email; local.Address = entity.Address; }
+                    Snackbar.Add("Emergency contact updated.", Severity.Success);
+                }
+            }
+            else
+            {
+                var ec = new EmergencyContact
+                {
+                    EmployeeId = _employee!.Id, FullName = _newECName, Relationship = _newECRelationship,
+                    PrimaryPhone = _newECPrimaryPhone, SecondaryPhone = _newECSecondaryPhone,
+                    Email = _newECEmail, Address = _newECAddress
+                };
+                db.EmergencyContacts.Add(ec);
+                await db.SaveChangesAsync();
+                _employee.EmergencyContacts ??= new List<EmergencyContact>();
+                _employee.EmergencyContacts.Add(ec);
+                Snackbar.Add("Emergency contact added.", Severity.Success);
+            }
+            _editingECId = null;
+            _showECForm = false;
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteEmergencyContact(EmergencyContact ec)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmergencyContacts.FindAsync(ec.Id);
+            if (entity != null) { entity.IsDeleted = true; entity.UpdatedAt = DateTime.UtcNow; await db.SaveChangesAsync(); ec.IsDeleted = true; }
+            Snackbar.Add("Emergency contact removed.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task HandlePhotoUpload(IBrowserFile file)
+    {
+        if (_employee == null || file == null) return;
+        if (file.Size > 10 * 1024 * 1024) { Snackbar.Add("Photo must be under 10 MB.", Severity.Warning); return; }
+
+        _photoUploading = true;
+        StateHasChanged();
+        try
+        {
+            using var ms = new MemoryStream();
+            await using var fs = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            await fs.CopyToAsync(ms);
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var emp = await db.Employees.FindAsync(_employee.Id);
+            if (emp != null)
+            {
+                emp.PhotoData = ms.ToArray();
+                emp.PhotoContentType = file.ContentType ?? "image/jpeg";
+                emp.PhotoUrl = $"db://photo/{emp.Id}";
+                await db.SaveChangesAsync();
+
+                _employee.PhotoData = emp.PhotoData;
+                _employee.PhotoContentType = emp.PhotoContentType;
+                _employee.PhotoUrl = emp.PhotoUrl;
+                Snackbar.Add($"Photo saved ({emp.PhotoData.Length / 1024} KB)", Severity.Success);
+            }
+        }
+        catch (Exception ex) { Snackbar.Add($"Upload error: {ex.Message}", Severity.Error); }
+        finally { _photoUploading = false; StateHasChanged(); }
+    }
+}

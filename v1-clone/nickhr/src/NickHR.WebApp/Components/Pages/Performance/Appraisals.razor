@@ -1,0 +1,264 @@
+@page "/performance/appraisals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Performance
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Appraisals</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Appraisals</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Appraisal Forms
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_appraisals.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudSelect T="int?" Value="_selectedCycleId" Label="Appraisal Cycle" Variant="Variant.Outlined"
+                       Dense="true" Style="min-width:220px;" Class="mr-2"
+                       ValueChanged="@((int? v) => OnCycleChanged(v))">
+                <MudSelectItem T="int?" Value="@((int?)null)">All Cycles</MudSelectItem>
+                @foreach (var c in _cycles)
+                {
+                    <MudSelectItem T="int?" Value="@((int?)c.Id)">@c.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenCreateDialog">
+                Create Appraisal
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_appraisals" Dense="true" Hover="true" Striped="true" T="AppraisalRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<AppraisalRow, object>(x => x.EmployeeName)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh>Reviewer</MudTh>
+                    <MudTh>Self Rating</MudTh>
+                    <MudTh>Manager Rating</MudTh>
+                    <MudTh>Final Rating</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.EmployeeName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Reviewer">@context.ReviewerName</MudTd>
+                    <MudTd DataLabel="Self Rating">
+                        @if (context.SelfRating.HasValue)
+                        {
+                            <MudText Typo="Typo.body2" Style="@($"color:{GetRatingColor(context.SelfRating.Value)};font-weight:600;")">
+                                @context.SelfRating.Value.ToString("N1")
+                            </MudText>
+                        }
+                        else { <span class="mud-text-secondary">—</span> }
+                    </MudTd>
+                    <MudTd DataLabel="Manager Rating">
+                        @if (context.ManagerRating.HasValue)
+                        {
+                            <MudText Typo="Typo.body2" Style="@($"color:{GetRatingColor(context.ManagerRating.Value)};font-weight:600;")">
+                                @context.ManagerRating.Value.ToString("N1")
+                            </MudText>
+                        }
+                        else { <span class="mud-text-secondary">—</span> }
+                    </MudTd>
+                    <MudTd DataLabel="Final Rating">
+                        @if (context.FinalRating.HasValue)
+                        {
+                            <MudText Typo="Typo.body2" Style="@($"color:{GetRatingColor(context.FinalRating.Value)};font-weight:700;font-size:1.1em;")">
+                                @context.FinalRating.Value.ToString("N1")
+                            </MudText>
+                        }
+                        else { <span class="mud-text-secondary">—</span> }
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetAppraisalStatusColor(context.Status)" Variant="Variant.Filled">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                   OnClick="@(() => OpenSelfAssessment(context.Id))"
+                                   Disabled="@(context.Status == AppraisalStatus.Completed)">
+                            Self
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                   Class="ml-1" OnClick="@(() => OpenManagerReview(context.Id))"
+                                   Disabled="@(context.Status == AppraisalStatus.NotStarted)">
+                            Review
+                        </MudButton>
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       Class="ml-1" OnClick="@(() => DeleteAppraisal(context.Id))" />
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Class="pa-4 mud-text-secondary">No appraisals found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private bool _isLoading = true;
+    private int? _selectedCycleId;
+    private List<CycleOption> _cycles = new();
+    private List<AppraisalRow> _appraisals = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCycles();
+        await LoadAppraisals();
+    }
+
+    private async Task LoadCycles()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _cycles = await db.AppraisalCycles
+                .OrderByDescending(c => c.StartDate)
+                .Select(c => new CycleOption { Id = c.Id, Name = c.Name })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task LoadAppraisals()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var query = db.AppraisalForms
+                .Include(a => a.Employee)
+                .Include(a => a.Reviewer)
+                .AsQueryable();
+            if (_selectedCycleId.HasValue)
+                query = query.Where(a => a.AppraisalCycleId == _selectedCycleId.Value);
+
+            _appraisals = await query
+                .OrderByDescending(a => a.CreatedAt)
+                .Select(a => new AppraisalRow
+                {
+                    Id = a.Id,
+                    EmployeeName = a.Employee.FirstName + " " + a.Employee.LastName,
+                    ReviewerName = a.Reviewer.FirstName + " " + a.Reviewer.LastName,
+                    SelfRating = a.SelfRating,
+                    ManagerRating = a.ManagerRating,
+                    FinalRating = a.FinalRating,
+                    Status = a.Status
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task OnCycleChanged(int? val)
+    {
+        _selectedCycleId = val;
+        await LoadAppraisals();
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var parameters = new DialogParameters
+        {
+            ["AppraisalId"] = (int?)null,
+            ["DefaultCycleId"] = _selectedCycleId
+        };
+        var dialog = await DialogService.ShowAsync<AppraisalDialog>("Create Appraisal", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadAppraisals();
+    }
+
+    private async Task OpenSelfAssessment(int id)
+    {
+        var parameters = new DialogParameters { ["AppraisalId"] = id };
+        var dialog = await DialogService.ShowAsync<SelfAssessmentDialog>("Self Assessment", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadAppraisals();
+    }
+
+    private async Task OpenManagerReview(int id)
+    {
+        var parameters = new DialogParameters { ["AppraisalId"] = id };
+        var dialog = await DialogService.ShowAsync<ManagerReviewDialog>("Manager Review", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadAppraisals();
+    }
+
+    private async Task DeleteAppraisal(int id)
+    {
+        bool? confirmed = await DialogService.ShowMessageBox("Delete Appraisal",
+            "Are you sure you want to delete this appraisal?",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.AppraisalForms.FindAsync(id);
+            if (entity == null) return;
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Appraisal deleted.", Severity.Success);
+            await LoadAppraisals();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private string GetRatingColor(decimal rating) =>
+        rating >= 4 ? "#2e7d32" : rating >= 3 ? "#f57c00" : "#c62828";
+
+    private Color GetAppraisalStatusColor(AppraisalStatus status) => status switch
+    {
+        AppraisalStatus.NotStarted => Color.Default,
+        AppraisalStatus.InProgress => Color.Info,
+        AppraisalStatus.PendingReview => Color.Warning,
+        AppraisalStatus.Completed => Color.Success,
+        _ => Color.Default
+    };
+
+    private class CycleOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+
+    private class AppraisalRow
+    {
+        public int Id { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public string ReviewerName { get; set; } = "";
+        public decimal? SelfRating { get; set; }
+        public decimal? ManagerRating { get; set; }
+        public decimal? FinalRating { get; set; }
+        public AppraisalStatus Status { get; set; }
+    }
+}

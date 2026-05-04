@@ -1,0 +1,440 @@
+@page "/attendance/clock"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@inject AuthenticationStateProvider AuthStateProvider
+@inject ILogger<ClockInOut> Logger
+
+<PageTitle>NICKSCAN ERP — NickHR — Clock In/Out</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Clock In / Clock Out</MudText>
+
+@if (_employeeId == 0 && !_isLoading)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+
+<MudGrid Justify="Justify.Center">
+    <MudItem xs="12" sm="8" md="6">
+        <MudCard Elevation="4" Class="text-center">
+            <MudCardContent Class="pa-6">
+                <!-- Live clock -->
+                <MudText Typo="Typo.h6" Color="Color.Secondary" Class="mb-1">@DateTime.Today.ToString("dddd, dd MMMM yyyy")</MudText>
+                <MudText Typo="Typo.h3" Style="font-weight:700; font-family:monospace;" Class="mb-4">@_currentTime</MudText>
+
+                <!-- Today's status -->
+                @if (_todayRecord == null)
+                {
+                    <MudChip T="string" Color="Color.Default" Size="Size.Medium" Class="mb-4">
+                        <MudIcon Icon="@Icons.Material.Filled.AccessTime" Class="mr-1" />
+                        Not clocked in today
+                    </MudChip>
+                }
+                else if (_todayRecord.ClockOut == null)
+                {
+                    <MudChip T="string" Color="Color.Success" Size="Size.Medium" Class="mb-4">
+                        <MudIcon Icon="@Icons.Material.Filled.Login" Class="mr-1" />
+                        Clocked in at @_todayRecord.ClockIn?.ToLocalTime().ToString("HH:mm")
+                    </MudChip>
+                }
+                else
+                {
+                    var hours = _todayRecord.WorkHours ?? 0;
+                    <MudChip T="string" Color="Color.Info" Size="Size.Medium" Class="mb-4">
+                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Class="mr-1" />
+                        Worked @hours.ToString("F1") hours (@_todayRecord.ClockIn?.ToLocalTime().ToString("HH:mm") – @_todayRecord.ClockOut?.ToLocalTime().ToString("HH:mm"))
+                    </MudChip>
+                }
+
+                <!-- Action button -->
+                @if (_todayRecord == null)
+                {
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               Size="Size.Large"
+                               StartIcon="@Icons.Material.Filled.Login"
+                               Style="font-size:1.2rem;padding:16px 48px;font-weight:700;"
+                               Disabled="@(_isProcessing || _employeeId == 0)"
+                               OnClick="ClockIn">
+                        @if (_isProcessing)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        CLOCK IN
+                    </MudButton>
+                }
+                else if (_todayRecord.ClockOut == null)
+                {
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Error"
+                               Size="Size.Large"
+                               StartIcon="@Icons.Material.Filled.Logout"
+                               Style="font-size:1.2rem;padding:16px 48px;font-weight:700;"
+                               Disabled="@_isProcessing"
+                               OnClick="ClockOut">
+                        @if (_isProcessing)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        CLOCK OUT
+                    </MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Default"
+                               Size="Size.Large"
+                               StartIcon="@Icons.Material.Filled.CheckCircle"
+                               Style="font-size:1.2rem;padding:16px 48px;"
+                               Disabled="true">
+                        Day Complete
+                    </MudButton>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+<!-- Weekly summary -->
+<MudText Typo="Typo.h6" Class="mt-6 mb-3">Last 7 Days</MudText>
+<MudCard Elevation="2">
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-4">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_weeklyRecords" Dense="true" Hover="true" Striped="true" T="WeeklyRow">
+                <HeaderContent>
+                    <MudTh>Date</MudTh>
+                    <MudTh>Clock In</MudTh>
+                    <MudTh>Clock Out</MudTh>
+                    <MudTh>Hours Worked</MudTh>
+                    <MudTh>Status</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Date">@context.Date.ToString("ddd, dd MMM")</MudTd>
+                    <MudTd DataLabel="Clock In">@(context.ClockIn?.ToString("HH:mm") ?? "—")</MudTd>
+                    <MudTd DataLabel="Clock Out">@(context.ClockOut?.ToString("HH:mm") ?? "—")</MudTd>
+                    <MudTd DataLabel="Hours">@(context.WorkHours.HasValue ? context.WorkHours.Value.ToString("F1") + "h" : "—")</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetAttendanceColor(context.AttendanceType)">
+                            @context.AttendanceType.ToString()
+                        </MudChip>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Align="Align.Center" Class="pa-4">No attendance records for the last 7 days.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private string _currentTime = DateTime.Now.ToString("HH:mm:ss");
+    private AttendanceRecord? _todayRecord;
+    private List<WeeklyRow> _weeklyRecords = new();
+    private bool _isLoading = true;
+    private bool _isProcessing = false;
+    private int _employeeId = 0;
+    private System.Timers.Timer? _clockTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var empId = await GetCurrentEmployeeIdAsync();
+        _employeeId = empId ?? 0;
+        await LoadAttendance();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _clockTimer = new System.Timers.Timer(1000);
+            _clockTimer.Elapsed += async (_, _) =>
+            {
+                _currentTime = DateTime.Now.ToString("HH:mm:ss");
+                await InvokeAsync(StateHasChanged);
+            };
+            _clockTimer.Start();
+        }
+    }
+
+    public void Dispose()
+    {
+        _clockTimer?.Stop();
+        _clockTimer?.Dispose();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadAttendance()
+    {
+        if (_employeeId == 0) { _isLoading = false; return; }
+
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var today = DateTime.UtcNow.Date;
+            _todayRecord = await db.AttendanceRecords
+                .FirstOrDefaultAsync(a => a.EmployeeId == _employeeId && a.Date == today);
+
+            var since = today.AddDays(-6);
+            var records = await db.AttendanceRecords
+                .Where(a => a.EmployeeId == _employeeId && a.Date >= since && a.Date <= today)
+                .OrderByDescending(a => a.Date)
+                .ToListAsync();
+
+            _weeklyRecords = records.Select(r => new WeeklyRow
+            {
+                Date = r.Date,
+                ClockIn = r.ClockIn?.ToLocalTime(),
+                ClockOut = r.ClockOut?.ToLocalTime(),
+                WorkHours = r.WorkHours,
+                AttendanceType = r.AttendanceType
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading attendance: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ClockIn()
+    {
+        if (_employeeId == 0)
+        {
+            Snackbar.Add("No employee record found.", Severity.Warning);
+            return;
+        }
+
+        _isProcessing = true;
+        try
+        {
+            // Step 1: Get GPS location (required for clock-in)
+            double? lat = null, lon = null;
+            double? accuracy = null;
+            try
+            {
+                var gps = await JSRuntime.InvokeAsync<GpsResult>("getGPSLocation");
+                if (gps.Success)
+                {
+                    lat = gps.Latitude;
+                    lon = gps.Longitude;
+                    accuracy = gps.Accuracy;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "GPS retrieval failed");
+            }
+
+            if (!lat.HasValue || !lon.HasValue)
+            {
+                Snackbar.Add("Location is required to clock in. Please enable GPS/location services and try again.", Severity.Error);
+                return;
+            }
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            // Step 2: Get employee's assigned location
+            var employee = await db.Employees
+                .Include(e => e.Location)
+                .FirstOrDefaultAsync(e => e.Id == _employeeId && !e.IsDeleted);
+
+            if (employee == null) { Snackbar.Add("Employee not found.", Severity.Error); return; }
+
+            // Step 3: Check geo-fence against assigned location
+            string locationNote = "";
+            bool withinFence = false;
+
+            if (employee.Location != null && employee.Location.Latitude.HasValue && employee.Location.Longitude.HasValue)
+            {
+                double distance = HaversineDistance(lat.Value, lon.Value, employee.Location.Latitude.Value, employee.Location.Longitude.Value);
+                withinFence = distance <= employee.Location.GeoFenceRadiusMeters;
+
+                if (!withinFence)
+                {
+                    Snackbar.Add($"You are {distance:N0}m from {employee.Location.Name}. You must be within {employee.Location.GeoFenceRadiusMeters}m to clock in.", Severity.Error);
+                    return;
+                }
+                locationNote = $"At {employee.Location.Name} ({distance:N0}m away)";
+            }
+            else
+            {
+                // No assigned location or location has no GPS - allow clock-in but note it
+                // Check against ALL locations to find nearest
+                var locations = await db.Locations
+                    .Where(l => l.IsActive && !l.IsDeleted && l.Latitude.HasValue && l.Longitude.HasValue)
+                    .ToListAsync();
+                double nearest = double.MaxValue;
+                string nearestName = "Unknown";
+                foreach (var loc in locations)
+                {
+                    var d = HaversineDistance(lat.Value, lon.Value, loc.Latitude!.Value, loc.Longitude!.Value);
+                    if (d < nearest) { nearest = d; nearestName = loc.Name; withinFence = d <= loc.GeoFenceRadiusMeters; }
+                }
+                locationNote = $"Near {nearestName} ({nearest:N0}m)";
+            }
+
+            // Step 4: Check not already clocked in
+            var today = DateTime.UtcNow.Date;
+            var existing = await db.AttendanceRecords
+                .FirstOrDefaultAsync(a => a.EmployeeId == _employeeId && a.Date == today);
+            if (existing != null)
+            {
+                Snackbar.Add("You have already clocked in today.", Severity.Warning);
+                return;
+            }
+
+            // Step 5: Create attendance record with GPS data
+            var record = new AttendanceRecord
+            {
+                EmployeeId = _employeeId,
+                Date = today,
+                ClockIn = DateTime.UtcNow,
+                AttendanceType = AttendanceType.Present,
+                Notes = locationNote,
+                IPAddress = $"GPS:{lat:F6},{lon:F6} Acc:{accuracy:F0}m"
+            };
+            db.AttendanceRecords.Add(record);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add($"Clocked in at {DateTime.Now:HH:mm}. {locationNote}", Severity.Success);
+            await LoadAttendance();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error clocking in: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private static double HaversineDistance(double lat1, double lon1, double lat2, double lon2)
+    {
+        const double R = 6371000;
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLon = (lon2 - lon1) * Math.PI / 180;
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+                Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180) *
+                Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+        return R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+    }
+
+    private class GpsResult
+    {
+        public bool Success { get; set; }
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+        public double Accuracy { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private async Task ClockOut()
+    {
+        if (_todayRecord == null)
+        {
+            Snackbar.Add("No clock-in record found for today.", Severity.Warning);
+            return;
+        }
+
+        _isProcessing = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.AttendanceRecords.FindAsync(_todayRecord.Id);
+            if (entity == null)
+            {
+                Snackbar.Add("Attendance record not found.", Severity.Warning);
+                return;
+            }
+
+            var clockOut = DateTime.UtcNow;
+            entity.ClockOut = clockOut;
+
+            if (entity.ClockIn.HasValue)
+            {
+                var duration = clockOut - entity.ClockIn.Value;
+                var hours = (decimal)duration.TotalHours;
+                entity.WorkHours = Math.Round(hours, 2);
+                // Simple overtime: anything over 8 hours
+                entity.OvertimeHours = hours > 8 ? Math.Round(hours - 8, 2) : 0;
+            }
+
+            await db.SaveChangesAsync();
+            Snackbar.Add($"Clocked out at {DateTime.Now:HH:mm}. Total: {entity.WorkHours:F1} hours worked.", Severity.Success);
+            await LoadAttendance();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error clocking out: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private Color GetAttendanceColor(AttendanceType type) => type switch
+    {
+        AttendanceType.Present => Color.Success,
+        AttendanceType.Absent => Color.Error,
+        AttendanceType.Late => Color.Warning,
+        AttendanceType.HalfDay => Color.Info,
+        AttendanceType.OnLeave => Color.Secondary,
+        AttendanceType.Holiday => Color.Primary,
+        AttendanceType.Weekend => Color.Default,
+        _ => Color.Default
+    };
+
+    private class WeeklyRow
+    {
+        public DateTime Date { get; set; }
+        public DateTime? ClockIn { get; set; }
+        public DateTime? ClockOut { get; set; }
+        public decimal? WorkHours { get; set; }
+        public AttendanceType AttendanceType { get; set; }
+    }
+}

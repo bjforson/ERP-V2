@@ -1,0 +1,282 @@
+@page "/departments"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Departments</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Department Management</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Departments
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_departments.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       Size="Size.Small"
+                       OnClick="OpenCreateDialog">
+                Add Department
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_departments"
+                      Dense="true"
+                      Hover="true"
+                      Striped="true"
+                      Bordered="false"
+                      T="DepartmentRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DepartmentRow, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DepartmentRow, object>(x => x.Code)">Code</MudTableSortLabel></MudTh>
+                    <MudTh>Parent Department</MudTh>
+                    <MudTh>Cost Center</MudTh>
+                    <MudTh>Head of Department</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DepartmentRow, object>(x => x.EmployeeCount)">Employees</MudTableSortLabel></MudTh>
+                    <MudTh>Active</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Name">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.Name</MudText>
+                        @if (!string.IsNullOrWhiteSpace(context.Description))
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.Description</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Code">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@context.Code</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Parent Department">@(context.ParentDepartmentName ?? "—")</MudTd>
+                    <MudTd DataLabel="Cost Center">@(context.CostCenter ?? "—")</MudTd>
+                    <MudTd DataLabel="Head of Department">@(context.HeadOfDepartmentName ?? "—")</MudTd>
+                    <MudTd DataLabel="Employees">
+                        <MudChip T="string" Size="Size.Small" Color="@(context.EmployeeCount > 0 ? Color.Info : Color.Default)">
+                            @context.EmployeeCount
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Active">
+                        @if (context.IsActive)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error">Inactive</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                       Size="Size.Small"
+                                       Color="Color.Warning"
+                                       title="Edit"
+                                       OnClick="@(() => OpenEditDialog(context.Id))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                       Size="Size.Small"
+                                       Color="Color.Error"
+                                       title="Delete"
+                                       OnClick="@(() => DeleteDepartment(context))" />
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No departments found. Click "Add Department" to create one.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<DepartmentRow> _departments = new();
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDepartments();
+    }
+
+    private async Task LoadDepartments()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _departments = await db.Departments
+                .Include(d => d.ParentDepartment)
+                .Include(d => d.HeadOfDepartment)
+                .Include(d => d.Employees)
+                .OrderBy(d => d.Name)
+                .Select(d => new DepartmentRow
+                {
+                    Id = d.Id,
+                    Name = d.Name,
+                    Code = d.Code,
+                    Description = d.Description,
+                    CostCenter = d.CostCenter,
+                    IsActive = d.IsActive,
+                    ParentDepartmentName = d.ParentDepartment != null ? d.ParentDepartment.Name : null,
+                    HeadOfDepartmentName = d.HeadOfDepartment != null
+                        ? d.HeadOfDepartment.FirstName + " " + d.HeadOfDepartment.LastName
+                        : null,
+                    EmployeeCount = d.Employees.Count()
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading departments: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var parameters = new DialogParameters<DepartmentDialog>
+        {
+            { x => x.Department, null }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<DepartmentDialog>("Add Department", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false })
+        {
+            await LoadDepartments();
+        }
+    }
+
+    private async Task OpenEditDialog(int id)
+    {
+        Department? dept;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            dept = await db.Departments.FindAsync(id);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading department: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (dept == null)
+        {
+            Snackbar.Add("Department not found.", Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters<DepartmentDialog>
+        {
+            { x => x.Department, dept }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<DepartmentDialog>("Edit Department", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false })
+        {
+            await LoadDepartments();
+        }
+    }
+
+    private async Task DeleteDepartment(DepartmentRow row)
+    {
+        if (row.EmployeeCount > 0)
+        {
+            Snackbar.Add($"Cannot delete '{row.Name}': {row.EmployeeCount} employee(s) are assigned to this department.", Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Confirm Delete",
+            $"Are you sure you want to delete the department '{row.Name}'? This action cannot be undone.",
+            yesText: "Delete",
+            cancelText: "Cancel");
+
+        if (confirmed != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.Departments.FindAsync(row.Id);
+            if (entity == null)
+            {
+                Snackbar.Add("Department not found.", Severity.Warning);
+                return;
+            }
+
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+
+            Snackbar.Add($"Department '{row.Name}' deleted.", Severity.Success);
+            await LoadDepartments();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error deleting department: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private class DepartmentRow
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public string? CostCenter { get; set; }
+        public bool IsActive { get; set; }
+        public string? ParentDepartmentName { get; set; }
+        public string? HeadOfDepartmentName { get; set; }
+        public int EmployeeCount { get; set; }
+    }
+}

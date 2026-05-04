@@ -1,0 +1,122 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Performance
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.SupervisorAccount" Class="mr-2" />
+            Manager Review
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_employeeName != null)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-1">Employee: @_employeeName</MudText>
+        }
+        @if (_selfRating.HasValue)
+        {
+            <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+                Self Rating: @_selfRating.Value.ToString("N1") / 5
+                @if (!string.IsNullOrWhiteSpace(_selfComments))
+                {
+                    <br />
+                    <em>"@_selfComments"</em>
+                }
+            </MudText>
+        }
+        <MudDivider Class="mb-3" />
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6">
+                <MudText Typo="Typo.body2" Class="mb-1">Manager Rating (1–5)</MudText>
+                <MudRating @bind-SelectedValue="_managerRatingInt" MaxValue="5" Color="Color.Warning" />
+                <MudText Typo="Typo.caption" Class="mt-1">Selected: @_managerRatingInt / 5</MudText>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudText Typo="Typo.body2" Class="mb-1">Final Rating (1–5)</MudText>
+                <MudRating @bind-SelectedValue="_finalRatingInt" MaxValue="5" Color="Color.Primary" />
+                <MudText Typo="Typo.caption" Class="mt-1">Selected: @_finalRatingInt / 5</MudText>
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_managerComments" Label="Manager Comments"
+                              Variant="Variant.Outlined" Lines="5" MaxLength="2000"
+                              Placeholder="Provide feedback on performance, strengths, and development areas..." />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="() => Submit(false)" Color="Color.Info" Variant="Variant.Outlined" Disabled="@_isSaving">
+            Save Draft
+        </MudButton>
+        <MudButton OnClick="() => Submit(true)" Color="Color.Success" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Complete Review
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int AppraisalId { get; set; }
+
+    private bool _isSaving;
+    private int _managerRatingInt = 3;
+    private int _finalRatingInt = 3;
+    private string? _managerComments;
+    private decimal? _selfRating;
+    private string? _selfComments;
+    private string? _employeeName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var appraisal = await db.AppraisalForms
+                .Include(a => a.Employee)
+                .FirstOrDefaultAsync(a => a.Id == AppraisalId);
+            if (appraisal != null)
+            {
+                _employeeName = appraisal.Employee.FirstName + " " + appraisal.Employee.LastName;
+                _selfRating = appraisal.SelfRating;
+                _selfComments = appraisal.SelfComments;
+                _managerRatingInt = appraisal.ManagerRating.HasValue ? (int)appraisal.ManagerRating.Value : 3;
+                _finalRatingInt = appraisal.FinalRating.HasValue ? (int)appraisal.FinalRating.Value : 3;
+                _managerComments = appraisal.ManagerComments;
+            }
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit(bool complete)
+    {
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.AppraisalForms.FindAsync(AppraisalId);
+            if (entity == null) { Snackbar.Add("Appraisal not found.", Severity.Error); return; }
+            entity.ManagerRating = _managerRatingInt;
+            entity.FinalRating = _finalRatingInt;
+            entity.ManagerComments = _managerComments;
+            entity.ReviewedAt = DateTime.UtcNow;
+            entity.Status = complete ? AppraisalStatus.Completed : AppraisalStatus.PendingReview;
+            await db.SaveChangesAsync();
+            Snackbar.Add(complete ? "Review completed." : "Review saved as pending.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

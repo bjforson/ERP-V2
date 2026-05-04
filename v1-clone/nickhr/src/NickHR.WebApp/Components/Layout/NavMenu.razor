@@ -1,0 +1,191 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using NickHR.Core.Constants
+
+<MudNavMenu>
+    <!-- ═══════════════════ DASHBOARD ═══════════════════ -->
+    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">
+        Dashboard
+    </MudNavLink>
+
+    <!-- ═══════════════════ MY WORKSPACE (All Employees) ═══════════════════ -->
+    <AuthorizeView>
+        <Authorized>
+            <MudNavGroup Title="My Workspace" Icon="@Icons.Material.Filled.AccountBox" Expanded="false">
+                <MudNavLink Href="/profile" Icon="@Icons.Material.Filled.Person">My Profile</MudNavLink>
+                <MudNavLink Href="/my-payslips" Icon="@Icons.Material.Filled.Receipt">My Payslips</MudNavLink>
+                <MudNavLink Href="/my-documents" Icon="@Icons.Material.Filled.Folder">My Documents</MudNavLink>
+                <MudNavLink Href="/change-password" Icon="@Icons.Material.Filled.Lock">Change Password</MudNavLink>
+                <MudNavLink Href="/assets/my" Icon="@Icons.Material.Filled.Devices">My Assets</MudNavLink>
+                <MudNavLink Href="/journal" Icon="@Icons.Material.Filled.MenuBook">My Journal</MudNavLink>
+            </MudNavGroup>
+
+            <MudNavGroup Title="Leave & Attendance" Icon="@Icons.Material.Filled.EventAvailable" Expanded="false">
+                <MudNavLink Href="/attendance/clock" Icon="@Icons.Material.Filled.Timer">Clock In/Out</MudNavLink>
+                <MudNavLink Href="/attendance/my-records" Icon="@Icons.Material.Filled.DateRange">My Attendance</MudNavLink>
+                <MudNavLink Href="/attendance/qr-scan" Icon="@Icons.Material.Filled.QrCodeScanner">QR Check-in</MudNavLink>
+                <MudNavLink Href="/leave/request" Icon="@Icons.Material.Filled.AddCircle">Request Leave</MudNavLink>
+                <MudNavLink Href="/leave/my-requests" Icon="@Icons.Material.Filled.EventNote">My Leave</MudNavLink>
+                <MudNavLink Href="/leave/calendar" Icon="@Icons.Material.Filled.CalendarMonth">Team Calendar</MudNavLink>
+                <MudNavLink Href="/excuse-duty/request" Icon="@Icons.Material.Filled.AssignmentLate">Excuse Duty</MudNavLink>
+                <MudNavLink Href="/excuse-duty/my-requests" Icon="@Icons.Material.Filled.ListAlt">My Excuse Duty</MudNavLink>
+                <MudNavLink Href="/overtime/request" Icon="@Icons.Material.Filled.MoreTime">Request Overtime</MudNavLink>
+                <MudNavLink Href="/overtime/my-requests" Icon="@Icons.Material.Filled.History">My Overtime</MudNavLink>
+            </MudNavGroup>
+
+            <MudNavGroup Title="Requests & Claims" Icon="@Icons.Material.Filled.RequestPage" Expanded="false">
+                <MudNavLink Href="/loans/apply" Icon="@Icons.Material.Filled.AccountBalance">Apply for Loan</MudNavLink>
+                <MudNavLink Href="/loans/my-applications" Icon="@Icons.Material.Filled.ListAlt">My Loan Applications</MudNavLink>
+                <MudNavLink Href="/medical/claim" Icon="@Icons.Material.Filled.LocalHospital">Medical Claim</MudNavLink>
+                <MudNavLink Href="/medical/my-claims" Icon="@Icons.Material.Filled.ReceiptLong">My Medical Claims</MudNavLink>
+                <MudNavLink Href="/expenses/submit" Icon="@Icons.Material.Filled.AddCard">Expense Claim</MudNavLink>
+                <MudNavLink Href="/expenses/my" Icon="@Icons.Material.Filled.ReceiptLong">My Expenses</MudNavLink>
+                <MudNavLink Href="/travel/request" Icon="@Icons.Material.Filled.Flight">Travel Request</MudNavLink>
+                <MudNavLink Href="/travel/my-requests" Icon="@Icons.Material.Filled.Luggage">My Travel</MudNavLink>
+                <MudNavLink Href="/out-of-station/request" Icon="@Icons.Material.Filled.FlightTakeoff">Out of Station</MudNavLink>
+                <MudNavLink Href="/out-of-station/my" Icon="@Icons.Material.Filled.Luggage">My Out of Station</MudNavLink>
+            </MudNavGroup>
+
+            <MudNavGroup Title="Engage" Icon="@Icons.Material.Filled.Diversity3" Expanded="false">
+                <MudNavLink Href="/recognition" Icon="@Icons.Material.Filled.EmojiEvents">Recognition Wall</MudNavLink>
+                <MudNavLink Href="/recognition/leaderboard" Icon="@Icons.Material.Filled.Leaderboard">Leaderboard</MudNavLink>
+                <MudNavLink Href="/surveys" Icon="@Icons.Material.Filled.Poll">Surveys</MudNavLink>
+                <MudNavLink Href="/directory" Icon="@Icons.Material.Filled.ContactPhone">Company Directory</MudNavLink>
+                <MudNavLink Href="/announcements" Icon="@Icons.Material.Filled.Campaign">Announcements</MudNavLink>
+                <MudNavLink Href="/calendar" Icon="@Icons.Material.Filled.CalendarMonth">Calendar</MudNavLink>
+                <MudNavLink Href="/policies" Icon="@Icons.Material.Filled.Policy">Policies</MudNavLink>
+                <MudNavLink Href="/handbook" Icon="@Icons.Material.Filled.Book">Handbook</MudNavLink>
+            </MudNavGroup>
+
+            <MudNavLink Href="/timesheets" Icon="@Icons.Material.Filled.Timer">My Timesheets</MudNavLink>
+        </Authorized>
+    </AuthorizeView>
+
+    <!-- ═══════════════════ APPROVALS (Managers/HR) ═══════════════════ -->
+    <AuthorizeView Roles="@RoleSets.HRStaffOrDeptManager">
+        <Authorized>
+            <MudNavGroup Title="Approvals" Icon="@Icons.Material.Filled.Approval" Expanded="false">
+                <MudNavLink Href="/leave/approvals" Icon="@Icons.Material.Filled.EventAvailable">Leave</MudNavLink>
+                <MudNavLink Href="/overtime/approvals" Icon="@Icons.Material.Filled.MoreTime">Overtime</MudNavLink>
+                <MudNavLink Href="/excuse-duty/approvals" Icon="@Icons.Material.Filled.AssignmentLate">Excuse Duty</MudNavLink>
+                <MudNavLink Href="/loans/approvals" Icon="@Icons.Material.Filled.AccountBalance">Loans</MudNavLink>
+                <MudNavLink Href="/expenses/review" Icon="@Icons.Material.Filled.Receipt">Expenses</MudNavLink>
+                <MudNavLink Href="/medical/review" Icon="@Icons.Material.Filled.LocalHospital">Medical</MudNavLink>
+                <MudNavLink Href="/travel/approvals" Icon="@Icons.Material.Filled.Flight">Travel</MudNavLink>
+                <MudNavLink Href="/out-of-station/approvals" Icon="@Icons.Material.Filled.FlightTakeoff">Out of Station</MudNavLink>
+                <MudNavLink Href="/transfer/approvals" Icon="@Icons.Material.Filled.SwapHoriz">Transfers</MudNavLink>
+                <MudNavLink Href="/admin/profile-changes" Icon="@Icons.Material.Filled.ManageAccounts">Profile Changes</MudNavLink>
+            </MudNavGroup>
+        </Authorized>
+    </AuthorizeView>
+
+    <!-- ═══════════════════ PEOPLE (HR/Managers) ═══════════════════ -->
+    <AuthorizeView Roles="@RoleSets.HRStaffOrDeptManager">
+        <Authorized>
+            <MudNavGroup Title="People" Icon="@Icons.Material.Filled.People" Expanded="false">
+                <MudNavLink Href="/employees" Icon="@Icons.Material.Filled.List">Employee List</MudNavLink>
+                <MudNavLink Href="/employees/create" Icon="@Icons.Material.Filled.PersonAdd">Add Employee</MudNavLink>
+                <MudNavLink Href="/employees/org-chart" Icon="@Icons.Material.Filled.AccountTree">Org Chart</MudNavLink>
+                <MudNavLink Href="/departments" Icon="@Icons.Material.Filled.CorporateFare">Departments</MudNavLink>
+                <MudNavLink Href="/designations" Icon="@Icons.Material.Filled.Badge">Designations</MudNavLink>
+                <MudNavLink Href="/grades" Icon="@Icons.Material.Filled.Stairs">Grades</MudNavLink>
+                <MudNavLink Href="/locations" Icon="@Icons.Material.Filled.LocationOn">Locations</MudNavLink>
+                <MudNavLink Href="/transfer/initiate" Icon="@Icons.Material.Filled.SwapHoriz">Transfer/Promotion</MudNavLink>
+                <MudNavLink Href="/transfer/history" Icon="@Icons.Material.Filled.History">Transfer History</MudNavLink>
+                <MudNavLink Href="/probation" Icon="@Icons.Material.Filled.AssignmentLate">Probation Reviews</MudNavLink>
+                <MudNavLink Href="/succession" Icon="@Icons.Material.Filled.Stairs">Succession Planning</MudNavLink>
+            </MudNavGroup>
+
+            <MudNavGroup Title="Performance & Training" Icon="@Icons.Material.Filled.TrendingUp" Expanded="false">
+                <MudNavLink Href="/performance/goals" Icon="@Icons.Material.Filled.Flag">Goals & OKRs</MudNavLink>
+                <MudNavLink Href="/performance/appraisals" Icon="@Icons.Material.Filled.RateReview">Appraisals</MudNavLink>
+                <MudNavLink Href="/performance/pips" Icon="@Icons.Material.Filled.Warning">PIPs</MudNavLink>
+                <MudNavLink Href="/meetings/one-on-one" Icon="@Icons.Material.Filled.PeopleAlt">1-on-1 Meetings</MudNavLink>
+                <MudNavLink Href="/training/programs" Icon="@Icons.Material.Filled.MenuBook">Training Programs</MudNavLink>
+                <MudNavLink Href="/training/skills" Icon="@Icons.Material.Filled.Psychology">Skills Matrix</MudNavLink>
+            </MudNavGroup>
+
+            <MudNavGroup Title="Recruitment" Icon="@Icons.Material.Filled.WorkOutline" Expanded="false">
+                <MudNavLink Href="/recruitment/requisitions" Icon="@Icons.Material.Filled.Description">Job Requisitions</MudNavLink>
+                <MudNavLink Href="/recruitment/applications" Icon="@Icons.Material.Filled.Assignment">Applications</MudNavLink>
+                <MudNavLink Href="/recruitment/interviews" Icon="@Icons.Material.Filled.Groups">Interviews</MudNavLink>
+                <MudNavLink Href="/recruitment/offers" Icon="@Icons.Material.Filled.LocalOffer">Offers</MudNavLink>
+                <MudNavLink Href="/recruitment/onboarding" Icon="@Icons.Material.Filled.FlightTakeoff">Onboarding</MudNavLink>
+            </MudNavGroup>
+        </Authorized>
+    </AuthorizeView>
+
+    <!-- ═══════════════════ DISCIPLINE & EXIT (HR Only) ═══════════════════ -->
+    <AuthorizeView Roles="@RoleSets.HRStaff">
+        <Authorized>
+            <MudNavGroup Title="Discipline & Exit" Icon="@Icons.Material.Filled.Gavel" Expanded="false">
+                <MudNavLink Href="/discipline/cases" Icon="@Icons.Material.Filled.Report">Disciplinary Cases</MudNavLink>
+                <MudNavLink Href="/discipline/grievances" Icon="@Icons.Material.Filled.Feedback">Grievances</MudNavLink>
+                <MudNavLink Href="/exit/separations" Icon="@Icons.Material.Filled.PersonRemove">Separations</MudNavLink>
+                <MudNavLink Href="/exit/clearance" Icon="@Icons.Material.Filled.CheckCircle">Clearance</MudNavLink>
+            </MudNavGroup>
+        </Authorized>
+    </AuthorizeView>
+
+    <!-- ═══════════════════ PAYROLL & FINANCE (Payroll/HR) ═══════════════════ -->
+    <AuthorizeView Roles="@RoleSets.SeniorHROrPayroll">
+        <Authorized>
+            <MudNavGroup Title="Payroll" Icon="@Icons.Material.Filled.Payments" Expanded="false">
+                <MudNavLink Href="/payroll/run" Icon="@Icons.Material.Filled.PlayCircle">Run Payroll</MudNavLink>
+                <MudNavLink Href="/payroll/history" Icon="@Icons.Material.Filled.History">Payroll History</MudNavLink>
+                <MudNavLink Href="/payroll/salary-components" Icon="@Icons.Material.Filled.Settings">Salary Components</MudNavLink>
+                <MudNavLink Href="/payroll/loans" Icon="@Icons.Material.Filled.AccountBalance">Loans & Advances</MudNavLink>
+                <MudNavLink Href="/payroll/reports" Icon="@Icons.Material.Filled.Assessment">SSNIT/PAYE/Pension</MudNavLink>
+                <MudNavLink Href="/out-of-station/rates" Icon="@Icons.Material.Filled.Tune">Out of Station Rates</MudNavLink>
+                <MudNavLink Href="/medical/policy" Icon="@Icons.Material.Filled.Policy">Medical Policy</MudNavLink>
+                <MudNavLink Href="/leave/policies" Icon="@Icons.Material.Filled.Policy">Leave Policies</MudNavLink>
+            </MudNavGroup>
+        </Authorized>
+    </AuthorizeView>
+
+    <!-- ═══════════════════ REPORTS & ANALYTICS (HR/Managers) ═══════════════════ -->
+    <AuthorizeView Roles="@RoleSets.SeniorHR">
+        <Authorized>
+            <MudNavGroup Title="Reports & Analytics" Icon="@Icons.Material.Filled.Assessment" Expanded="false">
+                <MudNavLink Href="/reports/headcount" Icon="@Icons.Material.Filled.PeopleAlt">Headcount</MudNavLink>
+                <MudNavLink Href="/reports/payroll" Icon="@Icons.Material.Filled.RequestQuote">Payroll Summary</MudNavLink>
+                <MudNavLink Href="/reports/leave" Icon="@Icons.Material.Filled.EventBusy">Leave Report</MudNavLink>
+                <MudNavLink Href="/reports/attrition" Icon="@Icons.Material.Filled.TrendingDown">Attrition</MudNavLink>
+                <MudNavLink Href="/reports/custom" Icon="@Icons.Material.Filled.TableChart">Custom Report</MudNavLink>
+                <MudNavLink Href="/analytics/demographics" Icon="@Icons.Material.Filled.PieChart">Demographics</MudNavLink>
+                <MudNavLink Href="/analytics/turnover" Icon="@Icons.Material.Filled.TrendingDown">Turnover Prediction</MudNavLink>
+                <MudNavLink Href="/analytics/compensation" Icon="@Icons.Material.Filled.BarChart">Compensation</MudNavLink>
+                <MudNavLink Href="/analytics/cost" Icon="@Icons.Material.Filled.AttachMoney">Cost Analytics</MudNavLink>
+                <MudNavLink Href="/wellness" Icon="@Icons.Material.Filled.HealthAndSafety">Wellness</MudNavLink>
+                <MudNavLink Href="/compliance" Icon="@Icons.Material.Filled.Gavel">Compliance Calendar</MudNavLink>
+                <MudNavLink Href="/attendance/reports" Icon="@Icons.Material.Filled.BarChart">Attendance Reports</MudNavLink>
+                <MudNavLink Href="/excuse-duty/report" Icon="@Icons.Material.Filled.Assessment">Excuse Duty Report</MudNavLink>
+                <MudNavLink Href="/letters/generate" Icon="@Icons.Material.Filled.Description">Letter Generator</MudNavLink>
+            </MudNavGroup>
+        </Authorized>
+    </AuthorizeView>
+
+    <!-- ═══════════════════ ADMIN (SuperAdmin Only) ═══════════════════ -->
+    <AuthorizeView Roles="@RoleSets.SuperAdminOnly">
+        <Authorized>
+            <MudNavGroup Title="Admin" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="false">
+                <MudNavLink Href="/admin/users" Icon="@Icons.Material.Filled.ManageAccounts">Users & Roles</MudNavLink>
+                <MudNavLink Href="/admin/settings" Icon="@Icons.Material.Filled.Settings">Company Settings</MudNavLink>
+                <MudNavLink Href="/admin/workflows" Icon="@Icons.Material.Filled.AccountTree">Workflows</MudNavLink>
+                <MudNavLink Href="/admin/email-templates" Icon="@Icons.Material.Filled.Email">Email Templates</MudNavLink>
+                <MudNavLink Href="/admin/audit-logs" Icon="@Icons.Material.Filled.Security">Audit Logs</MudNavLink>
+                <MudNavLink Href="/admin/holidays" Icon="@Icons.Material.Filled.Celebration">Public Holidays</MudNavLink>
+                <MudNavLink Href="/admin/import" Icon="@Icons.Material.Filled.FileUpload">Import Data</MudNavLink>
+                <MudNavLink Href="/admin/bulk-operations" Icon="@Icons.Material.Filled.DynamicFeed">Bulk Operations</MudNavLink>
+                <MudNavLink Href="/assets" Icon="@Icons.Material.Filled.Inventory2">Asset Management</MudNavLink>
+                <MudNavLink Href="/settings/delegation" Icon="@Icons.Material.Filled.SwapHoriz">Delegation</MudNavLink>
+                <MudNavLink Href="/admin/sms-settings" Icon="@Icons.Material.Filled.Sms">SMS Settings</MudNavLink>
+                <MudNavLink Href="/admin/biometric" Icon="@Icons.Material.Filled.Fingerprint">Biometric API</MudNavLink>
+                <MudNavLink Href="/attendance/shifts" Icon="@Icons.Material.Filled.Schedule">Shift Management</MudNavLink>
+                <MudNavLink Href="/attendance/qr-generate" Icon="@Icons.Material.Filled.QrCode">QR Generate</MudNavLink>
+                <MudNavLink Href="/surveys/create" Icon="@Icons.Material.Filled.AddChart">Create Survey</MudNavLink>
+                <MudNavLink Href="/projects" Icon="@Icons.Material.Filled.Folder">Projects</MudNavLink>
+                <MudNavLink Href="/notifications" Icon="@Icons.Material.Filled.Notifications">Notifications</MudNavLink>
+            </MudNavGroup>
+        </Authorized>
+    </AuthorizeView>
+</MudNavMenu>

@@ -1,0 +1,273 @@
+@page "/reports/attrition"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Exit
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Attrition Report</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Attrition Report</MudText>
+
+<!-- Year Selector -->
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" Label="Year" @bind-Value="_selectedYear" Dense="true">
+                    @for (int y = DateTime.Now.Year; y >= DateTime.Now.Year - 5; y--)
+                    {
+                        var year = y;
+                        <MudSelectItem T="int" Value="@year">@year</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" md="3">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadReport" StartIcon="@Icons.Material.Filled.Search">Generate</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else
+{
+    <!-- Summary Cards -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Error" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                        <MudIcon Icon="@Icons.Material.Filled.ExitToApp" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_totalExits</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Total Exits</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Warning" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                        <MudIcon Icon="@Icons.Material.Filled.Percent" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_attritionRate.ToString("F1")%</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Attrition Rate</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Info" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                        <MudIcon Icon="@Icons.Material.Filled.QuestionAnswer" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h5">@_mostCommonReason</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Most Common Reason</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Success" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                        <MudIcon Icon="@Icons.Material.Filled.Schedule" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_avgTenureLeavers.ToString("F1") yrs</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Avg Tenure of Leavers</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Charts -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" md="4">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent><MudText Typo="Typo.h6">Exits by Type</MudText></CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent Class="d-flex justify-center">
+                    @if (_totalExits > 0)
+                    {
+                        <MudChart ChartType="ChartType.Pie" InputData="@_sepTypeChartData" InputLabels="@_sepTypeLabels" Width="220px" Height="220px" />
+                    }
+                    else { <MudText Color="Color.Secondary" Class="pa-4">No exits in @_selectedYear.</MudText> }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent><MudText Typo="Typo.h6">Monthly Exit Trend</MudText></CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    @if (_totalExits > 0)
+                    {
+                        <MudChart ChartType="ChartType.Bar" ChartSeries="@_monthlyChartSeries" XAxisLabels="@_monthlyLabels"
+                                  Width="100%" Height="280px" ChartOptions="@(new ChartOptions { YAxisTicks = 1 })" />
+                    }
+                    else { <MudText Color="Color.Secondary" Class="pa-4">No exits in @_selectedYear.</MudText> }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Separations Table -->
+    <MudCard Elevation="2">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">Separations — @_selectedYear</MudText>
+            </CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@_sepRows" Dense="true" Hover="true" Striped="true" T="SepRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SepRow, object>(x => x.EmployeeName)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SepRow, object>(x => x.Department)">Department</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SepRow, object>(x => x.SeparationType)">Type</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SepRow, object>(x => x.LastWorkingDate)">Last Working Date</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SepRow, object>(x => x.TenureYears)">Tenure (yrs)</MudTableSortLabel></MudTh>
+                    <MudTh>Reason</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">@context.EmployeeName</MudTd>
+                    <MudTd DataLabel="Department">@context.Department</MudTd>
+                    <MudTd DataLabel="Type">
+                        <MudChip T="string" Size="Size.Small" Color="@GetSepTypeColor(context.SeparationType)">@context.SeparationType</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Last Working Date">@context.LastWorkingDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Tenure">@context.TenureYears.ToString("F1")</MudTd>
+                    <MudTd DataLabel="Reason">@(string.IsNullOrWhiteSpace(context.Reason) ? "—" : context.Reason)</MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No separations recorded for @_selectedYear.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isLoading = true;
+    private int _selectedYear = DateTime.Now.Year;
+
+    private int _totalExits;
+    private double _attritionRate;
+    private string _mostCommonReason = "—";
+    private double _avgTenureLeavers;
+
+    private double[] _sepTypeChartData = Array.Empty<double>();
+    private string[] _sepTypeLabels = Array.Empty<string>();
+    private List<ChartSeries> _monthlyChartSeries = new();
+    private string[] _monthlyLabels = new[] { "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" };
+
+    private List<SepRow> _sepRows = new();
+
+    protected override async Task OnInitializedAsync() => await LoadReport();
+
+    private async Task LoadReport()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var seps = await db.Separations
+                .Include(s => s.Employee).ThenInclude(e => e.Department)
+                .Where(s => s.LastWorkingDate.Year == _selectedYear)
+                .OrderByDescending(s => s.LastWorkingDate)
+                .ToListAsync();
+
+            _totalExits = seps.Count;
+
+            // Attrition rate: exits / avg headcount * 100
+            var activeStatuses = new[] { EmploymentStatus.Active, EmploymentStatus.Confirmed, EmploymentStatus.OnProbation };
+            var activeCount = await db.Employees.CountAsync(e => activeStatuses.Contains(e.EmploymentStatus));
+            var avgHeadcount = activeCount + _totalExits / 2.0;
+            _attritionRate = avgHeadcount > 0 ? (_totalExits / avgHeadcount) * 100 : 0;
+
+            // Most common reason (by SeparationType)
+            var typeGroups = seps.GroupBy(s => s.SeparationType.ToString())
+                .Select(g => (Type: g.Key, Count: g.Count())).OrderByDescending(x => x.Count).ToList();
+            _mostCommonReason = typeGroups.FirstOrDefault().Type ?? "—";
+
+            // Avg tenure
+            var tenures = seps.Where(s => s.Employee.HireDate.HasValue).Select(s => (s.LastWorkingDate - s.Employee.HireDate!.Value).TotalDays / 365.25).ToList();
+            _avgTenureLeavers = tenures.Any() ? tenures.Average() : 0;
+
+            // Pie chart
+            _sepTypeChartData = typeGroups.Select(t => (double)t.Count).ToArray();
+            _sepTypeLabels = typeGroups.Select(t => $"{t.Type} ({t.Count})").ToArray();
+
+            // Monthly trend
+            var monthlyCounts = new double[12];
+            foreach (var s in seps)
+                monthlyCounts[s.LastWorkingDate.Month - 1]++;
+            _monthlyChartSeries = new List<ChartSeries>
+            {
+                new ChartSeries { Name = "Exits", Data = monthlyCounts }
+            };
+
+            _sepRows = seps.Select(s => new SepRow
+            {
+                EmployeeName = $"{s.Employee.FirstName} {s.Employee.LastName}",
+                Department = s.Employee.Department?.Name ?? "—",
+                SeparationType = s.SeparationType.ToString(),
+                LastWorkingDate = s.LastWorkingDate,
+                TenureYears = s.Employee.HireDate.HasValue ? (s.LastWorkingDate - s.Employee.HireDate.Value).TotalDays / 365.25 : 0,
+                Reason = s.Reason
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading attrition report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private Color GetSepTypeColor(string type) => type switch
+    {
+        "Resignation" => Color.Warning,
+        "Termination" => Color.Error,
+        "Retirement" => Color.Info,
+        "ContractEnd" => Color.Secondary,
+        "Redundancy" => Color.Dark,
+        _ => Color.Default
+    };
+
+    private class SepRow
+    {
+        public string EmployeeName { get; set; } = string.Empty;
+        public string Department { get; set; } = string.Empty;
+        public string SeparationType { get; set; } = string.Empty;
+        public DateTime LastWorkingDate { get; set; }
+        public double TenureYears { get; set; }
+        public string? Reason { get; set; }
+    }
+}

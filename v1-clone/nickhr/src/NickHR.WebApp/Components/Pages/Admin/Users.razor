@@ -1,0 +1,458 @@
+@page "/admin/users"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SuperAdminOnly)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Interfaces
+@using NickHR.Services.Common
+@using NickHR.Services.SystemAccess
+@using NickHR.Core.Constants
+@using NickHR.WebApp.Services
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+@inject IIdentityProvisioningService Provisioning
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Users & Roles</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Users & Roles</MudText>
+
+<!-- Filter Bar -->
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="5">
+                <MudTextField @bind-Value="_searchText" Label="Search (email / name)" Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" Dense="true"
+                              OnClearButtonClick="@(() => { _searchText = string.Empty; })" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudSelect T="string?" Label="Role Filter" @bind-Value="_roleFilter" Clearable="true" Dense="true">
+                    @foreach (var r in _roles)
+                    {
+                        <MudSelectItem T="string?" Value="@r">@r</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" Class="d-flex justify-end gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PersonAdd"
+                           OnClick="OpenCreateDialog">
+                    Create User
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else
+{
+    <MudCard Elevation="2">
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@FilteredUsers" Dense="true" Hover="true" Striped="true" T="UserRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<UserRow, object>(x => x.Email)">Email</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<UserRow, object>(x => x.FullName)">Full Name</MudTableSortLabel></MudTh>
+                    <MudTh>Role</MudTh>
+                    <MudTh>Systems</MudTh>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Active</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<UserRow, object>(x => x.LastLogin ?? DateTime.MinValue)">Last Login</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<UserRow, object>(x => x.CreatedAt)">Created</MudTableSortLabel></MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Email">@context.Email</MudTd>
+                    <MudTd DataLabel="Full Name">@context.FullName</MudTd>
+                    <MudTd DataLabel="Role">
+                        @if (!string.IsNullOrEmpty(context.Role))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="@GetRoleColor(context.Role)">@context.Role</MudChip>
+                        }
+                        else { <MudText Typo="Typo.caption" Color="Color.Secondary">No role</MudText> }
+                    </MudTd>
+                    <MudTd DataLabel="Systems">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">NickHR</MudChip>
+                        @if (context.HasNscisAccess)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined" Class="ml-1">
+                                <MudIcon Icon="@Icons.Material.Filled.Scanner" Size="Size.Small" Class="mr-1" /> NSCIS
+                            </MudChip>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Employee">@(context.EmployeeName ?? "—")</MudTd>
+                    <MudTd DataLabel="Active">
+                        @if (context.IsActive)
+                        { <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip> }
+                        else
+                        { <MudChip T="string" Size="Size.Small" Color="Color.Error">Inactive</MudChip> }
+                    </MudTd>
+                    <MudTd DataLabel="Last Login">@(context.LastLogin?.ToString("dd MMM yyyy HH:mm") ?? "Never")</MudTd>
+                    <MudTd DataLabel="Created">@context.CreatedAt.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning"
+                                       title="Edit" OnClick="@(() => OpenEditDialog(context.Id))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Security" Size="Size.Small" Color="Color.Primary"
+                                       title="Module access (NickFinance roles)" OnClick="@(() => OpenModuleAccessDialog(context))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.LockReset" Size="Size.Small" Color="Color.Info"
+                                       title="Reset Password" OnClick="@(() => ResetPassword(context))" />
+                        @if (context.LastLogin == null)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.ForwardToInbox" Size="Size.Small" Color="Color.Tertiary"
+                                           title="Resend Invitation" OnClick="@(() => ResendInvitation(context))" />
+                        }
+                        <MudIconButton Icon="@(context.IsActive ? Icons.Material.Filled.PersonOff : Icons.Material.Filled.Person)"
+                                       Size="Size.Small" Color="@(context.IsActive ? Color.Error : Color.Success)"
+                                       title="@(context.IsActive ? "Deactivate" : "Activate")"
+                                       OnClick="@(() => ToggleActive(context))" />
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No users found.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isLoading = true;
+    private string _searchText = string.Empty;
+    private string? _roleFilter;
+    private List<UserRow> _users = new();
+    private List<string> _roles = new();
+
+    private IEnumerable<UserRow> FilteredUsers => _users
+        .Where(u => (string.IsNullOrEmpty(_searchText) ||
+                    u.Email.Contains(_searchText, StringComparison.OrdinalIgnoreCase) ||
+                    u.FullName.Contains(_searchText, StringComparison.OrdinalIgnoreCase)) &&
+                   (string.IsNullOrEmpty(_roleFilter) || u.Role == _roleFilter));
+
+    protected override async Task OnInitializedAsync() => await LoadUsers();
+
+    private async Task LoadUsers()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+            _roles = db.Roles.Select(r => r.Name!).Where(n => n != null).OrderBy(n => n).ToList();
+
+            var users = await db.Users.OrderBy(u => u.Email).ToListAsync();
+
+            // Preload all active NSCIS access records
+            var nscisUserIds = await db.UserSystemAccesses
+                .Where(a => a.SystemName == SystemAccessService.SystemNameNscis && a.IsActive)
+                .Select(a => a.UserId)
+                .ToListAsync();
+            var nscisSet = new HashSet<string>(nscisUserIds);
+
+            var rows = new List<UserRow>();
+            foreach (var u in users)
+            {
+                var roles = await userManager.GetRolesAsync(u);
+                string? empName = null;
+                if (u.EmployeeId.HasValue)
+                {
+                    var emp = await db.Employees.FindAsync(u.EmployeeId.Value);
+                    empName = emp != null ? $"{emp.FirstName} {emp.LastName}" : null;
+                }
+                rows.Add(new UserRow
+                {
+                    Id = u.Id,
+                    Email = u.Email ?? string.Empty,
+                    FullName = u.FullName,
+                    Role = roles.FirstOrDefault() ?? string.Empty,
+                    EmployeeName = empName,
+                    IsActive = u.IsActive,
+                    LastLogin = u.LastLoginAt,
+                    CreatedAt = u.CreatedAt,
+                    HasNscisAccess = nscisSet.Contains(u.Id)
+                });
+            }
+            _users = rows;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading users: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var parameters = new DialogParameters<UserDialog> { { x => x.UserId, null } };
+        var dialog = await DialogService.ShowAsync<UserDialog>("Create User", parameters, options);
+        if (!(await dialog.Result)?.Canceled ?? false) await LoadUsers();
+    }
+
+    /// <summary>
+    /// W3B (2026-04-29): opens the shared <c>ModuleAccessPanel</c> for this
+    /// user. Even non-employee admins (auditors, finance leads not on the
+    /// payroll) get a row in <c>identity.users</c> via this flow, so HR
+    /// is the system-of-record for every NickERP-app user.
+    /// </summary>
+    private async Task OpenModuleAccessDialog(UserRow row)
+    {
+        if (string.IsNullOrWhiteSpace(row.Email))
+        {
+            Snackbar.Add("This user has no email; module access cannot be provisioned.", Severity.Warning);
+            return;
+        }
+
+        var grantedBy = await ResolveCurrentAdminUserIdAsync();
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var parameters = new DialogParameters<ModuleAccessDialog>
+        {
+            { x => x.Email, row.Email },
+            { x => x.DisplayName, string.IsNullOrWhiteSpace(row.FullName) ? row.Email : row.FullName },
+            { x => x.GrantedByUserId, grantedBy },
+        };
+        var dialog = await DialogService.ShowAsync<ModuleAccessDialog>("Module access — NickFinance", parameters, options);
+        await dialog.Result;
+        await LoadUsers();
+    }
+
+    /// <summary>
+    /// Resolve the current cookie-authenticated admin's identity.users id.
+    /// Auto-provisions a row for the admin if one doesn't already exist
+    /// — the admin is themselves a NickERP-platform user.
+    /// </summary>
+    private async Task<Guid> ResolveCurrentAdminUserIdAsync()
+    {
+        try
+        {
+            var state = await AuthStateProvider.GetAuthenticationStateAsync();
+            var email = state.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                       ?? state.User.FindFirst("email")?.Value
+                       ?? state.User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(email)) return Guid.Empty;
+
+            var existing = await Provisioning.GetUserIdByEmailAsync(email, tenantId: 1L);
+            if (existing is not null) return existing.Value;
+
+            using var scope = ServiceProvider.CreateScope();
+            var userManager = scope.ServiceProvider.GetService<UserManager<ApplicationUser>>();
+            var displayName = email;
+            if (userManager is not null)
+            {
+                var u = await userManager.FindByEmailAsync(email);
+                if (u is not null && !string.IsNullOrWhiteSpace(u.FullName))
+                {
+                    displayName = u.FullName;
+                }
+            }
+            return await Provisioning.ProvisionEmployeeAsync(email, displayName, tenantId: 1L);
+        }
+        catch
+        {
+            return Guid.Empty;
+        }
+    }
+
+    private async Task OpenEditDialog(string id)
+    {
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var parameters = new DialogParameters<UserDialog> { { x => x.UserId, id } };
+        var dialog = await DialogService.ShowAsync<UserDialog>("Edit User", parameters, options);
+        if (!(await dialog.Result)?.Canceled ?? false) await LoadUsers();
+    }
+
+    private async Task ResetPassword(UserRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Reset Password",
+            $"Reset password for {row.Email}? A new temporary password will be generated and the user will be required to change it on next login.",
+            yesText: "Reset", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = await userManager.FindByIdAsync(row.Id);
+            if (user == null) { Snackbar.Add("User not found.", Severity.Error); return; }
+
+            // Generate random temporary password
+            var tempPassword = GenerateTemporaryPassword();
+            var token = await userManager.GeneratePasswordResetTokenAsync(user);
+            var result = await userManager.ResetPasswordAsync(user, token, tempPassword);
+            if (!result.Succeeded) { Snackbar.Add(string.Join("; ", result.Errors.Select(e => e.Description)), Severity.Error); return; }
+
+            // Set forced change flag
+            user.MustChangePassword = true;
+            await userManager.UpdateAsync(user);
+
+            // Send email notification
+            try
+            {
+                var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+                var loginUrl = Navigation.BaseUri.TrimEnd('/') + "/login";
+                var mergeFields = new Dictionary<string, string>
+                {
+                    { "EmployeeName", $"{user.FirstName} {user.LastName}" },
+                    { "Email", user.Email ?? row.Email },
+                    { "TempPassword", tempPassword },
+                    { "LoginUrl", loginUrl },
+                    { "CompanyName", "NickHR" }
+                };
+                await emailService.SendTemplatedAsync(user.Email ?? row.Email, "USER_INVITATION", mergeFields);
+                Snackbar.Add($"Password reset. Email sent to {row.Email}.", Severity.Success);
+            }
+            catch
+            {
+                Snackbar.Add($"Password reset but email could not be sent.", Severity.Warning);
+            }
+
+            // Show temp password so admin can share manually if needed
+            Snackbar.Add($"Temporary password: {tempPassword}", Severity.Info,
+                config => { config.VisibleStateDuration = 30000; config.ShowCloseIcon = true; });
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private static string GenerateTemporaryPassword()
+    {
+        const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+        const string lower = "abcdefghjkmnpqrstuvwxyz";
+        const string digits = "23456789";
+        const string special = "!@#$%";
+        var rng = new Random();
+        var chars = new List<char>
+        {
+            upper[rng.Next(upper.Length)], upper[rng.Next(upper.Length)],
+            lower[rng.Next(lower.Length)], lower[rng.Next(lower.Length)], lower[rng.Next(lower.Length)],
+            digits[rng.Next(digits.Length)], digits[rng.Next(digits.Length)],
+            special[rng.Next(special.Length)]
+        };
+        for (int i = chars.Count - 1; i > 0; i--) { int j = rng.Next(i + 1); (chars[i], chars[j]) = (chars[j], chars[i]); }
+        return "NHR-" + new string(chars.ToArray());
+    }
+
+    private async Task ResendInvitation(UserRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Resend Invitation",
+            $"Resend invitation email to {row.Email}? A new temporary password will be generated.",
+            yesText: "Send", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = await userManager.FindByIdAsync(row.Id);
+            if (user == null) { Snackbar.Add("User not found.", Severity.Error); return; }
+
+            if (user.LastLoginAt != null)
+            {
+                Snackbar.Add("This user has already logged in. Use Reset Password instead.", Severity.Warning);
+                return;
+            }
+
+            // Generate a fresh temp password for the invitation
+            var tempPassword = GenerateTemporaryPassword();
+            var token = await userManager.GeneratePasswordResetTokenAsync(user);
+            var result = await userManager.ResetPasswordAsync(user, token, tempPassword);
+            if (!result.Succeeded) { Snackbar.Add(string.Join("; ", result.Errors.Select(e => e.Description)), Severity.Error); return; }
+
+            user.MustChangePassword = true;
+            await userManager.UpdateAsync(user);
+
+            var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+            var loginUrl = Navigation.BaseUri.TrimEnd('/') + "/login";
+            var mergeFields = new Dictionary<string, string>
+            {
+                { "EmployeeName", $"{user.FirstName} {user.LastName}" },
+                { "Email", user.Email ?? row.Email },
+                { "TempPassword", tempPassword },
+                { "LoginUrl", loginUrl },
+                { "CompanyName", "NickHR" }
+            };
+            await emailService.SendTemplatedAsync(user.Email ?? row.Email, "USER_INVITATION", mergeFields);
+            Snackbar.Add($"Invitation email sent to {row.Email}.", Severity.Success);
+
+            Snackbar.Add($"Temporary password: {tempPassword}", Severity.Info,
+                config => { config.VisibleStateDuration = 30000; config.ShowCloseIcon = true; });
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task ToggleActive(UserRow row)
+    {
+        // For simple activate (from inactive) — just a confirmation
+        if (!row.IsActive)
+        {
+            var confirmed = await DialogService.ShowMessageBox("Activate user",
+                $"Are you sure you want to activate {row.Email}? This only affects NickHR access.",
+                "Activate", cancelText: "Cancel");
+            if (confirmed != true) return;
+
+            try
+            {
+                using var scope = ServiceProvider.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+                var user = await db.Users.FindAsync(row.Id);
+                if (user == null) return;
+                user.IsActive = true;
+                await db.SaveChangesAsync();
+                Snackbar.Add("User activated in NickHR.", Severity.Success);
+                await LoadUsers();
+            }
+            catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+            return;
+        }
+
+        // For deactivate — show cascade dialog with per-system checkboxes
+        var parameters = new DialogParameters<DeactivateUserDialog>
+        {
+            { x => x.UserId, row.Id },
+            { x => x.UserEmail, row.Email },
+            { x => x.HasNscisAccess, row.HasNscisAccess }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<DeactivateUserDialog>("Deactivate User", parameters, options);
+        var result = await dialog.Result;
+        if (result == null || result.Canceled) return;
+
+        await LoadUsers();
+    }
+
+    private Color GetRoleColor(string role) => role switch
+    {
+        "SuperAdmin" => Color.Error,
+        "HRManager" => Color.Warning,
+        "Employee" => Color.Primary,
+        _ => Color.Default
+    };
+
+    private class UserRow
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public string? EmployeeName { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime? LastLogin { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public bool HasNscisAccess { get; set; }
+    }
+}

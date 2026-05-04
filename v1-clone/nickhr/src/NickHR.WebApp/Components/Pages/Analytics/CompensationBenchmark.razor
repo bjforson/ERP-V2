@@ -1,0 +1,209 @@
+@page "/analytics/compensation"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHROrPayroll)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Compensation Benchmarking</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.BarChart" Class="mr-2" />Compensation Benchmarking
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else
+{
+    <MudGrid>
+        <!-- Summary -->
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h4">GHS @_totalPayroll.ToString("N0")</MudText>
+                <MudText Typo="Typo.subtitle1">Total Monthly Payroll</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h4">GHS @_avgSalary.ToString("N0")</MudText>
+                <MudText Typo="Typo.subtitle1">Average Salary</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h4">GHS @_medianSalary.ToString("N0")</MudText>
+                <MudText Typo="Typo.subtitle1">Median Salary</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h4">@_employeeCount</MudText>
+                <MudText Typo="Typo.subtitle1">Active Employees</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+
+        <!-- Salary by Grade -->
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Salary by Grade</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudTable Items="_gradeStats" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Grade</MudTh><MudTh>Count</MudTh><MudTh>Min</MudTh><MudTh>Avg</MudTh><MudTh>Max</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Name</MudTd>
+                            <MudTd>@context.Count</MudTd>
+                            <MudTd>GHS @context.Min.ToString("N0")</MudTd>
+                            <MudTd>GHS @context.Avg.ToString("N0")</MudTd>
+                            <MudTd>GHS @context.Max.ToString("N0")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Salary by Department -->
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Salary by Department</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudTable Items="_deptStats" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Department</MudTh><MudTh>Count</MudTh><MudTh>Avg Salary</MudTh><MudTh>Total Cost</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Name</MudTd>
+                            <MudTd>@context.Count</MudTd>
+                            <MudTd>GHS @context.Avg.ToString("N0")</MudTd>
+                            <MudTd>GHS @context.Total.ToString("N0")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Gender Pay Equity -->
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Pay Equity by Gender</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudTable Items="_genderStats" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Gender</MudTh><MudTh>Count</MudTh><MudTh>Avg Salary</MudTh><MudTh>Median</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Name</MudTd>
+                            <MudTd>@context.Count</MudTd>
+                            <MudTd>GHS @context.Avg.ToString("N0")</MudTd>
+                            <MudTd>GHS @context.Median.ToString("N0")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <!-- Salary Outliers -->
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Salary Outliers (Top/Bottom 5)</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Highest Paid</MudText>
+                    <MudSimpleTable Dense="true">
+                        <thead><tr><th>Name</th><th>Department</th><th>Salary</th></tr></thead>
+                        <tbody>
+                            @foreach (var e in _topPaid)
+                            {
+                                <tr><td>@e.Name</td><td>@e.Department</td><td>GHS @e.Salary.ToString("N0")</td></tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">Lowest Paid</MudText>
+                    <MudSimpleTable Dense="true">
+                        <thead><tr><th>Name</th><th>Department</th><th>Salary</th></tr></thead>
+                        <tbody>
+                            @foreach (var e in _bottomPaid)
+                            {
+                                <tr><td>@e.Name</td><td>@e.Department</td><td>GHS @e.Salary.ToString("N0")</td></tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private bool _loading = true;
+    private decimal _totalPayroll, _avgSalary, _medianSalary;
+    private int _employeeCount;
+    private List<SalaryStat> _gradeStats = new(), _deptStats = new(), _genderStats = new();
+    private List<EmployeeSalaryInfo> _topPaid = new(), _bottomPaid = new();
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new("Home", "/"), new("Analytics", null), new("Compensation", null, true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var employees = await db.Employees
+            .Where(e => e.EmploymentStatus == EmploymentStatus.Active)
+            .Include(e => e.Department).Include(e => e.Grade)
+            .ToListAsync();
+
+        _employeeCount = employees.Count;
+        if (_employeeCount > 0)
+        {
+            var salaries = employees.Select(e => e.BasicSalary).OrderBy(s => s).ToList();
+            _totalPayroll = salaries.Sum();
+            _avgSalary = salaries.Average();
+            _medianSalary = salaries[salaries.Count / 2];
+
+            _gradeStats = employees.Where(e => e.Grade != null).GroupBy(e => e.Grade!.Name).Select(g => new SalaryStat
+            {
+                Name = g.Key, Count = g.Count(), Min = g.Min(e => e.BasicSalary),
+                Avg = g.Average(e => e.BasicSalary), Max = g.Max(e => e.BasicSalary)
+            }).OrderBy(s => s.Avg).ToList();
+
+            _deptStats = employees.Where(e => e.Department != null).GroupBy(e => e.Department!.Name).Select(g => new SalaryStat
+            {
+                Name = g.Key, Count = g.Count(), Avg = g.Average(e => e.BasicSalary), Total = g.Sum(e => e.BasicSalary)
+            }).OrderByDescending(s => s.Total).ToList();
+
+            _genderStats = employees.GroupBy(e => e.Gender.ToString()).Select(g =>
+            {
+                var sorted = g.OrderBy(e => e.BasicSalary).Select(e => e.BasicSalary).ToList();
+                return new SalaryStat
+                {
+                    Name = g.Key, Count = g.Count(), Avg = g.Average(e => e.BasicSalary),
+                    Median = sorted[sorted.Count / 2]
+                };
+            }).ToList();
+
+            _topPaid = employees.OrderByDescending(e => e.BasicSalary).Take(5).Select(e => new EmployeeSalaryInfo
+            {
+                Name = $"{e.FirstName} {e.LastName}", Department = e.Department?.Name ?? "N/A", Salary = e.BasicSalary
+            }).ToList();
+
+            _bottomPaid = employees.Where(e => e.BasicSalary > 0).OrderBy(e => e.BasicSalary).Take(5).Select(e => new EmployeeSalaryInfo
+            {
+                Name = $"{e.FirstName} {e.LastName}", Department = e.Department?.Name ?? "N/A", Salary = e.BasicSalary
+            }).ToList();
+        }
+        _loading = false;
+    }
+
+    class SalaryStat { public string Name { get; set; } = ""; public int Count; public decimal Min, Avg, Max, Total, Median; }
+    class EmployeeSalaryInfo { public string Name { get; set; } = ""; public string Department { get; set; } = ""; public decimal Salary; }
+}

@@ -1,0 +1,279 @@
+@page "/transfer/initiate"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+<PageTitle>NICKSCAN ERP — NickHR — Initiate Transfer/Promotion</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Initiate Transfer / Promotion</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12" md="8">
+        <MudCard Elevation="2">
+            <MudCardContent>
+                <MudGrid>
+                    <!-- Employee Selection -->
+                    <MudItem xs="12">
+                        <MudSelect T="int?" @bind-Value="_selectedEmployeeId" Label="Select Employee *"
+                                   Variant="Variant.Outlined" @bind-Value:after="LoadEmployeeDetails"
+                                   SearchFunc="SearchEmployees" ToStringFunc="GetEmployeeName">
+                            @foreach (var emp in _employees)
+                            {
+                                <MudSelectItem Value="@((int?)emp.Id)">
+                                    @emp.FirstName @emp.LastName (@emp.EmployeeCode)
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+
+                    @if (_selectedEmployee != null)
+                    {
+                        <!-- Type -->
+                        <MudItem xs="12">
+                            <MudSelect T="TransferType" @bind-Value="_type" Label="Type *" Variant="Variant.Outlined">
+                                <MudSelectItem Value="TransferType.Transfer">Transfer</MudSelectItem>
+                                <MudSelectItem Value="TransferType.Promotion">Promotion</MudSelectItem>
+                                <MudSelectItem Value="TransferType.Demotion">Demotion</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+
+                        <!-- Effective Date -->
+                        <MudItem xs="12">
+                            <MudDatePicker @bind-Date="_effectiveDate" Label="Effective Date *"
+                                           Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                           MinDate="DateTime.Today" />
+                        </MudItem>
+
+                        <!-- Comparison side by side -->
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.subtitle1" Class="mb-2">Current vs New</MudText>
+                            <MudGrid>
+                                <MudItem xs="12" md="6">
+                                    <MudPaper Elevation="0" Class="pa-3" Style="background-color: var(--mud-palette-background-grey);">
+                                        <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Current</MudText>
+                                        <MudText Typo="Typo.body2"><strong>Dept:</strong> @(_selectedEmployee.Department?.Name ?? "—")</MudText>
+                                        <MudText Typo="Typo.body2"><strong>Designation:</strong> @(_selectedEmployee.Designation?.Title ?? "—")</MudText>
+                                        <MudText Typo="Typo.body2"><strong>Grade:</strong> @(_selectedEmployee.Grade?.Name ?? "—")</MudText>
+                                        <MudText Typo="Typo.body2"><strong>Location:</strong> @(_selectedEmployee.Location?.Name ?? "—")</MudText>
+                                        <MudText Typo="Typo.body2"><strong>Salary:</strong> GHS @_selectedEmployee.BasicSalary.ToString("N2")</MudText>
+                                    </MudPaper>
+                                </MudItem>
+                                <MudItem xs="12" md="6">
+                                    <MudPaper Elevation="0" Class="pa-3" Style="border: 1px solid var(--mud-palette-primary);">
+                                        <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mb-2">New</MudText>
+                                        <MudSelect T="int?" @bind-Value="_toDepartmentId" Label="Department"
+                                                   Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                            @foreach (var d in _departments)
+                                            {
+                                                <MudSelectItem Value="@((int?)d.Id)">@d.Name</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                        <MudSelect T="int?" @bind-Value="_toDesignationId" Label="Designation"
+                                                   Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                            @foreach (var d in _designations)
+                                            {
+                                                <MudSelectItem Value="@((int?)d.Id)">@d.Title</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                        <MudSelect T="int?" @bind-Value="_toGradeId" Label="Grade"
+                                                   Variant="Variant.Outlined" Dense="true" Class="mb-1">
+                                            @foreach (var g in _grades)
+                                            {
+                                                <MudSelectItem Value="@((int?)g.Id)">@g.Name</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                        <MudSelect T="int?" @bind-Value="_toLocationId" Label="Location"
+                                                   Variant="Variant.Outlined" Dense="true" Class="mb-1" Clearable="true">
+                                            @foreach (var l in _locations)
+                                            {
+                                                <MudSelectItem Value="@((int?)l.Id)">@l.Name</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                        <MudNumericField T="decimal" @bind-Value="_newSalary" Label="New Salary (GHS)"
+                                                         Variant="Variant.Outlined" Dense="true" Format="N2" Min="0" />
+                                    </MudPaper>
+                                </MudItem>
+                            </MudGrid>
+                        </MudItem>
+
+                        @if (_newSalary > 0 && _selectedEmployee.BasicSalary > 0)
+                        {
+                            <MudItem xs="12">
+                                @{
+                                    var diff = _newSalary - _selectedEmployee.BasicSalary;
+                                    var pct = (_selectedEmployee.BasicSalary > 0) ? diff / _selectedEmployee.BasicSalary * 100 : 0;
+                                    var salaryColor = diff > 0 ? Color.Success : diff < 0 ? Color.Error : Color.Default;
+                                }
+                                <MudAlert Severity="@(diff >= 0 ? Severity.Info : Severity.Warning)">
+                                    Salary change: <strong>@(diff >= 0 ? "+" : "")GHS @diff.ToString("N2")</strong>
+                                    (@(pct >= 0 ? "+" : "")@pct.ToString("F1")%)
+                                </MudAlert>
+                            </MudItem>
+                        }
+
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_reason" Label="Reason *" Variant="Variant.Outlined"
+                                          Lines="3" Required="true" />
+                        </MudItem>
+
+                        <MudItem xs="12" Class="d-flex justify-end gap-2">
+                            <MudButton Variant="Variant.Outlined" Href="/transfer/approvals">Cancel</MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                       OnClick="HandleSubmit" Disabled="_isSubmitting"
+                                       StartIcon="@Icons.Material.Filled.Send">
+                                Submit
+                            </MudButton>
+                        </MudItem>
+                    }
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private List<Employee> _employees = new();
+    private List<Department> _departments = new();
+    private List<Designation> _designations = new();
+    private List<Grade> _grades = new();
+    private List<Location> _locations = new();
+
+    private int? _selectedEmployeeId;
+    private Employee? _selectedEmployee;
+    private TransferType _type = TransferType.Transfer;
+    private DateTime? _effectiveDate = DateTime.Today.AddDays(14);
+    private int? _toDepartmentId;
+    private int? _toDesignationId;
+    private int? _toGradeId;
+    private int? _toLocationId;
+    private decimal _newSalary;
+    private string _reason = string.Empty;
+    private bool _isSubmitting;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Transfers", href: "/transfer/approvals"),
+        new BreadcrumbItem("Initiate", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        _employees = await db.Employees
+            .Where(e => !e.IsDeleted)
+            .OrderBy(e => e.FirstName)
+            .ToListAsync();
+
+        _departments = await db.Departments.Where(d => d.IsActive).OrderBy(d => d.Name).ToListAsync();
+        _designations = await db.Designations.Where(d => d.IsActive).OrderBy(d => d.Title).ToListAsync();
+        _grades = await db.Grades.Where(g => g.IsActive).OrderBy(g => g.Name).ToListAsync();
+        _locations = await db.Locations.Where(l => l.IsActive).OrderBy(l => l.Name).ToListAsync();
+    }
+
+    private async Task LoadEmployeeDetails()
+    {
+        if (_selectedEmployeeId == null) { _selectedEmployee = null; return; }
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        _selectedEmployee = await db.Employees
+            .Include(e => e.Department)
+            .Include(e => e.Designation)
+            .Include(e => e.Grade)
+            .Include(e => e.Location)
+            .FirstOrDefaultAsync(e => e.Id == _selectedEmployeeId.Value);
+
+        if (_selectedEmployee != null)
+        {
+            _toDepartmentId = _selectedEmployee.DepartmentId;
+            _toDesignationId = _selectedEmployee.DesignationId;
+            _toGradeId = _selectedEmployee.GradeId;
+            _toLocationId = _selectedEmployee.LocationId;
+            _newSalary = _selectedEmployee.BasicSalary;
+        }
+    }
+
+    private string GetEmployeeName(int? id)
+    {
+        if (id == null) return string.Empty;
+        var emp = _employees.FirstOrDefault(e => e.Id == id);
+        return emp != null ? $"{emp.FirstName} {emp.LastName} ({emp.EmployeeCode})" : string.Empty;
+    }
+
+    private Task<IEnumerable<int?>> SearchEmployees(string? value, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Task.FromResult<IEnumerable<int?>>(_employees.Select(e => (int?)e.Id));
+
+        var filtered = _employees
+            .Where(e => $"{e.FirstName} {e.LastName} {e.EmployeeCode}".Contains(value, StringComparison.OrdinalIgnoreCase))
+            .Select(e => (int?)e.Id);
+        return Task.FromResult(filtered);
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (_selectedEmployee == null || !_effectiveDate.HasValue || string.IsNullOrWhiteSpace(_reason))
+        {
+            Snackbar.Add("Please fill in all required fields.", Severity.Warning);
+            return;
+        }
+        if (_toDepartmentId == null || _toDesignationId == null || _toGradeId == null)
+        {
+            Snackbar.Add("Department, Designation, and Grade are required.", Severity.Warning);
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var transfer = new TransferPromotion
+            {
+                EmployeeId = _selectedEmployee.Id,
+                Type = _type,
+                EffectiveDate = _effectiveDate.Value,
+                FromDepartmentId = _selectedEmployee.DepartmentId ?? _toDepartmentId!.Value,
+                ToDepartmentId = _toDepartmentId!.Value,
+                FromDesignationId = _selectedEmployee.DesignationId ?? _toDesignationId!.Value,
+                ToDesignationId = _toDesignationId!.Value,
+                FromGradeId = _selectedEmployee.GradeId ?? _toGradeId!.Value,
+                ToGradeId = _toGradeId!.Value,
+                FromLocationId = _selectedEmployee.LocationId,
+                ToLocationId = _toLocationId,
+                OldBasicSalary = _selectedEmployee.BasicSalary,
+                NewBasicSalary = _newSalary,
+                Reason = _reason,
+                Status = ApprovalStatus.Pending
+            };
+
+            db.TransferPromotions.Add(transfer);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Transfer/Promotion submitted for approval!", Severity.Success);
+            Navigation.NavigateTo("/transfer/approvals");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

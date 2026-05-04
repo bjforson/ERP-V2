@@ -1,0 +1,302 @@
+@page "/medical/claim"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Medical
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Submit Medical Claim</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Submit Medical Claim</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_employeeId == null && !_isLoadingBalance)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+else
+{
+<MudGrid>
+    <!-- Balance Card -->
+    <MudItem xs="12">
+        <MudCard Elevation="2" Class="mb-2">
+            <MudCardContent>
+                @if (_isLoadingBalance)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else
+                {
+                    <MudGrid Spacing="2" AlignItems="Center">
+                        <MudItem xs="12" sm="4">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Annual Limit</MudText>
+                            <MudText Typo="Typo.h6">GH₵ @_annualLimit.ToString("N2")</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Used This Year</MudText>
+                            <MudText Typo="Typo.h6" Color="Color.Warning">GH₵ @_usedAmount.ToString("N2")</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Remaining</MudText>
+                            <MudText Typo="Typo.h6" Color="@(_remainingAmount > 0 ? Color.Success : Color.Error)">
+                                GH₵ @_remainingAmount.ToString("N2")
+                            </MudText>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudProgressLinear Color="@GetBalanceProgressColor()"
+                                               Value="@GetUsagePercent()" Rounded="true" Size="Size.Medium" />
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                                @GetUsagePercent().ToString("N0")% of annual limit used
+                            </MudText>
+                        </MudItem>
+                    </MudGrid>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Claim Form -->
+    <MudItem xs="12" md="8">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Claim Details</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <EditForm Model="_model" OnValidSubmit="HandleSubmit">
+                    <DataAnnotationsValidator />
+                    <MudGrid>
+                        <MudItem xs="12" sm="6">
+                            <MudSelect T="MedicalClaimCategory" @bind-Value="_model.Category"
+                                       Label="Category *" Variant="Variant.Outlined" Required="true">
+                                @foreach (MedicalClaimCategory cat in Enum.GetValues<MedicalClaimCategory>())
+                                {
+                                    <MudSelectItem Value="cat">@cat.ToString()</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField T="decimal" @bind-Value="_model.ClaimAmount"
+                                             Label="Claim Amount (GH₵) *" Variant="Variant.Outlined"
+                                             Min="1" Max="@_remainingAmount"
+                                             Format="N2" Adornment="Adornment.Start" AdornmentText="GH₵" />
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_model.Description" Label="Description *"
+                                          Variant="Variant.Outlined" Lines="3" Required="true" MaxLength="500"
+                                          HelperText="Describe the medical service/treatment received" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudTextField @bind-Value="_model.ProviderName" Label="Healthcare Provider"
+                                          Variant="Variant.Outlined" MaxLength="200"
+                                          HelperText="Hospital, clinic or pharmacy name" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker @bind-Date="_receiptDate" Label="Receipt Date *"
+                                           Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                                           MaxDate="DateTime.Today" />
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_model.ReceiptPath" Label="Receipt File Path"
+                                          Variant="Variant.Outlined" MaxLength="500"
+                                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.AttachFile"
+                                          HelperText="TODO: File upload coming soon. Enter path or reference number." />
+                        </MudItem>
+
+                        <MudItem xs="12" Class="d-flex justify-end gap-2 mt-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/medical/my-claims">Cancel</MudButton>
+                            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                                       Disabled="@(_isSubmitting || _remainingAmount <= 0)"
+                                       StartIcon="@Icons.Material.Filled.Send">
+                                @if (_isSubmitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+                                Submit Claim
+                            </MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </EditForm>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Info Sidebar -->
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="1">
+            <MudCardContent>
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Claim Guidelines</MudText>
+                <MudList T="string" Dense="true" DisablePadding="true">
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.Info">Submit claims within 60 days of service</MudListItem>
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.Receipt">Attach original receipts</MudListItem>
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.Verified">Claims subject to HR review</MudListItem>
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.Schedule">Processing takes 5-10 business days</MudListItem>
+                </MudList>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+}
+
+@code {
+    private ClaimFormModel _model = new();
+    private DateTime? _receiptDate = DateTime.Today;
+    private bool _isSubmitting = false;
+    private bool _isLoadingBalance = true;
+    private int? _employeeId;
+    private decimal _annualLimit = 2000m;
+    private decimal _usedAmount = 0m;
+    private decimal _remainingAmount = 2000m;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Medical", href: "/medical/my-claims"),
+        new BreadcrumbItem("Submit Claim", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadBalance();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadBalance()
+    {
+        _isLoadingBalance = true;
+        try
+        {
+            _employeeId = await GetCurrentEmployeeIdAsync();
+            if (_employeeId == null) return;
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var activeBenefit = await db.MedicalBenefits
+                .Where(b => b.IsActive)
+                .FirstOrDefaultAsync();
+
+            if (activeBenefit != null)
+                _annualLimit = activeBenefit.AnnualLimit;
+
+            var yearStart = new DateTime(DateTime.Today.Year, 1, 1);
+            _usedAmount = await db.MedicalClaims
+                .Where(c => c.EmployeeId == _employeeId.Value &&
+                            c.ClaimDate >= yearStart &&
+                            (c.Status == MedicalClaimStatus.Approved ||
+                             c.Status == MedicalClaimStatus.PartiallyApproved ||
+                             c.Status == MedicalClaimStatus.Paid))
+                .SumAsync(c => (decimal?)c.ApprovedAmount) ?? 0m;
+
+            _remainingAmount = Math.Max(0, _annualLimit - _usedAmount);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading balance: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoadingBalance = false;
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (_employeeId == null)
+        {
+            Snackbar.Add("Your account is not linked to an employee record. Contact HR.", Severity.Warning);
+            return;
+        }
+        if (!_receiptDate.HasValue)
+        {
+            Snackbar.Add("Please select receipt date", Severity.Warning);
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var claim = new MedicalClaim
+            {
+                EmployeeId = _employeeId.Value,
+                ClaimDate = DateTime.UtcNow,
+                Category = _model.Category,
+                Description = _model.Description,
+                ProviderName = _model.ProviderName,
+                ReceiptDate = _receiptDate.Value,
+                ClaimAmount = _model.ClaimAmount,
+                ApprovedAmount = 0,
+                Status = MedicalClaimStatus.Submitted,
+                ReceiptPaths = string.IsNullOrEmpty(_model.ReceiptPath) ? null : _model.ReceiptPath,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.MedicalClaims.Add(claim);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Medical claim submitted successfully!", Severity.Success);
+            Navigation.NavigateTo("/medical/my-claims");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error submitting claim: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private double GetUsagePercent()
+    {
+        if (_annualLimit == 0) return 0;
+        return (double)(_usedAmount / _annualLimit * 100);
+    }
+
+    private Color GetBalanceProgressColor()
+    {
+        var pct = GetUsagePercent();
+        if (pct < 50) return Color.Success;
+        if (pct < 80) return Color.Warning;
+        return Color.Error;
+    }
+
+    public class ClaimFormModel
+    {
+        public MedicalClaimCategory Category { get; set; } = MedicalClaimCategory.Consultation;
+        public string Description { get; set; } = "";
+        public string? ProviderName { get; set; }
+        public decimal ClaimAmount { get; set; } = 0;
+        public string? ReceiptPath { get; set; }
+    }
+}

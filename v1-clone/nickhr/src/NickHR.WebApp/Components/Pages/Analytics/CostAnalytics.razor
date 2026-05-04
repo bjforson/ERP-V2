@@ -1,0 +1,128 @@
+@page "/analytics/cost"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHROrPayroll)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Cost Analytics</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.AttachMoney" Class="mr-2" />Cost Analytics
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h5">GHS @_totalMonthlyCost.ToString("N0")</MudText>
+                <MudText Typo="Typo.subtitle1">Monthly Workforce Cost</MudText>
+                <MudText Typo="Typo.caption">(Salary + 13% SSNIT Employer)</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h5">GHS @(_totalMonthlyCost * 12).ToString("N0")</MudText>
+                <MudText Typo="Typo.subtitle1">Annual Workforce Cost</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h5">GHS @_avgCostPerEmployee.ToString("N0")</MudText>
+                <MudText Typo="Typo.subtitle1">Avg Cost Per Employee</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudCard Elevation="2"><MudCardContent Class="text-center">
+                <MudText Typo="Typo.h5">GHS @_totalSSNITEmployer.ToString("N0")</MudText>
+                <MudText Typo="Typo.subtitle1">Monthly SSNIT Employer Cost</MudText>
+            </MudCardContent></MudCard>
+        </MudItem>
+
+        <!-- Department Cost Breakdown -->
+        <MudItem xs="12">
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Department Cost Breakdown</MudText></MudCardHeader>
+                <MudCardContent>
+                    <MudTable Items="_deptCosts" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Department</MudTh><MudTh>Employees</MudTh><MudTh>Total Salary</MudTh>
+                            <MudTh>SSNIT (13%)</MudTh><MudTh>Total Cost</MudTh><MudTh>% of Total</MudTh><MudTh>Avg Per Employee</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Department</MudTd>
+                            <MudTd>@context.Count</MudTd>
+                            <MudTd>GHS @context.TotalSalary.ToString("N0")</MudTd>
+                            <MudTd>GHS @context.SSNITCost.ToString("N0")</MudTd>
+                            <MudTd><strong>GHS @context.TotalCost.ToString("N0")</strong></MudTd>
+                            <MudTd>
+                                <MudProgressLinear Value="@((double)(context.TotalCost * 100 / Math.Max(1, _totalMonthlyCost)))"
+                                    Color="Color.Primary" Style="min-width:80px" />
+                                @((context.TotalCost * 100 / Math.Max(1, _totalMonthlyCost)).ToString("F1"))%
+                            </MudTd>
+                            <MudTd>GHS @(context.Count > 0 ? (context.TotalCost / context.Count).ToString("N0") : "0")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private bool _loading = true;
+    private decimal _totalMonthlyCost, _avgCostPerEmployee, _totalSSNITEmployer;
+    private List<DeptCostRow> _deptCosts = new();
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new("Home", "/"), new("Analytics", null), new("Cost Analytics", null, true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var employees = await db.Employees
+            .Where(e => e.EmploymentStatus == EmploymentStatus.Active)
+            .Include(e => e.Department)
+            .ToListAsync();
+
+        var total = employees.Sum(e => e.BasicSalary);
+        _totalSSNITEmployer = total * 0.13m;
+        _totalMonthlyCost = total + _totalSSNITEmployer;
+        _avgCostPerEmployee = employees.Count > 0 ? _totalMonthlyCost / employees.Count : 0;
+
+        _deptCosts = employees.GroupBy(e => e.Department?.Name ?? "Unassigned")
+            .Select(g =>
+            {
+                var salary = g.Sum(e => e.BasicSalary);
+                var ssnit = salary * 0.13m;
+                return new DeptCostRow
+                {
+                    Department = g.Key, Count = g.Count(), TotalSalary = salary,
+                    SSNITCost = ssnit, TotalCost = salary + ssnit
+                };
+            })
+            .OrderByDescending(d => d.TotalCost).ToList();
+
+        _loading = false;
+    }
+
+    class DeptCostRow
+    {
+        public string Department { get; set; } = "";
+        public int Count;
+        public decimal TotalSalary, SSNITCost, TotalCost;
+    }
+}

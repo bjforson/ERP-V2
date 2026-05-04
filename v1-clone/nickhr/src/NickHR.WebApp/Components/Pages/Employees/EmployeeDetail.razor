@@ -1,0 +1,415 @@
+@page "/employees/{Id:int}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@using NickHR.WebApp.Services
+@using NickERP.Platform.Identity
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IIdentityProvisioningService Provisioning
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Employee Profile</PageTitle>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_employee == null)
+{
+    <MudAlert Severity="Severity.Warning">Employee not found.</MudAlert>
+}
+else
+{
+    <div class="d-flex align-center justify-space-between mb-4">
+        <div class="d-flex align-center gap-3">
+            @if (!string.IsNullOrEmpty(_employee.PhotoUrl))
+            {
+                <MudAvatar Style="width:64px;height:64px;" Image="@($"/employee-photo/{_employee.Id}")" />
+            }
+            else
+            {
+                <MudAvatar Style="width:64px;height:64px;font-size:1.8rem;" Color="Color.Primary">
+                    @(_employee.FirstName.Length > 0 ? _employee.FirstName[0] : '?')
+                </MudAvatar>
+            }
+            <div>
+                <MudText Typo="Typo.h5">@_employee.FirstName @_employee.MiddleName @_employee.LastName</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">@(_employee.Designation?.Title ?? "—") · @(_employee.Department?.Name ?? "—")</MudText>
+                <MudChip T="string" Size="Size.Small" Color="@StatusColor(_employee.EmploymentStatus)" Class="mt-1">@_employee.EmploymentStatus</MudChip>
+            </div>
+        </div>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit"
+                   Href="@($"/employees/{_employee.Id}/edit")">Edit</MudButton>
+    </div>
+
+    <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+
+        <MudTabPanel Text="Personal" Icon="@Icons.Material.Filled.Person">
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Identity</MudText>
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Employee Code</strong></td><td>@_employee.EmployeeCode</td></tr>
+                            <tr><td><strong>Date of Birth</strong></td><td>@(_employee.DateOfBirth?.ToString("dd MMM yyyy") ?? "—")</td></tr>
+                            <tr><td><strong>Gender</strong></td><td>@_employee.Gender</td></tr>
+                            <tr><td><strong>Marital Status</strong></td><td>@_employee.MaritalStatus</td></tr>
+                            <tr><td><strong>Nationality</strong></td><td>@(_employee.Nationality ?? "—")</td></tr>
+                            <tr><td><strong>Ghana Card No.</strong></td><td>@(_employee.GhanaCardNumber ?? "—")</td></tr>
+                            <tr><td><strong>TIN</strong></td><td>@(_employee.TIN ?? "—")</td></tr>
+                            <tr><td><strong>SSNIT No.</strong></td><td>@(_employee.SSNITNumber ?? "—")</td></tr>
+                            <tr><td><strong>Blood Group</strong></td><td>@(_employee.BloodGroup ?? "—")</td></tr>
+                            <tr><td><strong>Religion</strong></td><td>@(_employee.Religion ?? "—")</td></tr>
+                            <tr><td><strong>Ethnic Group</strong></td><td>@(_employee.EthnicGroup ?? "—")</td></tr>
+                            <tr><td><strong>Place of Birth</strong></td><td>@(_employee.PlaceOfBirth ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Spouse &amp; Family</MudText>
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Spouse Name</strong></td><td>@(_employee.SpouseName ?? "—")</td></tr>
+                            <tr><td><strong>Spouse Phone</strong></td><td>@(_employee.SpousePhone ?? "—")</td></tr>
+                            <tr><td><strong>Spouse Employer</strong></td><td>@(_employee.SpouseEmployer ?? "—")</td></tr>
+                            <tr><td><strong>No. of Children</strong></td><td>@_employee.NumberOfChildren</td></tr>
+                            <tr><td><strong>Mother's Maiden Name</strong></td><td>@(_employee.MothersMaidenName ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mt-4 mb-2">Travel Documents</MudText>
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Passport No.</strong></td><td>@(_employee.PassportNumber ?? "—")</td></tr>
+                            <tr><td><strong>Passport Expiry</strong></td><td>@(_employee.PassportExpiry?.ToString("dd MMM yyyy") ?? "—")</td></tr>
+                            <tr><td><strong>Driver's License</strong></td><td>@(_employee.DriversLicenseNumber ?? "—")</td></tr>
+                            <tr><td><strong>License Expiry</strong></td><td>@(_employee.DriversLicenseExpiry?.ToString("dd MMM yyyy") ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Contact" Icon="@Icons.Material.Filled.ContactPhone">
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Contact Details</MudText>
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Primary Phone</strong></td><td>@(_employee.PrimaryPhone ?? "—")</td></tr>
+                            <tr><td><strong>Secondary Phone</strong></td><td>@(_employee.SecondaryPhone ?? "—")</td></tr>
+                            <tr><td><strong>Personal Email</strong></td><td>@(_employee.PersonalEmail ?? "—")</td></tr>
+                            <tr><td><strong>Work Email</strong></td><td>@(_employee.WorkEmail ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mt-4 mb-2">Address</MudText>
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Residential Address</strong></td><td>@(_employee.ResidentialAddress ?? "—")</td></tr>
+                            <tr><td><strong>Postal Address</strong></td><td>@(_employee.PostalAddress ?? "—")</td></tr>
+                            <tr><td><strong>Ghana Post GPS</strong></td><td>@(_employee.GhanaPostGPS ?? "—")</td></tr>
+                            <tr><td><strong>Hometown</strong></td><td>@(_employee.Hometown ?? "—")</td></tr>
+                            <tr><td><strong>Region</strong></td><td>@(_employee.Region ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Emergency Contacts</MudText>
+                    @if (_employee.EmergencyContacts.Any())
+                    {
+                        @foreach (var ec in _employee.EmergencyContacts)
+                        {
+                            <MudCard Class="mb-2" Outlined="true">
+                                <MudCardContent Class="pa-3">
+                                    <MudText Typo="Typo.body1"><strong>@ec.FullName</strong> (@(ec.Relationship ?? "—"))</MudText>
+                                    <MudText Typo="Typo.body2">@ec.PrimaryPhone@(ec.SecondaryPhone != null ? $" / {ec.SecondaryPhone}" : "")</MudText>
+                                    @if (!string.IsNullOrEmpty(ec.Email))
+                                    {
+                                        <MudText Typo="Typo.body2">@ec.Email</MudText>
+                                    }
+                                </MudCardContent>
+                            </MudCard>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">No emergency contacts on file.</MudText>
+                    }
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Employment" Icon="@Icons.Material.Filled.Work">
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Department</strong></td><td>@(_employee.Department?.Name ?? "—")</td></tr>
+                            <tr><td><strong>Designation</strong></td><td>@(_employee.Designation?.Title ?? "—")</td></tr>
+                            <tr><td><strong>Grade</strong></td><td>@(_employee.Grade?.Name ?? "—")</td></tr>
+                            <tr><td><strong>Location</strong></td><td>@(_employee.Location?.Name ?? "—")</td></tr>
+                            <tr><td><strong>Reporting Manager</strong></td><td>@(_employee.ReportingManager != null ? $"{_employee.ReportingManager.FirstName} {_employee.ReportingManager.LastName}" : "—")</td></tr>
+                            <tr><td><strong>Employment Type</strong></td><td>@_employee.EmploymentType</td></tr>
+                            <tr><td><strong>Employment Status</strong></td><td>@_employee.EmploymentStatus</td></tr>
+                            <tr><td><strong>Hire Date</strong></td><td>@(_employee.HireDate?.ToString("dd MMM yyyy") ?? "—")</td></tr>
+                            <tr><td><strong>Confirmation Date</strong></td><td>@(_employee.ConfirmationDate?.ToString("dd MMM yyyy") ?? "—")</td></tr>
+                            <tr><td><strong>Probation End Date</strong></td><td>@(_employee.ProbationEndDate?.ToString("dd MMM yyyy") ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Compensation &amp; Banking</MudText>
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Basic Salary</strong></td><td>GHS @_employee.BasicSalary.ToString("N2")</td></tr>
+                            <tr><td><strong>Bank Name</strong></td><td>@(_employee.BankName ?? "—")</td></tr>
+                            <tr><td><strong>Bank Branch</strong></td><td>@(_employee.BankBranch ?? "—")</td></tr>
+                            <tr><td><strong>Account Number</strong></td><td>@(_employee.BankAccountNumber ?? "—")</td></tr>
+                            <tr><td><strong>Mobile Money No.</strong></td><td>@(_employee.MobileMoneyNumber ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mt-4 mb-2">Pension</MudText>
+                    <MudSimpleTable Hover="false" Dense="true">
+                        <tbody>
+                            <tr><td><strong>Tier 2 No.</strong></td><td>@(_employee.Tier2PensionNumber ?? "—")</td></tr>
+                            <tr><td><strong>Tier 2 Provider</strong></td><td>@(_employee.Tier2Provider ?? "—")</td></tr>
+                            <tr><td><strong>Tier 3 No.</strong></td><td>@(_employee.Tier3PensionNumber ?? "—")</td></tr>
+                            <tr><td><strong>Tier 3 Provider</strong></td><td>@(_employee.Tier3Provider ?? "—")</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Qualifications" Icon="@Icons.Material.Filled.School">
+            @if (_employee.EmployeeQualifications.Any())
+            {
+                <MudTable Items="_employee.EmployeeQualifications" Dense="true" Hover="true" Elevation="0">
+                    <HeaderContent>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Qualification</MudTh>
+                        <MudTh>Institution</MudTh>
+                        <MudTh>Field</MudTh>
+                        <MudTh>Grade</MudTh>
+                        <MudTh>Year</MudTh>
+                        <MudTh>Highest</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.QualificationType</MudTd>
+                        <MudTd>@context.Qualification</MudTd>
+                        <MudTd>@(context.Institution ?? "—")</MudTd>
+                        <MudTd>@(context.FieldOfStudy ?? "—")</MudTd>
+                        <MudTd>@(context.Grade ?? "—")</MudTd>
+                        <MudTd>@(context.EndDate?.Year.ToString() ?? "—")</MudTd>
+                        <MudTd>@(context.IsHighest ? "Yes" : "")</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else
+            {
+                <MudText Color="Color.Secondary">No qualifications on file.</MudText>
+            }
+        </MudTabPanel>
+
+        <MudTabPanel Text="Dependents" Icon="@Icons.Material.Filled.FamilyRestroom">
+            @if (_employee.Dependents.Any(d => d.IsActive))
+            {
+                <MudTable Items="_employee.Dependents.Where(d => d.IsActive).ToList()" Dense="true" Hover="true" Elevation="0">
+                    <HeaderContent>
+                        <MudTh>Full Name</MudTh>
+                        <MudTh>Relationship</MudTh>
+                        <MudTh>Date of Birth</MudTh>
+                        <MudTh>Gender</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.FullName</MudTd>
+                        <MudTd>@(context.Relationship ?? "—")</MudTd>
+                        <MudTd>@(context.DateOfBirth?.ToString("dd MMM yyyy") ?? "—")</MudTd>
+                        <MudTd>@context.Gender</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else
+            {
+                <MudText Color="Color.Secondary">No dependents on file.</MudText>
+            }
+        </MudTabPanel>
+
+        <MudTabPanel Text="Beneficiaries" Icon="@Icons.Material.Filled.VolunteerActivism">
+            @if (_employee.Beneficiaries.Any(b => b.IsActive))
+            {
+                <MudTable Items="_employee.Beneficiaries.Where(b => b.IsActive).ToList()" Dense="true" Hover="true" Elevation="0">
+                    <HeaderContent>
+                        <MudTh>Full Name</MudTh>
+                        <MudTh>Relationship</MudTh>
+                        <MudTh>Date of Birth</MudTh>
+                        <MudTh>Phone</MudTh>
+                        <MudTh>Share %</MudTh>
+                        <MudTh>Primary</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.FullName</MudTd>
+                        <MudTd>@context.Relationship</MudTd>
+                        <MudTd>@(context.DateOfBirth?.ToString("dd MMM yyyy") ?? "—")</MudTd>
+                        <MudTd>@(context.Phone ?? "—")</MudTd>
+                        <MudTd>@context.PercentageShare%</MudTd>
+                        <MudTd>@(context.IsPrimary ? "Yes" : "")</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else
+            {
+                <MudText Color="Color.Secondary">No beneficiaries on file.</MudText>
+            }
+        </MudTabPanel>
+
+        <MudTabPanel Text="Module access" Icon="@Icons.Material.Filled.Security">
+            @if (string.IsNullOrWhiteSpace(_employee.WorkEmail))
+            {
+                <MudAlert Severity="Severity.Warning">
+                    Add a work email under <strong>Edit</strong> before provisioning identity access.
+                    The shared identity store is keyed by lower-cased email.
+                </MudAlert>
+            }
+            else
+            {
+                <ModuleAccessPanel Email="@_employee.WorkEmail"
+                                   DisplayName="@($"{_employee.FirstName} {_employee.LastName}".Trim())"
+                                   GrantedByUserId="@_grantedByUserId"
+                                   TenantId="1" />
+            }
+        </MudTabPanel>
+
+        <MudTabPanel Text="Documents" Icon="@Icons.Material.Filled.Folder">
+            @if (_employee.EmployeeDocuments.Any())
+            {
+                <MudTable Items="_employee.EmployeeDocuments.OrderByDescending(d => d.UploadedAt).ToList()" Dense="true" Hover="true" Elevation="0">
+                    <HeaderContent>
+                        <MudTh>Document Type</MudTh>
+                        <MudTh>File Name</MudTh>
+                        <MudTh>Description</MudTh>
+                        <MudTh>Uploaded</MudTh>
+                        <MudTh>Ver.</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.DocumentType</MudTd>
+                        <MudTd>@context.FileName</MudTd>
+                        <MudTd>@(context.Description ?? "—")</MudTd>
+                        <MudTd>@context.UploadedAt.ToString("dd MMM yyyy")</MudTd>
+                        <MudTd>v@context.Version</MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Download" Size="Size.Small"
+                                           Href="@($"/api/files/{context.FilePath}")" Target="_blank" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else
+            {
+                <MudText Color="Color.Secondary">No documents on file.</MudText>
+            }
+        </MudTabPanel>
+
+    </MudTabs>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool _loading = true;
+    private Employee? _employee;
+    /// <summary>
+    /// The current admin's identity.users.internal_user_id, used as the
+    /// granted_by_user_id stamp on every role grant. Resolved lazily from
+    /// the cookie-authenticated email — auto-provisioned (the admin is
+    /// also a user of the shared identity store) so the FK is always
+    /// satisfied. Falls back to <see cref="Guid.Empty"/> only if email
+    /// resolution fails outright (which surfaces as a sensible error
+    /// when the grant button is clicked).
+    /// </summary>
+    private Guid _grantedByUserId = Guid.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employee = await db.Employees
+                .Include(e => e.Department)
+                .Include(e => e.Designation)
+                .Include(e => e.Grade)
+                .Include(e => e.Location)
+                .Include(e => e.ReportingManager)
+                .Include(e => e.EmergencyContacts)
+                .Include(e => e.Dependents)
+                .Include(e => e.EmployeeDocuments)
+                .Include(e => e.EmployeeQualifications)
+                .Include(e => e.Beneficiaries)
+                .FirstOrDefaultAsync(e => e.Id == Id);
+
+            _grantedByUserId = await ResolveAdminUserIdAsync(scope.ServiceProvider);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading employee: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task<Guid> ResolveAdminUserIdAsync(IServiceProvider sp)
+    {
+        try
+        {
+            var state = await AuthStateProvider.GetAuthenticationStateAsync();
+            var email = state.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                       ?? state.User.FindFirst("email")?.Value
+                       ?? state.User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(email)) return Guid.Empty;
+
+            var existing = await Provisioning.GetUserIdByEmailAsync(email, tenantId: 1L);
+            if (existing is not null) return existing.Value;
+
+            var userManager = sp.GetService<UserManager<ApplicationUser>>();
+            var displayName = email;
+            if (userManager is not null)
+            {
+                var u = await userManager.FindByEmailAsync(email);
+                if (u is not null && !string.IsNullOrWhiteSpace(u.FullName))
+                {
+                    displayName = u.FullName;
+                }
+            }
+            return await Provisioning.ProvisionEmployeeAsync(email, displayName, tenantId: 1L);
+        }
+        catch
+        {
+            return Guid.Empty;
+        }
+    }
+
+    private Color StatusColor(EmploymentStatus status) => status switch
+    {
+        EmploymentStatus.Active => Color.Success,
+        EmploymentStatus.Confirmed => Color.Success,
+        EmploymentStatus.OnProbation => Color.Warning,
+        EmploymentStatus.Suspended => Color.Warning,
+        EmploymentStatus.Terminated => Color.Error,
+        EmploymentStatus.Resigned => Color.Error,
+        _ => Color.Default
+    };
+}

@@ -1,0 +1,340 @@
+@page "/admin/profile-changes"
+@attribute [Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Infrastructure.Data
+@using NickHR.Services.ProfileChange
+@using NickHR.Core.Constants
+
+@inject ProfileChangeService ProfileChangeSvc
+@inject UserManager<ApplicationUser> UserManager
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Profile Change Approvals</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" Class="mr-2" />Profile Change Approvals
+</MudText>
+
+<!-- Status filter tabs -->
+<MudTabs @bind-ActivePanelIndex="_activeTab" Elevation="1" Rounded="true" Class="mb-4">
+    <MudTabPanel Text="Pending" Icon="@Icons.Material.Filled.Pending"
+                 BadgeData="@(_pendingRequests.Count > 0 ? _pendingRequests.Count.ToString() : null)"
+                 BadgeColor="Color.Warning" />
+    <MudTabPanel Text="Approved" Icon="@Icons.Material.Filled.CheckCircle" />
+    <MudTabPanel Text="Rejected" Icon="@Icons.Material.Filled.Cancel" />
+    <MudTabPanel Text="All" Icon="@Icons.Material.Filled.List" />
+</MudTabs>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+
+@{
+    var displayRequests = _activeTab switch
+    {
+        0 => _pendingRequests,
+        1 => _approvedRequests,
+        2 => _rejectedRequests,
+        _ => _allRequests
+    };
+}
+
+@if (displayRequests.Count == 0 && !_loading)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        No @(GetTabLabel(_activeTab)) change requests found.
+    </MudAlert>
+}
+else
+{
+    <MudTable Items="displayRequests" Hover="true" Striped="true" Dense="false"
+              Filter="new Func<ProfileChangeRequest, bool>(FilterFunc)"
+              @bind-SelectedItem="_selectedRequest">
+        <ToolBarContent>
+            <MudTextField @bind-Value="_searchText" Placeholder="Search by employee or field..."
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          IconSize="Size.Medium" Class="mt-0 mr-3" Immediate="true" />
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh>Employee</MudTh>
+            <MudTh>Field</MudTh>
+            <MudTh>Old Value</MudTh>
+            <MudTh>New Value</MudTh>
+            <MudTh>Reason</MudTh>
+            <MudTh>Submitted</MudTh>
+            <MudTh>Status</MudTh>
+            @if (_activeTab == 0)
+            {
+                <MudTh>Actions</MudTh>
+            }
+            else
+            {
+                <MudTh>Reviewed By</MudTh>
+            }
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudText Typo="Typo.body2">
+                    @(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")
+                </MudText>
+            </MudTd>
+            <MudTd>
+                <MudChip T="string"
+                         Color="@(IsSensitiveField(context.FieldName) ? Color.Error : Color.Primary)"
+                         Size="Size.Small" Variant="Variant.Outlined">
+                    @context.FieldLabel
+                </MudChip>
+                @if (IsSensitiveField(context.FieldName))
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.Warning" Size="Size.Small"
+                             Color="Color.Error" Title="Sensitive field" Class="ml-1" />
+                }
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">
+                    @(string.IsNullOrEmpty(context.OldValue) ? "—" : MaskIfSensitive(context.FieldName, context.OldValue))
+                </MudText>
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.body2" Style="font-weight: 500;">
+                    @(string.IsNullOrEmpty(context.NewValue) ? "(clear)" : context.NewValue)
+                </MudText>
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.caption">@(context.Reason ?? "—")</MudText>
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.caption">@context.CreatedAt.ToString("dd MMM yyyy HH:mm")</MudText>
+            </MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small"
+                         Color="@StatusColor(context.Status)">
+                    @context.Status
+                </MudChip>
+            </MudTd>
+            @if (_activeTab == 0)
+            {
+                <MudTd>
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Check"
+                               OnClick="() => ApproveAsync(context.Id)"
+                               Disabled="_processingId == context.Id"
+                               Class="mr-1">
+                        Approve
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Close"
+                               OnClick="() => OpenRejectDialog(context)">
+                        Reject
+                    </MudButton>
+                </MudTd>
+            }
+            else
+            {
+                <MudTd>
+                    <MudText Typo="Typo.caption">
+                        @(context.ReviewedBy != null ? $"{context.ReviewedBy.FirstName} {context.ReviewedBy.LastName}" : "—")
+                    </MudText>
+                    @if (context.ReviewedAt.HasValue)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            @context.ReviewedAt.Value.ToString("dd MMM yyyy")
+                        </MudText>
+                    }
+                    @if (!string.IsNullOrEmpty(context.RejectionReason))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error" Style="font-style:italic;">
+                            "@context.RejectionReason"
+                        </MudText>
+                    }
+                </MudTd>
+            }
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+}
+
+<!-- Rejection dialog -->
+@if (_showRejectDialog && _rejectTarget != null)
+{
+    <MudDialog @bind-IsVisible="_showRejectDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent>
+            <MudText Typo="Typo.h6">
+                <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Class="mr-2" />
+                Reject Change Request
+            </MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Class="mb-3">
+                Rejecting <strong>@_rejectTarget.FieldLabel</strong> change
+                for <strong>@(_rejectTarget.Employee != null ? $"{_rejectTarget.Employee.FirstName} {_rejectTarget.Employee.LastName}" : "employee")</strong>.
+            </MudText>
+            <MudTextField Label="Rejection Reason (optional)" @bind-Value="_rejectionReason"
+                          Lines="3" Variant="Variant.Outlined"
+                          Placeholder="Explain why the change was rejected..." />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _showRejectDialog = false">Cancel</MudButton>
+            <MudButton Color="Color.Error" Variant="Variant.Filled"
+                       OnClick="ConfirmRejectAsync"
+                       Disabled="_processingId == _rejectTarget?.Id">
+                Confirm Rejection
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private bool _loading = true;
+    private int _activeTab = 0;
+    private string _searchText = "";
+    private int? _processingId;
+
+    private List<ProfileChangeRequest> _pendingRequests  = new();
+    private List<ProfileChangeRequest> _approvedRequests = new();
+    private List<ProfileChangeRequest> _rejectedRequests = new();
+    private List<ProfileChangeRequest> _allRequests      = new();
+
+    private ProfileChangeRequest? _selectedRequest;
+    private ProfileChangeRequest? _rejectTarget;
+    private bool _showRejectDialog;
+    private string? _rejectionReason;
+
+    private int? _reviewerEmployeeId;
+
+    // Sensitive fields for visual highlight
+    private static readonly HashSet<string> SensitiveFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "BankAccountNumber", "BankName", "BankBranch", "MobileMoneyNumber",
+        "GhanaCardNumber", "TIN", "SSNITNumber", "PassportNumber",
+        "Tier2PensionNumber", "Tier3PensionNumber"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ResolveReviewerAsync();
+        await LoadDataAsync();
+    }
+
+    private async Task ResolveReviewerAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return;
+
+        using var scope = ServiceProvider.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var appUser = await userManager.GetUserAsync(user);
+        _reviewerEmployeeId = appUser?.EmployeeId;
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        _allRequests      = await ProfileChangeSvc.GetAllRequestsAsync();
+        _pendingRequests  = _allRequests.Where(r => r.Status == ChangeRequestStatus.Pending).ToList();
+        _approvedRequests = _allRequests.Where(r => r.Status == ChangeRequestStatus.Approved).ToList();
+        _rejectedRequests = _allRequests.Where(r => r.Status == ChangeRequestStatus.Rejected).ToList();
+        _loading = false;
+    }
+
+    private async Task ApproveAsync(int requestId)
+    {
+        if (_reviewerEmployeeId == null)
+        {
+            Snackbar.Add("Your account is not linked to an employee record.", Severity.Error);
+            return;
+        }
+
+        _processingId = requestId;
+        try
+        {
+            var req = await ProfileChangeSvc.ApproveRequestAsync(requestId, _reviewerEmployeeId.Value);
+            Snackbar.Add($"{req.FieldLabel} change approved and applied.", Severity.Success);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _processingId = null;
+        }
+    }
+
+    private void OpenRejectDialog(ProfileChangeRequest request)
+    {
+        _rejectTarget     = request;
+        _rejectionReason  = null;
+        _showRejectDialog = true;
+    }
+
+    private async Task ConfirmRejectAsync()
+    {
+        if (_rejectTarget == null || _reviewerEmployeeId == null) return;
+
+        _processingId = _rejectTarget.Id;
+        try
+        {
+            var req = await ProfileChangeSvc.RejectRequestAsync(_rejectTarget.Id, _reviewerEmployeeId.Value, _rejectionReason);
+            Snackbar.Add($"{req.FieldLabel} change rejected.", Severity.Warning);
+            _showRejectDialog = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _processingId = null;
+        }
+    }
+
+    private bool FilterFunc(ProfileChangeRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(_searchText)) return true;
+        var s = _searchText.Trim().ToLower();
+        var empName = req.Employee != null ? $"{req.Employee.FirstName} {req.Employee.LastName}".ToLower() : "";
+        return empName.Contains(s)
+            || req.FieldLabel.ToLower().Contains(s)
+            || (req.NewValue ?? "").ToLower().Contains(s);
+    }
+
+    private static bool IsSensitiveField(string fieldName)
+        => SensitiveFields.Contains(fieldName);
+
+    private static string MaskIfSensitive(string fieldName, string value)
+    {
+        if (!IsSensitiveField(fieldName)) return value;
+        if (value.Length <= 4) return new string('*', value.Length);
+        return new string('*', value.Length - 4) + value[^4..];
+    }
+
+    private static Color StatusColor(ChangeRequestStatus status) => status switch
+    {
+        ChangeRequestStatus.Pending  => Color.Warning,
+        ChangeRequestStatus.Approved => Color.Success,
+        ChangeRequestStatus.Rejected => Color.Error,
+        _                            => Color.Default
+    };
+
+    private static string GetTabLabel(int tab) => tab switch
+    {
+        0 => "pending",
+        1 => "approved",
+        2 => "rejected",
+        _ => ""
+    };
+}

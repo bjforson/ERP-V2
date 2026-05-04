@@ -1,0 +1,261 @@
+@page "/notifications"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Notifications</PageTitle>
+
+<div class="d-flex align-center justify-space-between mb-4">
+    <div class="d-flex align-center gap-2">
+        <MudText Typo="Typo.h5">
+            <MudIcon Icon="@Icons.Material.Filled.Notifications" Class="mr-2" />Notifications
+        </MudText>
+        @if (_unreadCount > 0)
+        {
+            <MudBadge Content="@_unreadCount" Color="Color.Error" Overlap="false">
+                <MudChip T="string" Color="Color.Error" Size="Size.Small">@_unreadCount unread</MudChip>
+            </MudBadge>
+        }
+    </div>
+    <div class="d-flex gap-2">
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.DoneAll"
+                   OnClick="MarkAllReadAsync" Disabled="@(_unreadCount == 0 || _saving)">
+            Mark All Read
+        </MudButton>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (!_notifications.Any())
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        <MudIcon Icon="@Icons.Material.Filled.NotificationsNone" Class="mr-2" />No notifications.
+    </MudAlert>
+}
+else
+{
+    <MudTable Items="_notifications" Dense="false" Hover="true" Elevation="2"
+              Filter="FilterFunc" @bind-SelectedItem="_selectedNotification">
+        <ToolBarContent>
+            <MudTextField @bind-Value="_searchString" Placeholder="Search notifications..."
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true" Class="mt-0" Variant="Variant.Outlined" Dense="true" />
+            <MudSpacer />
+            <MudSelect @bind-Value="_typeFilter" T="string" Label="Type" Dense="true"
+                       Variant="Variant.Outlined" Clearable="true" Style="min-width:140px">
+                @foreach (var t in Enum.GetNames<NotificationType>())
+                {
+                    <MudSelectItem Value="t">@t</MudSelectItem>
+                }
+            </MudSelect>
+            <MudCheckBox @bind-Value="_unreadOnly" Label="Unread only" Class="ml-3" />
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh>Status</MudTh>
+            <MudTh>Title</MudTh>
+            <MudTh>Message</MudTh>
+            <MudTh>Type</MudTh>
+            <MudTh>Date</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                @if (!context.IsRead)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.FiberManualRecord" Color="Color.Primary" Size="Size.Small" Title="Unread" />
+                }
+                else
+                {
+                    <MudIcon Icon="@Icons.Material.Outlined.FiberManualRecord" Color="Color.Default" Size="Size.Small" Title="Read" />
+                }
+            </MudTd>
+            <MudTd>
+                <MudText Typo="@(context.IsRead ? Typo.body2 : Typo.body1)"
+                         Style="@(context.IsRead ? "" : "font-weight:600")">
+                    @context.Title
+                </MudText>
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.body2" Style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                    @context.Message
+                </MudText>
+            </MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="@TypeColor(context.NotificationType)">
+                    @context.NotificationType
+                </MudChip>
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.body2">@context.CreatedAt.ToString("dd MMM yyyy HH:mm")</MudText>
+                @if (context.ReadAt.HasValue)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Read @context.ReadAt.Value.ToString("dd MMM HH:mm")</MudText>
+                }
+            </MudTd>
+            <MudTd>
+                <div class="d-flex gap-1">
+                    @if (!context.IsRead)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.MarkEmailRead" Size="Size.Small"
+                                       Title="Mark as Read" Color="Color.Primary"
+                                       OnClick="@(() => MarkReadAsync(context))" />
+                    }
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                   Title="Delete" Color="Color.Error"
+                                   OnClick="@(() => DeleteAsync(context))" />
+                </div>
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _saving = false;
+    private List<Notification> _notifications = new();
+    private Notification? _selectedNotification;
+    private string _searchString = "";
+    private string? _typeFilter;
+    private bool _unreadOnly = false;
+    private int _unreadCount => _notifications.Count(n => !n.IsRead);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _notifications = await db.Notifications
+                .OrderByDescending(n => n.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading notifications: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private bool FilterFunc(Notification n)
+    {
+        if (_unreadOnly && n.IsRead) return false;
+        if (!string.IsNullOrEmpty(_typeFilter) && n.NotificationType.ToString() != _typeFilter) return false;
+        if (string.IsNullOrEmpty(_searchString)) return true;
+        return n.Title.Contains(_searchString, StringComparison.OrdinalIgnoreCase) ||
+               n.Message.Contains(_searchString, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task MarkReadAsync(Notification notification)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Notifications.FindAsync(notification.Id);
+            if (entity != null)
+            {
+                entity.IsRead = true;
+                entity.ReadAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                notification.IsRead = true;
+                notification.ReadAt = entity.ReadAt;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var unread = await db.Notifications.Where(n => !n.IsRead).ToListAsync();
+            var now = DateTime.UtcNow;
+            foreach (var n in unread)
+            {
+                n.IsRead = true;
+                n.ReadAt = now;
+            }
+            await db.SaveChangesAsync();
+            foreach (var n in _notifications.Where(n => !n.IsRead))
+            {
+                n.IsRead = true;
+                n.ReadAt = now;
+            }
+            Snackbar.Add("All notifications marked as read.", Severity.Success);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteAsync(Notification notification)
+    {
+        var confirm = await DialogService.ShowMessageBox("Delete Notification",
+            "Delete this notification?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Notifications.FindAsync(notification.Id);
+            if (entity != null)
+            {
+                entity.IsDeleted = true;
+                await db.SaveChangesAsync();
+                _notifications.Remove(notification);
+                StateHasChanged();
+                Snackbar.Add("Notification deleted.", Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private Color TypeColor(NotificationType type) => type switch
+    {
+        NotificationType.Email => Color.Info,
+        NotificationType.SMS => Color.Warning,
+        NotificationType.InApp => Color.Primary,
+        _ => Color.Default
+    };
+}

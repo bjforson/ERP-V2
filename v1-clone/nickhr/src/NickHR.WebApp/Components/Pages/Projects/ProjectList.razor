@@ -1,0 +1,107 @@
+@page "/projects"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using NickHR.Services.Project
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Projects</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Folder" Class="mr-2" />Projects
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else
+{
+    <MudCard Elevation="2">
+        <MudCardHeader>
+            <CardHeaderContent><MudText Typo="Typo.h6">Project List</MudText></CardHeaderContent>
+            <CardHeaderActions>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                           OnClick="@(() => _showCreate = true)">New Project</MudButton>
+            </CardHeaderActions>
+        </MudCardHeader>
+        <MudCardContent>
+            <MudTable Items="_projects" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Code</MudTh><MudTh>Name</MudTh><MudTh>Client</MudTh><MudTh>Status</MudTh>
+                    <MudTh>Budget</MudTh><MudTh>Manager</MudTh><MudTh>Period</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Code</MudTd>
+                    <MudTd>@context.Name</MudTd>
+                    <MudTd>@context.ClientName</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small"
+                            Color="@(context.Status == ProjectStatus.Active ? Color.Success : context.Status == ProjectStatus.Completed ? Color.Primary : Color.Warning)">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>GHS @context.Budget.ToString("N0")</MudTd>
+                    <MudTd>@(context.Manager != null ? $"{context.Manager.FirstName} {context.Manager.LastName}" : "N/A")</MudTd>
+                    <MudTd>@(context.StartDate?.ToString("dd MMM") ?? "N/A") - @(context.EndDate?.ToString("dd MMM yyyy") ?? "N/A")</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@if (_showCreate)
+{
+    <MudDialog @bind-Visible="_showCreate">
+        <TitleContent>New Project</TitleContent>
+        <DialogContent>
+            <MudTextField @bind-Value="_newProject.Name" Label="Project Name" Required="true" />
+            <MudTextField @bind-Value="_newProject.Code" Label="Code" Required="true" Class="mt-3" />
+            <MudTextField @bind-Value="_newProject.ClientName" Label="Client Name" Class="mt-3" />
+            <MudNumericField T="decimal" @bind-Value="_newProject.Budget" Label="Budget (GHS)" Class="mt-3" />
+            <MudDatePicker Label="Start Date" @bind-Date="_startDate" Class="mt-3" />
+            <MudDatePicker Label="End Date" @bind-Date="_endDate" Class="mt-3" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showCreate = false)">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateProject">Create</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<NickHR.Core.Entities.Core.Project> _projects = new();
+    private NickHR.Core.Entities.Core.Project _newProject = new();
+    private DateTime? _startDate, _endDate;
+    private bool _loading = true, _showCreate;
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Projects", null, true) };
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ProjectService>();
+        _projects = await svc.GetAllProjectsAsync();
+        _loading = false;
+    }
+
+    private async Task CreateProject()
+    {
+        _newProject.StartDate = _startDate;
+        _newProject.EndDate = _endDate;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ProjectService>();
+        await svc.CreateProjectAsync(_newProject);
+        Snackbar.Add("Project created", Severity.Success);
+        _showCreate = false;
+        _newProject = new();
+        await LoadData();
+    }
+}

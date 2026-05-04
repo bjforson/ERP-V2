@@ -1,0 +1,110 @@
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudTextField @bind-Value="_name" Label="Holiday Name" Required="true"
+                          RequiredError="Name is required" Class="mb-3" />
+            <MudDatePicker @bind-Date="_date" Label="Date" Required="true" Class="mb-3" />
+            <MudCheckBox T="bool" @bind-Value="_isRecurring" Label="Is Recurring (repeats annually)" Class="mb-3" />
+            <MudTextField @bind-Value="_description" Label="Description (optional)"
+                          Lines="2" Class="mb-3" />
+        </MudForm>
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-2">@_errorMessage</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_isSaving">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="@_isSaving">
+            @if (_isSaving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+            @(_isEdit ? "Save" : "Add Holiday")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Holiday? Holiday { get; set; }
+    [Parameter] public int DefaultYear { get; set; } = DateTime.Now.Year;
+
+    private MudForm? _form;
+    private bool _isValid;
+    private bool _isSaving;
+    private string _errorMessage = string.Empty;
+    private bool _isEdit => Holiday != null;
+
+    private string _name = string.Empty;
+    private DateTime? _date;
+    private bool _isRecurring;
+    private string _description = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        if (Holiday != null)
+        {
+            _name = Holiday.Name;
+            _date = Holiday.Date;
+            _isRecurring = Holiday.IsRecurring;
+            _description = Holiday.Description ?? string.Empty;
+        }
+        else
+        {
+            _date = new DateTime(DefaultYear, 1, 1);
+        }
+    }
+
+    private async Task Save()
+    {
+        if (_form != null) await _form.Validate();
+        if (!_isValid || !_date.HasValue) return;
+        _isSaving = true;
+        _errorMessage = string.Empty;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (_isEdit)
+            {
+                var entity = await db.Holidays.FindAsync(Holiday!.Id);
+                if (entity == null) { _errorMessage = "Holiday not found."; return; }
+                entity.Name = _name;
+                entity.Date = _date.Value;
+                entity.Year = _date.Value.Year;
+                entity.IsRecurring = _isRecurring;
+                entity.Description = _description;
+            }
+            else
+            {
+                db.Holidays.Add(new Holiday
+                {
+                    Name = _name,
+                    Date = _date.Value,
+                    Year = _date.Value.Year,
+                    IsRecurring = _isRecurring,
+                    Description = string.IsNullOrWhiteSpace(_description) ? null : _description
+                });
+            }
+            await db.SaveChangesAsync();
+            Snackbar.Add(_isEdit ? "Holiday updated." : "Holiday added.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

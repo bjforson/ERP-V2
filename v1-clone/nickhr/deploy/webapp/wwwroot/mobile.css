@@ -1,0 +1,390 @@
+/* =============================================================
+   NickHR — Mobile & PWA Styles
+   Applies touch-friendly UX, bottom nav, responsive tables
+   ============================================================= */
+
+/* --- Touch-friendly interactive targets (WCAG 2.5.5 44px) --- */
+@media (max-width: 768px) {
+    /* Buttons */
+    .mud-button,
+    .mud-icon-button,
+    button {
+        min-height: 44px !important;
+        min-width: 44px !important;
+    }
+
+    /* Inputs */
+    .mud-input-control,
+    .mud-input,
+    .mud-select,
+    .mud-text-field input,
+    .mud-text-field textarea {
+        min-height: 44px !important;
+        font-size: 16px !important; /* Prevents iOS auto-zoom */
+    }
+
+    /* Select dropdowns */
+    .mud-select-input {
+        min-height: 44px !important;
+    }
+
+    /* Checkbox and radio */
+    .mud-checkbox .mud-button-root,
+    .mud-radio .mud-button-root {
+        min-height: 44px !important;
+        min-width: 44px !important;
+    }
+
+    /* Nav links */
+    .mud-nav-link {
+        min-height: 44px !important;
+        padding: 10px 16px !important;
+    }
+
+    /* Table cells — touch targets */
+    .mud-table-cell {
+        padding: 10px 12px !important;
+    }
+
+    /* Chips */
+    .mud-chip {
+        min-height: 32px !important;
+    }
+}
+
+/* --- Typography — larger for mobile readability --- */
+@media (max-width: 768px) {
+    body,
+    .mud-typography-body1 {
+        font-size: 15px !important;
+    }
+
+    .mud-typography-body2 {
+        font-size: 13px !important;
+    }
+
+    .mud-typography-h5 {
+        font-size: 1.25rem !important;
+    }
+
+    .mud-typography-h6 {
+        font-size: 1.1rem !important;
+    }
+}
+
+/* --- Full-width inputs on mobile --- */
+@media (max-width: 768px) {
+    .mud-grid-item .mud-input-control,
+    .mud-grid-item .mud-select,
+    .mud-grid-item .mud-text-field {
+        width: 100%;
+    }
+
+    .mud-card-content {
+        padding: 12px !important;
+    }
+
+    .mud-card-header {
+        padding: 12px 12px 0 !important;
+    }
+}
+
+/* --- Responsive table — collapse to card view on mobile --- */
+@media (max-width: 600px) {
+    .mud-table-root thead {
+        display: none !important;
+    }
+
+    .mud-table-root tr {
+        display: block !important;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        border-radius: 8px;
+        margin-bottom: 12px !important;
+        padding: 8px !important;
+        background: var(--mud-palette-surface, #fff);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+
+    .mud-table-root td {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: 6px 8px !important;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+        min-height: 36px;
+    }
+
+    .mud-table-root td:last-child {
+        border-bottom: none !important;
+    }
+
+    .mud-table-root td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        font-size: 12px;
+        color: var(--mud-palette-text-secondary, #757575);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        min-width: 120px;
+        flex-shrink: 0;
+    }
+}
+
+/* --- Hide sidebar drawer on mobile by default --- */
+@media (max-width: 768px) {
+    .mud-drawer[data-persistent] {
+        display: none !important;
+    }
+
+    /* Allow overlay drawer to show */
+    .mud-drawer.mud-drawer--open[data-overlay] {
+        display: block !important;
+    }
+
+    /* Adjust main content when no sidebar */
+    .mud-main-content {
+        padding: 12px !important;
+        padding-bottom: 70px !important; /* Space for bottom nav */
+    }
+
+    /* App bar adjustments */
+    .mud-appbar {
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+    }
+}
+
+/* --- Desktop: no bottom nav padding --- */
+@media (min-width: 769px) {
+    .nickhr-bottom-nav {
+        display: none !important;
+    }
+}
+
+/* --- Bottom Navigation Bar --- */
+.nickhr-bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: var(--mud-palette-surface, #fff);
+    border-top: 1px solid rgba(0, 0, 0, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    z-index: 1000;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+    padding-bottom: env(safe-area-inset-bottom, 0); /* iOS safe area */
+}
+
+.nickhr-bottom-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    height: 100%;
+    cursor: pointer;
+    color: var(--mud-palette-text-secondary, #757575);
+    text-decoration: none;
+    transition: color 0.2s;
+    gap: 2px;
+    min-width: 44px;
+    min-height: 44px;
+}
+
+.nickhr-bottom-nav-item:hover,
+.nickhr-bottom-nav-item.active {
+    color: #1565C0;
+}
+
+.nickhr-bottom-nav-item span.label {
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1;
+}
+
+/* --- PWA safe area adjustments for notched phones --- */
+@supports (padding-top: env(safe-area-inset-top)) {
+    .mud-appbar {
+        padding-top: env(safe-area-inset-top);
+    }
+
+    .nickhr-bottom-nav {
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+}
+
+/* --- Prevent content jump on PWA standalone mode --- */
+@media (display-mode: standalone) {
+    body {
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .mud-main-content {
+        padding-top: 16px !important;
+    }
+}
+
+/* --- Smooth scrolling --- */
+html {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* --- Focus styles for accessibility --- */
+:focus-visible {
+    outline: 2px solid #1565C0;
+    outline-offset: 2px;
+}
+
+/* --- Mobile dialog & form improvements --- */
+@media (max-width: 768px) {
+    /* Dialogs take full width on mobile */
+    .mud-dialog {
+        width: 95vw !important;
+        max-width: 95vw !important;
+        margin: 8px !important;
+    }
+
+    .mud-dialog-content {
+        padding: 12px !important;
+    }
+
+    /* Tabs scroll horizontally on mobile */
+    .mud-tabs-toolbar {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .mud-tab {
+        min-width: auto !important;
+        padding: 8px 12px !important;
+        font-size: 12px !important;
+    }
+
+    /* MudGrid items full width on small screens */
+    .mud-grid-item-xs-6,
+    .mud-grid-item-sm-4,
+    .mud-grid-item-sm-6,
+    .mud-grid-item-md-3,
+    .mud-grid-item-md-4 {
+        flex-basis: 100% !important;
+        max-width: 100% !important;
+    }
+
+    /* Summary cards stack vertically */
+    .mud-card {
+        margin-bottom: 8px !important;
+    }
+
+    /* Table pager compact on mobile */
+    .mud-table-pagination {
+        flex-wrap: wrap !important;
+        justify-content: center !important;
+        padding: 8px !important;
+    }
+
+    .mud-table-pagination-caption {
+        font-size: 12px !important;
+    }
+
+    /* Breadcrumbs wrap */
+    .mud-breadcrumbs {
+        flex-wrap: wrap !important;
+    }
+
+    /* Avatar smaller in tables */
+    .mud-table .mud-avatar {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 0.8rem !important;
+    }
+
+    /* Action buttons compact */
+    .mud-table .mud-icon-button {
+        padding: 4px !important;
+    }
+
+    /* Charts resize */
+    .mud-chart {
+        max-width: 100% !important;
+        overflow-x: auto !important;
+    }
+
+    /* Menu dropdown positioning */
+    .mud-menu {
+        max-width: 90vw !important;
+    }
+
+    /* File upload button full width */
+    .mud-file-upload .mud-button {
+        width: 100% !important;
+    }
+
+    /* AppBar title shorter on mobile */
+    .mud-appbar .mud-typography-h6 {
+        font-size: 1rem !important;
+    }
+
+    /* Hide less important columns on mobile */
+    .mud-table [data-label="Email"],
+    .mud-table [data-label="Grade"],
+    .mud-table [data-label="Hire Date"] {
+        display: none !important;
+    }
+}
+
+/* --- Very small screens (phones in portrait) --- */
+@media (max-width: 400px) {
+    .mud-main-content {
+        padding: 8px !important;
+        padding-bottom: 70px !important;
+    }
+
+    .mud-typography-h5 {
+        font-size: 1.1rem !important;
+    }
+
+    .mud-card-content {
+        padding: 8px !important;
+    }
+
+    /* Stack action buttons vertically */
+    .mud-table td .d-flex {
+        flex-direction: column !important;
+        gap: 4px !important;
+    }
+}
+
+/* --- Landscape mobile --- */
+@media (max-height: 500px) and (orientation: landscape) {
+    .nickhr-bottom-nav {
+        height: 48px !important;
+    }
+
+    .mud-main-content {
+        padding-bottom: 56px !important;
+    }
+}
+
+/* --- Print styles --- */
+@media print {
+    .mud-appbar,
+    .mud-drawer,
+    .nickhr-bottom-nav,
+    .mud-table-pagination,
+    .mud-button {
+        display: none !important;
+    }
+
+    .mud-main-content {
+        padding: 0 !important;
+    }
+
+    .mud-table-root tr {
+        page-break-inside: avoid;
+    }
+}

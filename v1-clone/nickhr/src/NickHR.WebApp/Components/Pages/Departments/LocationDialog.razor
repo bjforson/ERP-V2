@@ -1,0 +1,213 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.EditLocation : Icons.Material.Filled.AddLocation)" Class="mr-2" />
+            @(IsEdit ? "Edit Location" : "Add Location")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Name"
+                                  Label="Location Name"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Name is required"
+                                  MaxLength="200"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Address"
+                                  Label="Address"
+                                  Variant="Variant.Outlined"
+                                  Lines="2"
+                                  MaxLength="500" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.City"
+                                  Label="City"
+                                  Variant="Variant.Outlined"
+                                  MaxLength="100" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Region"
+                                  Label="Region"
+                                  Variant="Variant.Outlined"
+                                  MaxLength="100" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Country"
+                                  Label="Country"
+                                  Variant="Variant.Outlined"
+                                  MaxLength="100" />
+                </MudItem>
+                <MudItem xs="12" sm="6" Class="d-flex flex-column justify-center">
+                    <MudCheckBox @bind-Value="_model.IsHeadOffice" Label="Head Office" Color="Color.Warning" />
+                    <MudCheckBox @bind-Value="_model.IsActive" Label="Active" Color="Color.Primary" />
+                </MudItem>
+
+                <MudItem xs="12">
+                    <MudDivider Class="my-1" />
+                    <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mb-2">
+                        <MudIcon Icon="@Icons.Material.Filled.GpsFixed" Size="Size.Small" Class="mr-1" />
+                        GPS Coordinates (for attendance geo-fencing)
+                    </MudText>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="double?" @bind-Value="_model.Latitude"
+                                     Label="Latitude"
+                                     Variant="Variant.Outlined"
+                                     Format="N6"
+                                     Step="0.000001"
+                                     HelperText="e.g. 5.627850" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="double?" @bind-Value="_model.Longitude"
+                                     Label="Longitude"
+                                     Variant="Variant.Outlined"
+                                     Format="N6"
+                                     Step="0.000001"
+                                     HelperText="e.g. -0.017362" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="int" @bind-Value="_model.GeoFenceRadiusMeters"
+                                     Label="Geo-fence Radius (m)"
+                                     Variant="Variant.Outlined"
+                                     Min="50" Max="5000"
+                                     HelperText="Default: 200m" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Create")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Location? Location { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private bool IsEdit => Location?.Id > 0;
+
+    private LocationFormModel _model = new();
+
+    protected override void OnInitialized()
+    {
+        if (Location != null)
+        {
+            _model = new LocationFormModel
+            {
+                Name = Location.Name,
+                Address = Location.Address,
+                City = Location.City,
+                Region = Location.Region,
+                Country = Location.Country,
+                Latitude = Location.Latitude,
+                Longitude = Location.Longitude,
+                GeoFenceRadiusMeters = Location.GeoFenceRadiusMeters,
+                IsHeadOffice = Location.IsHeadOffice,
+                IsActive = Location.IsActive
+            };
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (IsEdit)
+            {
+                var entity = await db.Locations.FindAsync(Location!.Id);
+                if (entity == null)
+                {
+                    Snackbar.Add("Location not found.", Severity.Error);
+                    return;
+                }
+                entity.Name = _model.Name;
+                entity.Address = _model.Address;
+                entity.City = _model.City;
+                entity.Region = _model.Region;
+                entity.Country = _model.Country;
+                entity.Latitude = _model.Latitude;
+                entity.Longitude = _model.Longitude;
+                entity.GeoFenceRadiusMeters = _model.GeoFenceRadiusMeters;
+                entity.IsHeadOffice = _model.IsHeadOffice;
+                entity.IsActive = _model.IsActive;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Location updated.", Severity.Success);
+            }
+            else
+            {
+                var entity = new Location
+                {
+                    Name = _model.Name,
+                    Address = _model.Address,
+                    City = _model.City,
+                    Region = _model.Region,
+                    Country = _model.Country,
+                    Latitude = _model.Latitude,
+                    Longitude = _model.Longitude,
+                    GeoFenceRadiusMeters = _model.GeoFenceRadiusMeters,
+                    IsHeadOffice = _model.IsHeadOffice,
+                    IsActive = _model.IsActive
+                };
+                db.Locations.Add(entity);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Location created.", Severity.Success);
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving location: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class LocationFormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Address { get; set; }
+        public string? City { get; set; }
+        public string? Region { get; set; }
+        public string Country { get; set; } = "Ghana";
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public int GeoFenceRadiusMeters { get; set; } = 200;
+        public bool IsHeadOffice { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

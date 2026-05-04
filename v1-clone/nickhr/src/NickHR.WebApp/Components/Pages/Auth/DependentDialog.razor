@@ -1,0 +1,122 @@
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+
+@inject IDbContextFactory<NickHRDbContext> DbFactory
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.FamilyRestroom" Class="mr-2" />
+            @(IsEdit ? "Edit Dependent" : "Add Dependent")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudGrid>
+            <MudItem xs="12" sm="6">
+                <MudTextField Label="Full Name" @bind-Value="_model.FullName"
+                              Variant="Variant.Outlined" Required="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect Label="Relationship" @bind-Value="_model.Relationship"
+                           Variant="Variant.Outlined">
+                    <MudSelectItem Value="@("Spouse")">Spouse</MudSelectItem>
+                    <MudSelectItem Value="@("Child")">Child</MudSelectItem>
+                    <MudSelectItem Value="@("Parent")">Parent</MudSelectItem>
+                    <MudSelectItem Value="@("Sibling")">Sibling</MudSelectItem>
+                    <MudSelectItem Value="@("Other")">Other</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker Label="Date of Birth" @bind-Date="_dobDate"
+                               Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect Label="Gender" @bind-Value="_model.Gender"
+                           Variant="Variant.Outlined">
+                    <MudSelectItem Value="@(Gender.Male)">Male</MudSelectItem>
+                    <MudSelectItem Value="@(Gender.Female)">Female</MudSelectItem>
+                    <MudSelectItem Value="@(Gender.Other)">Other</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" Class="d-flex align-center">
+                <MudCheckBox @bind-Value="_model.IsActive" Label="Active" Color="Color.Success" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="() => OnClose.InvokeAsync()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   OnClick="SaveAsync" Disabled="_saving">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public int EmployeeId { get; set; }
+    [Parameter] public Dependent? Existing { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private Dependent _model = new() { IsActive = true, Gender = Gender.Male };
+    private DateTime? _dobDate;
+    private bool _saving = false;
+    private bool IsEdit => Existing != null;
+
+    protected override void OnParametersSet()
+    {
+        if (Existing != null)
+        {
+            _model = new Dependent
+            {
+                Id = Existing.Id,
+                EmployeeId = Existing.EmployeeId,
+                FullName = Existing.FullName,
+                Relationship = Existing.Relationship,
+                DateOfBirth = Existing.DateOfBirth,
+                Gender = Existing.Gender,
+                IsActive = Existing.IsActive
+            };
+            _dobDate = Existing.DateOfBirth;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_model.FullName)) return;
+
+        _saving = true;
+        _model.DateOfBirth = _dobDate;
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+
+        if (IsEdit)
+        {
+            var existing = await ctx.Dependents.FindAsync(_model.Id);
+            if (existing != null)
+            {
+                existing.FullName = _model.FullName;
+                existing.Relationship = _model.Relationship;
+                existing.DateOfBirth = _model.DateOfBirth;
+                existing.Gender = _model.Gender;
+                existing.IsActive = _model.IsActive;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+        else
+        {
+            _model.EmployeeId = EmployeeId;
+            _model.CreatedAt = DateTime.UtcNow;
+            ctx.Dependents.Add(_model);
+        }
+
+        await ctx.SaveChangesAsync();
+        _saving = false;
+        await OnSaved.InvokeAsync();
+    }
+}

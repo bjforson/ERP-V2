@@ -1,0 +1,227 @@
+@page "/training/programs"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Training
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Training Programs</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Training Programs</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Programs
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_programs.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenCreateDialog">
+                Add Program
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_programs" Dense="true" Hover="true" Striped="true" T="ProgramRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<ProgramRow, object>(x => x.Title)">Title</MudTableSortLabel></MudTh>
+                    <MudTh>Provider</MudTh>
+                    <MudTh>Location</MudTh>
+                    <MudTh>Dates</MudTh>
+                    <MudTh>Type</MudTh>
+                    <MudTh>Capacity</MudTh>
+                    <MudTh>Enrolled</MudTh>
+                    <MudTh>Cost (GH₵)</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Title">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.Title</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Provider">@(context.Provider ?? "—")</MudTd>
+                    <MudTd DataLabel="Location">@(context.Location ?? "—")</MudTd>
+                    <MudTd DataLabel="Dates">
+                        @if (context.StartDate.HasValue)
+                        {
+                            <span>@context.StartDate.Value.ToString("dd MMM yyyy")</span>
+                            @if (context.EndDate.HasValue)
+                            {
+                                <span> – @context.EndDate.Value.ToString("dd MMM yyyy")</span>
+                            }
+                        }
+                        else
+                        {
+                            <span class="mud-text-secondary">TBD</span>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Type">
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@(context.TrainingType == "Internal" ? Color.Info : Color.Secondary)"
+                                 Variant="Variant.Filled">
+                            @context.TrainingType
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Capacity">@context.MaxParticipants</MudTd>
+                    <MudTd DataLabel="Enrolled">
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@(context.EnrolledCount >= context.MaxParticipants ? Color.Warning : Color.Success)">
+                            @context.EnrolledCount
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Cost">@context.Cost.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context)" Variant="Variant.Filled">
+                            @GetStatusLabel(context)
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.People" Size="Size.Small" Color="Color.Info"
+                                       Title="Manage Enrollments" OnClick="@(() => OpenEnrollments(context.Id))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                       OnClick="@(() => OpenEditDialog(context.Id))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       OnClick="@(() => DeleteProgram(context.Id))" />
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Class="pa-4 mud-text-secondary">No training programs found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private bool _isLoading = true;
+    private List<ProgramRow> _programs = new();
+
+    protected override async Task OnInitializedAsync() => await LoadPrograms();
+
+    private async Task LoadPrograms()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _programs = await db.TrainingPrograms
+                .Where(p => p.IsActive)
+                .OrderByDescending(p => p.StartDate)
+                .Select(p => new ProgramRow
+                {
+                    Id = p.Id,
+                    Title = p.Title,
+                    Provider = p.Provider,
+                    Location = p.Location,
+                    StartDate = p.StartDate,
+                    EndDate = p.EndDate,
+                    MaxParticipants = p.MaxParticipants,
+                    Cost = p.Cost,
+                    TrainingType = p.TrainingType,
+                    EnrolledCount = p.TrainingAttendances.Count()
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var dialog = await DialogService.ShowAsync<ProgramDialog>("Add Training Program",
+            new DialogParameters { ["ProgramId"] = (int?)null },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadPrograms();
+    }
+
+    private async Task OpenEditDialog(int id)
+    {
+        var dialog = await DialogService.ShowAsync<ProgramDialog>("Edit Training Program",
+            new DialogParameters { ["ProgramId"] = (int?)id },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadPrograms();
+    }
+
+    private async Task OpenEnrollments(int id)
+    {
+        var dialog = await DialogService.ShowAsync<EnrollmentDialog>("Manage Enrollments",
+            new DialogParameters { ["ProgramId"] = id },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadPrograms();
+    }
+
+    private async Task DeleteProgram(int id)
+    {
+        bool? confirmed = await DialogService.ShowMessageBox("Delete Program",
+            "Are you sure you want to delete this training program?",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.TrainingPrograms.FindAsync(id);
+            if (entity == null) return;
+            entity.IsActive = false;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Program deleted.", Severity.Success);
+            await LoadPrograms();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private string GetStatusLabel(ProgramRow p)
+    {
+        var today = DateTime.Today;
+        if (!p.StartDate.HasValue) return "Upcoming";
+        if (p.StartDate.Value > today) return "Upcoming";
+        if (p.EndDate.HasValue && p.EndDate.Value < today) return "Completed";
+        return "Ongoing";
+    }
+
+    private Color GetStatusColor(ProgramRow p)
+    {
+        var label = GetStatusLabel(p);
+        return label switch
+        {
+            "Completed" => Color.Success,
+            "Ongoing" => Color.Info,
+            _ => Color.Default
+        };
+    }
+
+    private class ProgramRow
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = "";
+        public string? Provider { get; set; }
+        public string? Location { get; set; }
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public int MaxParticipants { get; set; }
+        public decimal Cost { get; set; }
+        public string TrainingType { get; set; } = "Internal";
+        public int EnrolledCount { get; set; }
+    }
+}

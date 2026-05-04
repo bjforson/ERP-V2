@@ -1,0 +1,144 @@
+@page "/letters/generate"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Enums
+@using NickHR.Services.Letter
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>NICKSCAN ERP — NickHR — Letter Generator</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Description" Class="mr-2" />Letter Generation
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="2">
+            <MudCardHeader><MudText Typo="Typo.h6">Generate Letter</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudSelect T="int?" @bind-Value="_selectedTemplateId" Label="Template" Required="true">
+                    @foreach (var t in _templates)
+                    {
+                        <MudSelectItem T="int?" Value="@t.Id">@t.Name (@t.Category)</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudAutocomplete T="Employee" @bind-Value="_selectedEmployee" Label="Employee" Class="mt-3"
+                    SearchFunc="SearchEmployees" ToStringFunc="@(e => e == null ? "" : $"{e.FirstName} {e.LastName} ({e.EmployeeCode})")" />
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true" Class="mt-4"
+                           OnClick="Preview" Disabled="@(!_selectedTemplateId.HasValue || _selectedEmployee == null)">
+                    Preview
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2"
+                           OnClick="GenerateAndDownload" Disabled="@(!_selectedTemplateId.HasValue || _selectedEmployee == null)">
+                    Generate & Download PDF
+                </MudButton>
+                <MudButton Variant="Variant.Text" Color="Color.Secondary" FullWidth="true" Class="mt-2"
+                           OnClick="SeedTemplates">
+                    Seed Default Templates
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="8">
+        @if (!string.IsNullOrEmpty(_previewHtml))
+        {
+            <MudCard Elevation="2">
+                <MudCardHeader><MudText Typo="Typo.h6">Preview</MudText></MudCardHeader>
+                <MudCardContent>
+                    <div style="padding:20px; border:1px solid #ccc; background:#fff; min-height:400px">
+                        @* TRUST BOUNDARY (Wave 2J): _previewHtml is the output of
+                           LetterService.GeneratePreviewAsync, which runs the fully-merged template
+                           body through HtmlSanitizer (Ganss.Xss) before returning. Templates are
+                           privileged-author trusted; merge values are untrusted; the upstream
+                           sanitizer pass strips XSS payloads from either source while preserving
+                           safe formatting. No further sanitization is required at the render site. *@
+                        @((MarkupString)_previewHtml)
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        }
+
+        <MudCard Elevation="2" Class="mt-4">
+            <MudCardHeader><MudText Typo="Typo.h6">Generated Letters History</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudTable Items="_generatedLetters" Dense="true" Hover="true" Loading="_loading">
+                    <HeaderContent>
+                        <MudTh>Template</MudTh><MudTh>Employee</MudTh><MudTh>Generated At</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.LetterTemplate?.Name</MudTd>
+                        <MudTd>@context.Employee?.FirstName @context.Employee?.LastName</MudTd>
+                        <MudTd>@context.GeneratedAt.ToString("dd MMM yyyy HH:mm")</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private List<LetterTemplate> _templates = new();
+    private List<Employee> _employees = new();
+    private List<GeneratedLetter> _generatedLetters = new();
+    private int? _selectedTemplateId;
+    private Employee? _selectedEmployee;
+    private string _previewHtml = "";
+    private bool _loading = true;
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Letters", null, true) };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<LetterService>();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _templates = await svc.GetTemplatesAsync();
+        _employees = await db.Employees.Where(e => e.EmploymentStatus == EmploymentStatus.Active).OrderBy(e => e.FirstName).ToListAsync();
+        _generatedLetters = await svc.GetGeneratedLettersAsync();
+        _loading = false;
+    }
+
+    private Task<IEnumerable<Employee>> SearchEmployees(string value, CancellationToken ct)
+    {
+        var results = string.IsNullOrEmpty(value) ? _employees
+            : _employees.Where(e => $"{e.FirstName} {e.LastName} {e.EmployeeCode}".Contains(value, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(results);
+    }
+
+    private async Task Preview()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<LetterService>();
+        _previewHtml = await svc.GeneratePreviewAsync(_selectedTemplateId!.Value, _selectedEmployee!.Id);
+    }
+
+    private async Task GenerateAndDownload()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<LetterService>();
+        var pdf = await svc.GeneratePdfAsync(_selectedTemplateId!.Value, _selectedEmployee!.Id, null);
+        var base64 = Convert.ToBase64String(pdf);
+        await JS.InvokeVoidAsync("eval", $"{{ var a=document.createElement('a');a.href='data:application/pdf;base64,{base64}';a.download='letter.pdf';a.click(); }}");
+        Snackbar.Add("Letter generated", Severity.Success);
+        _generatedLetters = await svc.GetGeneratedLettersAsync();
+    }
+
+    private async Task SeedTemplates()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<LetterService>();
+        await svc.SeedDefaultTemplatesAsync();
+        _templates = await svc.GetTemplatesAsync();
+        Snackbar.Add("Default templates seeded", Severity.Success);
+    }
+}

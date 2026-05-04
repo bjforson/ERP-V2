@@ -1,0 +1,303 @@
+@page "/overtime/approvals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+<PageTitle>NICKSCAN ERP — NickHR — Overtime Approvals</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    Overtime Approvals
+    @if (!_isLoading && _pending.Count > 0)
+    {
+        <MudChip T="string" Color="Color.Warning" Size="Size.Small" Class="ml-2">@_pending.Count</MudChip>
+    }
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <MudTabPanel Text="Pending" Icon="@Icons.Material.Filled.HourglassEmpty"
+                 BadgeData="@_pending.Count" BadgeColor="Color.Warning">
+        @RequestTable(_pending, showActions: true)
+    </MudTabPanel>
+    <MudTabPanel Text="Approved" Icon="@Icons.Material.Filled.CheckCircle">
+        @RequestTable(_approved, showActions: false)
+    </MudTabPanel>
+    <MudTabPanel Text="Rejected" Icon="@Icons.Material.Filled.Cancel">
+        @RequestTable(_rejected, showActions: false)
+    </MudTabPanel>
+    <MudTabPanel Text="Completed" Icon="@Icons.Material.Filled.TaskAlt">
+        @RequestTable(_completed, showActions: false)
+    </MudTabPanel>
+</MudTabs>
+
+<!-- Reject Dialog -->
+@if (_rejectDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_rejectDialogOpen">
+        <TitleContent><MudText Typo="Typo.h6">Reject Overtime Request</MudText></TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Rejecting request for <strong>@_selectedName</strong> on @_selectedRequest?.Date.ToString("dd/MM/yyyy")
+            </MudText>
+            <MudTextField @bind-Value="_rejectReason" Label="Rejection Reason *" Variant="Variant.Outlined" Lines="3" Required="true" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _rejectDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ConfirmReject"
+                       Disabled="string.IsNullOrWhiteSpace(_rejectReason)">Reject</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Complete Dialog -->
+@if (_completeDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_completeDialogOpen">
+        <TitleContent><MudText Typo="Typo.h6">Complete Overtime</MudText></TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Record actual hours for <strong>@_selectedName</strong>
+            </MudText>
+            <MudNumericField T="decimal" @bind-Value="_actualHours" Label="Actual Hours Worked *"
+                             Variant="Variant.Outlined" Min="0" Max="24" Step="0.5m"
+                             Format="F1" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _completeDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ConfirmComplete">Complete</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<OvertimeRequest> _pending = new();
+    private List<OvertimeRequest> _approved = new();
+    private List<OvertimeRequest> _rejected = new();
+    private List<OvertimeRequest> _completed = new();
+    private bool _isLoading = true;
+    private int? _currentEmployeeId;
+
+    private bool _rejectDialogOpen;
+    private bool _completeDialogOpen;
+    private OvertimeRequest? _selectedRequest;
+    private string _selectedName = string.Empty;
+    private string _rejectReason = string.Empty;
+    private decimal _actualHours;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Overtime", href: null, disabled: true),
+        new BreadcrumbItem("Approvals", href: null, disabled: true)
+    };
+
+    private RenderFragment RequestTable(List<OvertimeRequest> items, bool showActions) =>
+        @<div>
+            @if (!items.Any())
+            {
+                <div class="d-flex flex-column align-center pa-6">
+                    <MudText Typo="Typo.body1" Color="Color.Secondary">No requests in this category.</MudText>
+                </div>
+            }
+            else
+            {
+                <MudTable Items="items" Dense="true" Striped="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh>Employee</MudTh>
+                        <MudTh>Date</MudTh>
+                        <MudTh>Time Range</MudTh>
+                        <MudTh>Planned Hrs</MudTh>
+                        <MudTh>Rate</MudTh>
+                        <MudTh>Reason</MudTh>
+                        @if (!showActions)
+                        {
+                            <MudTh>Actual Hrs</MudTh>
+                        }
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">
+                                @(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")
+                            </MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee?.EmployeeCode</MudText>
+                        </MudTd>
+                        <MudTd>@context.Date.ToString("dd/MM/yyyy")</MudTd>
+                        <MudTd>@DateTime.Today.Add(context.StartTime).ToString("HH:mm") – @DateTime.Today.Add(context.EndTime).ToString("HH:mm")</MudTd>
+                        <MudTd>@context.PlannedHours.ToString("F1")h</MudTd>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Color="@(context.Rate >= 2m ? Color.Warning : Color.Info)">
+                                @context.Rate.ToString("F1")x
+                            </MudChip>
+                        </MudTd>
+                        <MudTd>
+                            <MudTooltip Text="@context.Reason">
+                                <MudText Typo="Typo.body2" Style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                    @context.Reason
+                                </MudText>
+                            </MudTooltip>
+                        </MudTd>
+                        @if (!showActions)
+                        {
+                            <MudTd>@(context.ActualHours.HasValue ? $"{context.ActualHours:F1}h" : "—")</MudTd>
+                        }
+                        <MudTd>
+                            @if (showActions)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                           OnClick="() => Approve(context)" Class="mr-1">Approve</MudButton>
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                           OnClick="() => OpenRejectDialog(context)">Reject</MudButton>
+                            }
+                            else if (context.Status == OvertimeRequestStatus.Approved)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                           OnClick="() => OpenCompleteDialog(context)">Complete</MudButton>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </div>;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentEmployeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var all = await db.OvertimeRequests
+                .Include(r => r.Employee)
+                .OrderByDescending(r => r.Date)
+                .ToListAsync();
+
+            _pending = all.Where(r => r.Status == OvertimeRequestStatus.Pending).ToList();
+            _approved = all.Where(r => r.Status == OvertimeRequestStatus.Approved).ToList();
+            _rejected = all.Where(r => r.Status == OvertimeRequestStatus.Rejected).ToList();
+            _completed = all.Where(r => r.Status == OvertimeRequestStatus.Completed).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task Approve(OvertimeRequest req)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.OvertimeRequests.FindAsync(req.Id);
+            if (entity == null) return;
+            entity.Status = OvertimeRequestStatus.Approved;
+            entity.ApprovedById = _currentEmployeeId;
+            entity.ApprovedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Approved!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private void OpenRejectDialog(OvertimeRequest req)
+    {
+        _selectedRequest = req;
+        _selectedName = req.Employee != null ? $"{req.Employee.FirstName} {req.Employee.LastName}" : "—";
+        _rejectReason = string.Empty;
+        _rejectDialogOpen = true;
+    }
+
+    private void OpenCompleteDialog(OvertimeRequest req)
+    {
+        _selectedRequest = req;
+        _selectedName = req.Employee != null ? $"{req.Employee.FirstName} {req.Employee.LastName}" : "—";
+        _actualHours = req.PlannedHours;
+        _completeDialogOpen = true;
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (_selectedRequest == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.OvertimeRequests.FindAsync(_selectedRequest.Id);
+            if (entity == null) return;
+            entity.Status = OvertimeRequestStatus.Rejected;
+            entity.RejectionReason = _rejectReason;
+            await db.SaveChangesAsync();
+            _rejectDialogOpen = false;
+            Snackbar.Add("Request rejected.", Severity.Warning);
+            await LoadData();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task ConfirmComplete()
+    {
+        if (_selectedRequest == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.OvertimeRequests
+                .Include(r => r.Employee)
+                .FirstOrDefaultAsync(r => r.Id == _selectedRequest.Id);
+            if (entity == null) return;
+            entity.Status = OvertimeRequestStatus.Completed;
+            entity.ActualHours = _actualHours;
+
+            // Compute pay amount from employee basic salary
+            if (entity.Employee != null)
+            {
+                var hourlyRate = entity.Employee.BasicSalary / (22m * 8m); // 22 working days * 8 hrs
+                entity.PayAmount = hourlyRate * _actualHours * entity.Rate;
+            }
+
+            await db.SaveChangesAsync();
+            _completeDialogOpen = false;
+            Snackbar.Add("Overtime marked as completed!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+}

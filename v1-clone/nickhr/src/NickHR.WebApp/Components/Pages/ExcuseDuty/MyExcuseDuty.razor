@@ -1,0 +1,229 @@
+@page "/excuse-duty/my-requests"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — My Excuse Duty Requests</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-2">
+    <MudText Typo="Typo.h5">My Excuse Duty Requests</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+               Href="/excuse-duty/request">
+        New Request
+    </MudButton>
+</div>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<!-- Month/Year Selector -->
+<MudGrid Class="mb-4">
+    <MudItem xs="6" sm="3">
+        <MudSelect T="int" Value="_selectedMonth" Label="Month" Variant="Variant.Outlined"
+                   ValueChanged="@((int v) => { _selectedMonth = v; _ = OnFilterChanged(v); })">
+            @for (int m = 1; m <= 12; m++)
+            {
+                var monthName = new DateTime(2000, m, 1).ToString("MMMM");
+                <MudSelectItem Value="m">@monthName</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="6" sm="3">
+        <MudSelect T="int" Value="_selectedYear" Label="Year" Variant="Variant.Outlined"
+                   ValueChanged="@((int v) => { _selectedYear = v; _ = OnFilterChanged(v); })">
+            @for (int y = DateTime.Today.Year; y >= DateTime.Today.Year - 2; y--)
+            {
+                <MudSelectItem Value="y">@y</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+</MudGrid>
+
+<!-- Summary Cards -->
+@if (!_isLoading && _requests.Any())
+{
+    <MudGrid Class="mb-4">
+        <MudItem xs="6" sm="3">
+            <MudCard Elevation="1">
+                <MudCardContent Class="py-3 text-center">
+                    <MudText Typo="Typo.overline" Color="Color.Secondary">Total Hours</MudText>
+                    <MudText Typo="Typo.h5" Color="Color.Primary">@_totalHours.ToString("N1")</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudCard Elevation="1">
+                <MudCardContent Class="py-3 text-center">
+                    <MudText Typo="Typo.overline" Color="Color.Secondary">Total Requests</MudText>
+                    <MudText Typo="Typo.h5">@_requests.Count</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        @foreach (var typeGroup in _byType)
+        {
+            <MudItem xs="6" sm="3">
+                <MudCard Elevation="1">
+                    <MudCardContent Class="py-3 text-center">
+                        <MudText Typo="Typo.overline" Color="Color.Secondary">@GetTypeLabel(typeGroup.Key)</MudText>
+                        <MudText Typo="Typo.h6">@typeGroup.Value.ToString("N1")h</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<!-- Requests Table -->
+<MudCard Elevation="2">
+    <MudCardContent>
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (!_requests.Any())
+        {
+            <div class="d-flex flex-column align-center pa-8">
+                <MudIcon Icon="@Icons.Material.Filled.AssignmentLate" Size="Size.Large" Color="Color.Secondary" Class="mb-3" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary">No excuse duty requests for this period.</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/excuse-duty/request" Class="mt-3">
+                    Request Excuse Duty
+                </MudButton>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="_requests" Dense="true" Striped="true" Hover="true">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<ExcuseDuty, object>(x => x.Date)">Date</MudTableSortLabel></MudTh>
+                    <MudTh>Type</MudTh>
+                    <MudTh>Time Range</MudTh>
+                    <MudTh>Duration</MudTh>
+                    <MudTh>Destination</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Return Confirmed</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Date.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="GetTypeColor(context.ExcuseDutyType)">
+                            @GetTypeLabel(context.ExcuseDutyType)
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        @(DateTime.Today.Add(context.StartTime).ToString("HH:mm")) –
+                        @(DateTime.Today.Add(context.EndTime).ToString("HH:mm"))
+                    </MudTd>
+                    <MudTd>@context.DurationHours.ToString("N1")h</MudTd>
+                    <MudTd>@(context.Destination ?? "—")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="GetStatusColor(context.Status)">
+                            @context.Status.ToString()
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        @if (context.ReturnConfirmed)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">
+                                @(context.ReturnTime.HasValue ? DateTime.Today.Add(context.ReturnTime.Value).ToString("HH:mm") : "Yes")
+                            </MudChip>
+                        }
+                        else if (context.Status == ExcuseDutyStatus.Approved)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">Pending</MudChip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                        }
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<ExcuseDuty> _requests = new();
+    private bool _isLoading = true;
+    private int _selectedMonth = DateTime.Today.Month;
+    private int _selectedYear = DateTime.Today.Year;
+    private decimal _totalHours = 0;
+    private Dictionary<ExcuseDutyType, decimal> _byType = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Excuse Duty", href: null, disabled: true),
+        new BreadcrumbItem("My Requests", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task OnFilterChanged(int _)
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var monthStart = new DateTime(_selectedYear, _selectedMonth, 1);
+            var monthEnd = monthStart.AddMonths(1);
+
+            _requests = await db.ExcuseDuties
+                .Where(e => e.Date >= monthStart && e.Date < monthEnd)
+                .OrderByDescending(e => e.Date)
+                .ToListAsync();
+
+            _totalHours = _requests.Sum(r => r.DurationHours);
+            _byType = _requests
+                .GroupBy(r => r.ExcuseDutyType)
+                .ToDictionary(g => g.Key, g => g.Sum(r => r.DurationHours));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private Color GetStatusColor(ExcuseDutyStatus status) => status switch
+    {
+        ExcuseDutyStatus.Pending => Color.Warning,
+        ExcuseDutyStatus.Approved => Color.Success,
+        ExcuseDutyStatus.Rejected => Color.Error,
+        ExcuseDutyStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+
+    private Color GetTypeColor(ExcuseDutyType type) => type switch
+    {
+        ExcuseDutyType.Medical => Color.Error,
+        ExcuseDutyType.OfficialErrand => Color.Primary,
+        ExcuseDutyType.PersonalEmergency => Color.Warning,
+        ExcuseDutyType.CourtAppearance => Color.Secondary,
+        _ => Color.Default
+    };
+
+    private string GetTypeLabel(ExcuseDutyType type) => type switch
+    {
+        ExcuseDutyType.OfficialErrand => "Official",
+        ExcuseDutyType.PersonalEmergency => "Emergency",
+        ExcuseDutyType.CourtAppearance => "Court",
+        ExcuseDutyType.CommunalDuty => "Communal",
+        _ => type.ToString()
+    };
+}

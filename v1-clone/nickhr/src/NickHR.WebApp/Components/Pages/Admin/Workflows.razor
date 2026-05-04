@@ -1,0 +1,383 @@
+@page "/admin/workflows"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SuperAdminOnly)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Workflows</PageTitle>
+
+<div class="d-flex align-center justify-space-between mb-4">
+    <MudText Typo="Typo.h5">
+        <MudIcon Icon="@Icons.Material.Filled.AccountTree" Class="mr-2" />Workflows
+    </MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+               OnClick="OpenAddWorkflowDialog">Add Workflow</MudButton>
+</div>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (!_workflows.Any())
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        No workflows configured yet.
+    </MudAlert>
+}
+else
+{
+    <MudTable Items="_workflows" Dense="false" Hover="true" Elevation="2" T="Workflow">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Entity Type</MudTh>
+            <MudTh>Description</MudTh>
+            <MudTh>Steps</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudText Typo="Typo.body1"><strong>@context.Name</strong></MudText>
+            </MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@context.EntityType</MudChip>
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.body2">@(context.Description ?? "—")</MudText>
+            </MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="Color.Default">@context.WorkflowSteps.Count step(s)</MudChip>
+            </MudTd>
+            <MudTd>
+                @if (context.IsActive)
+                { <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip> }
+                else
+                { <MudChip T="string" Size="Size.Small" Color="Color.Default">Inactive</MudChip> }
+            </MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                               OnClick="@(() => OpenEditWorkflowDialog(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.AddCircle" Size="Size.Small" Color="Color.Primary"
+                               Title="Add Step" OnClick="@(() => OpenAddStepDialog(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                               OnClick="@(() => DeleteWorkflowAsync(context))" />
+            </MudTd>
+        </RowTemplate>
+        <ChildRowContent>
+            @if (context.WorkflowSteps.Any())
+            {
+                <MudTr>
+                    <td colspan="6" class="pa-0">
+                        <MudTable Items="@context.WorkflowSteps.OrderBy(s => s.StepOrder).ToList()"
+                                  Dense="true" Hover="false" Elevation="0" Class="ml-8 mr-4 mb-2">
+                            <HeaderContent>
+                                <MudTh>Order</MudTh>
+                                <MudTh>Type</MudTh>
+                                <MudTh>Approver</MudTh>
+                                <MudTh>Description</MudTh>
+                                <MudTh></MudTh>
+                            </HeaderContent>
+                            <RowTemplate Context="step">
+                                <MudTd>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">Step @step.StepOrder</MudChip>
+                                </MudTd>
+                                <MudTd>@step.StepType</MudTd>
+                                <MudTd>
+                                    @if (step.ApproverEmployee != null)
+                                    {
+                                        <span>@step.ApproverEmployee.FirstName @step.ApproverEmployee.LastName</span>
+                                    }
+                                    else if (step.ApproverRoleId.HasValue)
+                                    {
+                                        <span>Role #@step.ApproverRoleId</span>
+                                    }
+                                    else
+                                    {
+                                        <span>—</span>
+                                    }
+                                </MudTd>
+                                <MudTd>@(step.Description ?? "—")</MudTd>
+                                <MudTd>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                                   OnClick="@(() => DeleteStepAsync(step))" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </td>
+                </MudTr>
+            }
+        </ChildRowContent>
+    </MudTable>
+}
+
+<!-- Add/Edit Workflow Dialog -->
+<MudDialog @bind-IsVisible="_workflowDialogOpen" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_editingWorkflow?.Id > 0 ? "Edit Workflow" : "Add Workflow")</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_editingWorkflow != null)
+        {
+            <MudGrid>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_editingWorkflow.Name" Label="Workflow Name" Required="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_editingWorkflow.EntityType" Label="Entity Type"
+                                  HelperText="e.g. LeaveRequest, Loan, JobRequisition"
+                                  Required="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_editingWorkflow.Description" Label="Description"
+                                  Variant="Variant.Outlined" Lines="2" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudCheckBox @bind-Value="_editingWorkflow.IsActive" Label="Active" />
+                </MudItem>
+            </MudGrid>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _workflowDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveWorkflowAsync" Disabled="_saving">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<!-- Add Step Dialog -->
+<MudDialog @bind-IsVisible="_stepDialogOpen" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Add Step to: @_stepTargetWorkflow?.Name</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_editingStep != null)
+        {
+            <MudGrid>
+                <MudItem xs="12">
+                    <MudNumericField @bind-Value="_editingStep.StepOrder" Label="Step Order" Required="true"
+                                     Variant="Variant.Outlined" Min="1" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect @bind-Value="_editingStep.StepType" Label="Step Type" Variant="Variant.Outlined">
+                        @foreach (var t in Enum.GetValues<WorkflowStepType>())
+                        {
+                            <MudSelectItem Value="t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect @bind-Value="_editingStep.ApproverEmployeeId" Label="Approver Employee (optional)"
+                               Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem Value="@((int?)e.Id)">@e.FirstName @e.LastName</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_editingStep.Description" Label="Description"
+                                  Variant="Variant.Outlined" Lines="2" />
+                </MudItem>
+            </MudGrid>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _stepDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveStepAsync" Disabled="_saving">Add Step</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private bool _isLoading = true;
+    private bool _saving = false;
+    private List<Workflow> _workflows = new();
+    private List<Employee> _employees = new();
+
+    // Workflow dialog
+    private bool _workflowDialogOpen = false;
+    private Workflow? _editingWorkflow;
+
+    // Step dialog
+    private bool _stepDialogOpen = false;
+    private WorkflowStep? _editingStep;
+    private Workflow? _stepTargetWorkflow;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _workflows = await db.Workflows
+                .Include(w => w.WorkflowSteps)
+                    .ThenInclude(s => s.ApproverEmployee)
+                .OrderBy(w => w.Name)
+                .ToListAsync();
+            _employees = await db.Employees
+                .Where(e => e.EmploymentStatus == EmploymentStatus.Active ||
+                            e.EmploymentStatus == EmploymentStatus.Confirmed)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading workflows: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OpenAddWorkflowDialog()
+    {
+        _editingWorkflow = new Workflow { IsActive = true };
+        _workflowDialogOpen = true;
+    }
+
+    private void OpenEditWorkflowDialog(Workflow wf)
+    {
+        _editingWorkflow = new Workflow
+        {
+            Id = wf.Id,
+            Name = wf.Name,
+            EntityType = wf.EntityType,
+            Description = wf.Description,
+            IsActive = wf.IsActive
+        };
+        _workflowDialogOpen = true;
+    }
+
+    private async Task SaveWorkflowAsync()
+    {
+        if (_editingWorkflow == null) return;
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (_editingWorkflow.Id == 0)
+                db.Workflows.Add(_editingWorkflow);
+            else
+                db.Workflows.Update(_editingWorkflow);
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Workflow saved.", Severity.Success);
+            _workflowDialogOpen = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving workflow: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteWorkflowAsync(Workflow wf)
+    {
+        var confirm = await DialogService.ShowMessageBox("Confirm Delete",
+            $"Delete workflow '{wf.Name}' and all its steps?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Workflows.Include(w => w.WorkflowSteps)
+                .FirstOrDefaultAsync(w => w.Id == wf.Id);
+            if (entity != null)
+            {
+                entity.IsDeleted = true;
+                foreach (var step in entity.WorkflowSteps)
+                    step.IsDeleted = true;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Workflow deleted.", Severity.Success);
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error deleting: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void OpenAddStepDialog(Workflow wf)
+    {
+        _stepTargetWorkflow = wf;
+        var nextOrder = wf.WorkflowSteps.Any() ? wf.WorkflowSteps.Max(s => s.StepOrder) + 1 : 1;
+        _editingStep = new WorkflowStep
+        {
+            WorkflowId = wf.Id,
+            StepOrder = nextOrder,
+            StepType = WorkflowStepType.Approval
+        };
+        _stepDialogOpen = true;
+    }
+
+    private async Task SaveStepAsync()
+    {
+        if (_editingStep == null) return;
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            db.WorkflowSteps.Add(_editingStep);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Step added.", Severity.Success);
+            _stepDialogOpen = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error adding step: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteStepAsync(WorkflowStep step)
+    {
+        var confirm = await DialogService.ShowMessageBox("Confirm Delete",
+            $"Delete step {step.StepOrder}?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.WorkflowSteps.FindAsync(step.Id);
+            if (entity != null)
+            {
+                entity.IsDeleted = true;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Step deleted.", Severity.Success);
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error deleting step: {ex.Message}", Severity.Error);
+        }
+    }
+}

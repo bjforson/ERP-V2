@@ -1,0 +1,286 @@
+@page "/training/skills"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Training
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Skills Matrix</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Skills Matrix</MudText>
+
+<MudGrid Spacing="3">
+    @* Skills Library *@
+    <MudItem xs="12" md="5">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Skills Library</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddSkillDialog">
+                        Add Skill
+                    </MudButton>
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent Class="pa-0">
+                @if (_loadingSkills)
+                {
+                    <div class="d-flex justify-center pa-4">
+                        <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+                    </div>
+                }
+                else
+                {
+                    <MudTable Items="@_skills" Dense="true" Hover="true" T="SkillItem">
+                        <HeaderContent>
+                            <MudTh>Name</MudTh>
+                            <MudTh>Category</MudTh>
+                            <MudTh>Actions</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Name">
+                                <MudText Typo="Typo.body2" Style="font-weight:600;">@context.Name</MudText>
+                            </MudTd>
+                            <MudTd DataLabel="Category">
+                                @if (!string.IsNullOrWhiteSpace(context.Category))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default">@context.Category</MudChip>
+                                }
+                                else
+                                {
+                                    <span class="mud-text-secondary">—</span>
+                                }
+                            </MudTd>
+                            <MudTd>
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                               OnClick="@(() => DeleteSkill(context.Id))" />
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Class="pa-4 mud-text-secondary">No skills defined yet.</MudText>
+                        </NoRecordsContent>
+                    </MudTable>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    @* Employee Skills *@
+    <MudItem xs="12" md="7">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Employee Skills</MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudSelect T="int?" Value="_selectedEmployeeId" Label="Select Employee"
+                               Variant="Variant.Outlined" Dense="true" Style="min-width:200px;" Class="mr-2"
+                               ValueChanged="@((int? v) => OnEmployeeChanged(v))">
+                        <MudSelectItem T="int?" Value="@((int?)null)">— Select Employee —</MudSelectItem>
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)e.Id)">@e.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    @if (_selectedEmployeeId.HasValue)
+                    {
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAssignSkillDialog">
+                            Add Skill
+                        </MudButton>
+                    }
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent Class="pa-0">
+                @if (_loadingEmpSkills)
+                {
+                    <div class="d-flex justify-center pa-4">
+                        <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+                    </div>
+                }
+                else if (!_selectedEmployeeId.HasValue)
+                {
+                    <MudText Class="pa-4 mud-text-secondary">Select an employee to view their skills.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="@_empSkills" Dense="true" Hover="true" T="EmpSkillRow">
+                        <HeaderContent>
+                            <MudTh>Skill</MudTh>
+                            <MudTh>Category</MudTh>
+                            <MudTh>Proficiency</MudTh>
+                            <MudTh>Certified Date</MudTh>
+                            <MudTh>Actions</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Skill">
+                                <MudText Typo="Typo.body2" Style="font-weight:600;">@context.SkillName</MudText>
+                            </MudTd>
+                            <MudTd DataLabel="Category">@(context.Category ?? "—")</MudTd>
+                            <MudTd DataLabel="Proficiency">
+                                <MudRating ReadOnly="true" SelectedValue="@context.ProficiencyLevel"
+                                           MaxValue="5" Color="Color.Warning" Size="Size.Small" />
+                            </MudTd>
+                            <MudTd DataLabel="Certified Date">
+                                @(context.CertifiedDate.HasValue ? context.CertifiedDate.Value.ToString("dd MMM yyyy") : "—")
+                            </MudTd>
+                            <MudTd>
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                               OnClick="@(() => RemoveEmpSkill(context.Id))" />
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Class="pa-4 mud-text-secondary">No skills assigned yet.</MudText>
+                        </NoRecordsContent>
+                    </MudTable>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private bool _loadingSkills = true;
+    private bool _loadingEmpSkills;
+    private int? _selectedEmployeeId;
+    private List<SkillItem> _skills = new();
+    private List<EmpOption> _employees = new();
+    private List<EmpSkillRow> _empSkills = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadEmployees();
+        await LoadSkills();
+    }
+
+    private async Task LoadEmployees()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task LoadSkills()
+    {
+        _loadingSkills = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _skills = await db.Skills
+                .Where(s => s.IsActive)
+                .OrderBy(s => s.Category).ThenBy(s => s.Name)
+                .Select(s => new SkillItem { Id = s.Id, Name = s.Name, Category = s.Category, Description = s.Description })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _loadingSkills = false; }
+    }
+
+    private async Task LoadEmpSkills()
+    {
+        if (!_selectedEmployeeId.HasValue) return;
+        _loadingEmpSkills = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _empSkills = await db.EmployeeSkills
+                .Include(es => es.Skill)
+                .Where(es => es.EmployeeId == _selectedEmployeeId.Value)
+                .Select(es => new EmpSkillRow
+                {
+                    Id = es.Id,
+                    SkillId = es.SkillId,
+                    SkillName = es.Skill.Name,
+                    Category = es.Skill.Category,
+                    ProficiencyLevel = es.ProficiencyLevel,
+                    CertifiedDate = es.CertifiedDate
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _loadingEmpSkills = false; }
+    }
+
+    private async Task OnEmployeeChanged(int? val)
+    {
+        _selectedEmployeeId = val;
+        await LoadEmpSkills();
+    }
+
+    private async Task OpenAddSkillDialog()
+    {
+        var dialog = await DialogService.ShowAsync<SkillDialog>("Add Skill",
+            new DialogParameters { ["SkillId"] = (int?)null },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadSkills();
+    }
+
+    private async Task OpenAssignSkillDialog()
+    {
+        var existingSkillIds = _empSkills.Select(s => s.SkillId).ToList();
+        var parameters = new DialogParameters
+        {
+            ["EmployeeId"] = _selectedEmployeeId!.Value,
+            ["ExistingSkillIds"] = existingSkillIds
+        };
+        var dialog = await DialogService.ShowAsync<SkillDialog>("Assign Skill", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadEmpSkills();
+    }
+
+    private async Task DeleteSkill(int id)
+    {
+        bool? confirmed = await DialogService.ShowMessageBox("Delete Skill",
+            "Delete this skill from the library?", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Skills.FindAsync(id);
+            if (entity == null) return;
+            entity.IsActive = false;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Skill deleted.", Severity.Success);
+            await LoadSkills();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task RemoveEmpSkill(int id)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmployeeSkills.FindAsync(id);
+            if (entity == null) return;
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Skill removed.", Severity.Success);
+            await LoadEmpSkills();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private class SkillItem { public int Id { get; set; } public string Name { get; set; } = ""; public string? Category { get; set; } public string? Description { get; set; } }
+    private class EmpSkillRow { public int Id { get; set; } public int SkillId { get; set; } public string SkillName { get; set; } = ""; public string? Category { get; set; } public int ProficiencyLevel { get; set; } public DateTime? CertifiedDate { get; set; } }
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

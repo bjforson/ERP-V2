@@ -1,0 +1,179 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.Edit : Icons.Material.Filled.Add)" Class="mr-2" />
+            @(IsEdit ? "Edit Grade" : "Add Grade")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid>
+                <MudItem xs="12" sm="8">
+                    <MudTextField @bind-Value="Grade.Name"
+                                  Label="Name"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Name is required."
+                                  MaxLength="100"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="int" @bind-Value="Grade.Level"
+                                     Label="Level"
+                                     Variant="Variant.Outlined"
+                                     Required="true"
+                                     RequiredError="Level is required."
+                                     Min="1"
+                                     Max="99"
+                                     Immediate="true"
+                                     HelperText="Numeric rank (1 = lowest)" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="Grade.MinSalary"
+                                     Label="Min Salary"
+                                     Variant="Variant.Outlined"
+                                     Required="true"
+                                     RequiredError="Min salary is required."
+                                     Min="0"
+                                     Format="N2"
+                                     Adornment="Adornment.Start"
+                                     AdornmentText="GH₵"
+                                     Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="Grade.MidSalary"
+                                     Label="Mid Salary"
+                                     Variant="Variant.Outlined"
+                                     Required="true"
+                                     RequiredError="Mid salary is required."
+                                     Min="0"
+                                     Format="N2"
+                                     Adornment="Adornment.Start"
+                                     AdornmentText="GH₵"
+                                     Immediate="true" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="decimal" @bind-Value="Grade.MaxSalary"
+                                     Label="Max Salary"
+                                     Variant="Variant.Outlined"
+                                     Required="true"
+                                     RequiredError="Max salary is required."
+                                     Min="0"
+                                     Format="N2"
+                                     Adornment="Adornment.Start"
+                                     AdornmentText="GH₵"
+                                     Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Grade.Description"
+                                  Label="Description"
+                                  Variant="Variant.Outlined"
+                                  Lines="3"
+                                  MaxLength="500" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudCheckBox @bind-Value="Grade.IsActive" Label="Active" Color="Color.Primary" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="Submit" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Add")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter] public Grade Grade { get; set; } = new();
+    [Parameter] public bool IsEdit { get; set; }
+
+    private MudForm _form = null!;
+    private bool _isValid;
+    private bool _isSaving;
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+
+        // Basic salary range validation
+        if (Grade.MinSalary > Grade.MidSalary)
+        {
+            Snackbar.Add("Min salary cannot be greater than mid salary.", Severity.Warning);
+            return;
+        }
+        if (Grade.MidSalary > Grade.MaxSalary)
+        {
+            Snackbar.Add("Mid salary cannot be greater than max salary.", Severity.Warning);
+            return;
+        }
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (IsEdit)
+            {
+                var entity = await db.Grades.FindAsync(Grade.Id);
+                if (entity == null)
+                {
+                    Snackbar.Add("Grade not found.", Severity.Error);
+                    return;
+                }
+                entity.Name = Grade.Name;
+                entity.Level = Grade.Level;
+                entity.MinSalary = Grade.MinSalary;
+                entity.MidSalary = Grade.MidSalary;
+                entity.MaxSalary = Grade.MaxSalary;
+                entity.Description = Grade.Description;
+                entity.IsActive = Grade.IsActive;
+                entity.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                var entity = new Grade
+                {
+                    Name = Grade.Name,
+                    Level = Grade.Level,
+                    MinSalary = Grade.MinSalary,
+                    MidSalary = Grade.MidSalary,
+                    MaxSalary = Grade.MaxSalary,
+                    Description = Grade.Description,
+                    IsActive = Grade.IsActive,
+                    CreatedAt = DateTime.UtcNow
+                };
+                db.Grades.Add(entity);
+            }
+
+            await db.SaveChangesAsync();
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving grade: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

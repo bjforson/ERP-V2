@@ -1,0 +1,250 @@
+@page "/attendance/my-records"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — My Attendance</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">My Attendance Records</MudText>
+
+@if (_employeeId == 0 && !_isLoading)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+
+<!-- Month/Year selector -->
+<MudCard Elevation="1" Class="mb-4">
+    <MudCardContent>
+        <MudGrid>
+            <MudItem xs="6" sm="3">
+                <MudSelect T="int" @bind-Value="_selectedMonth" Label="Month" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" @bind-Value:after="LoadRecords">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var mn = m;
+                        <MudSelectItem T="int" Value="@mn">@(new DateTime(2000, mn, 1).ToString("MMMM"))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudSelect T="int" @bind-Value="_selectedYear" Label="Year" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" @bind-Value:after="LoadRecords">
+                    @for (int y = DateTime.Today.Year - 2; y <= DateTime.Today.Year; y++)
+                    {
+                        var yr = y;
+                        <MudSelectItem T="int" Value="@yr">@yr</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" Class="d-flex align-end">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
+                           OnClick="ExportCsv">
+                    Export CSV
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+<MudCard Elevation="2">
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_records" Dense="true" Hover="true" Striped="true" T="AttendanceRow" CustomFooter="true">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<AttendanceRow, object>(x => x.Date)">Date</MudTableSortLabel></MudTh>
+                    <MudTh>Day</MudTh>
+                    <MudTh>Clock In</MudTh>
+                    <MudTh>Clock Out</MudTh>
+                    <MudTh>Work Hours</MudTh>
+                    <MudTh>Overtime</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Notes</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Date">@context.Date.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Day">@context.Date.ToString("ddd")</MudTd>
+                    <MudTd DataLabel="Clock In">@(context.ClockIn?.ToString("HH:mm") ?? "—")</MudTd>
+                    <MudTd DataLabel="Clock Out">@(context.ClockOut?.ToString("HH:mm") ?? "—")</MudTd>
+                    <MudTd DataLabel="Work Hours">@(context.WorkHours.HasValue ? context.WorkHours.Value.ToString("F1") + "h" : "—")</MudTd>
+                    <MudTd DataLabel="Overtime">@(context.OvertimeHours.HasValue && context.OvertimeHours > 0 ? context.OvertimeHours.Value.ToString("F1") + "h" : "—")</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.AttendanceType)">
+                            @context.AttendanceType.ToString()
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Notes">@(string.IsNullOrWhiteSpace(context.Notes) ? "—" : context.Notes)</MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTFootRow>
+                        <MudTd colspan="4" Style="font-weight:700;background:#f5f5f5;">
+                            Summary: @_presentCount days present
+                        </MudTd>
+                        <MudTd Style="font-weight:700;background:#f5f5f5;">@_totalHours.ToString("F1")h total</MudTd>
+                        <MudTd Style="font-weight:700;background:#f5f5f5;">@_totalOvertime.ToString("F1")h OT</MudTd>
+                        <MudTd colspan="2" Style="background:#f5f5f5;"></MudTd>
+                    </MudTFootRow>
+                </FooterContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 31, 15, 7 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No attendance records for @(new DateTime(_selectedYear, _selectedMonth, 1).ToString("MMMM yyyy")).
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private int _selectedMonth = DateTime.Today.Month;
+    private int _selectedYear = DateTime.Today.Year;
+    private bool _isLoading = true;
+    private int _employeeId = 0;
+
+    private List<AttendanceRow> _records = new();
+    private int _presentCount = 0;
+    private decimal _totalHours = 0;
+    private decimal _totalOvertime = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var empId = await GetCurrentEmployeeIdAsync();
+        _employeeId = empId ?? 0;
+        await LoadRecords();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadRecords()
+    {
+        if (_employeeId == 0) { _isLoading = false; return; }
+
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var monthStart = new DateTime(_selectedYear, _selectedMonth, 1, 0, 0, 0, DateTimeKind.Utc);
+            var monthEnd = monthStart.AddMonths(1);
+
+            _records = await db.AttendanceRecords
+                .Where(a => a.EmployeeId == _employeeId && a.Date >= monthStart && a.Date < monthEnd)
+                .OrderBy(a => a.Date)
+                .Select(a => new AttendanceRow
+                {
+                    Date = a.Date,
+                    ClockIn = a.ClockIn != null ? a.ClockIn.Value.ToLocalTime() : (DateTime?)null,
+                    ClockOut = a.ClockOut != null ? a.ClockOut.Value.ToLocalTime() : (DateTime?)null,
+                    WorkHours = a.WorkHours,
+                    OvertimeHours = a.OvertimeHours,
+                    AttendanceType = a.AttendanceType,
+                    Notes = a.Notes
+                })
+                .ToListAsync();
+
+            _presentCount = _records.Count(r => r.AttendanceType == AttendanceType.Present ||
+                                                 r.AttendanceType == AttendanceType.Late ||
+                                                 r.AttendanceType == AttendanceType.HalfDay);
+            _totalHours = _records.Where(r => r.WorkHours.HasValue).Sum(r => r.WorkHours!.Value);
+            _totalOvertime = _records.Where(r => r.OvertimeHours.HasValue).Sum(r => r.OvertimeHours!.Value);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading attendance: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ExportCsv()
+    {
+        try
+        {
+            var lines = new System.Text.StringBuilder();
+            lines.AppendLine("Date,Day,Clock In,Clock Out,Work Hours,Overtime Hours,Status,Notes");
+            foreach (var r in _records)
+            {
+                lines.AppendLine(string.Join(",",
+                    r.Date.ToString("yyyy-MM-dd"),
+                    r.Date.ToString("ddd"),
+                    r.ClockIn?.ToString("HH:mm") ?? "",
+                    r.ClockOut?.ToString("HH:mm") ?? "",
+                    r.WorkHours?.ToString("F2") ?? "",
+                    r.OvertimeHours?.ToString("F2") ?? "",
+                    r.AttendanceType.ToString(),
+                    $"\"{r.Notes?.Replace("\"", "\"\"") ?? ""}\""
+                ));
+            }
+
+            var fileName = $"attendance_{_selectedYear}_{_selectedMonth:D2}.csv";
+            var content = lines.ToString();
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, "text/csv", content);
+            Snackbar.Add("CSV exported.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Export error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private Color GetStatusColor(AttendanceType type) => type switch
+    {
+        AttendanceType.Present => Color.Success,
+        AttendanceType.Absent => Color.Error,
+        AttendanceType.Late => Color.Warning,
+        AttendanceType.HalfDay => Color.Info,
+        AttendanceType.OnLeave => Color.Secondary,
+        AttendanceType.Holiday => Color.Primary,
+        AttendanceType.Weekend => Color.Default,
+        _ => Color.Default
+    };
+
+    private class AttendanceRow
+    {
+        public DateTime Date { get; set; }
+        public DateTime? ClockIn { get; set; }
+        public DateTime? ClockOut { get; set; }
+        public decimal? WorkHours { get; set; }
+        public decimal? OvertimeHours { get; set; }
+        public AttendanceType AttendanceType { get; set; }
+        public string? Notes { get; set; }
+    }
+}

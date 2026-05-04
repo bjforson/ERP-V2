@@ -1,0 +1,235 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject NickHR.WebApp.Services.AuthStateProvider AuthState
+
+<MudThemeProvider Theme="_theme" IsDarkMode="_isDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true" Color="Color.Primary">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="ToggleDrawer" />
+        <MudText Typo="Typo.h6" Class="ml-2">NickHR</MudText>
+        <MudText Typo="Typo.body2" Class="ml-3" Style="opacity:0.8;">@_currentPageTitle</MudText>
+        <MudSpacer />
+
+        <AuthorizeView>
+            <Authorized>
+                <MudBadge Content="@_unreadNotifications" Visible="@(_unreadNotifications > 0)" Color="Color.Error" Overlap="true">
+                    <MudIconButton Icon="@Icons.Material.Filled.Notifications" Color="Color.Inherit" Href="/notifications" />
+                </MudBadge>
+                <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" Color="Color.Inherit" OnClick="ToggleDarkMode" />
+                <MudMenu Icon="@Icons.Material.Filled.AccountCircle" Color="Color.Inherit" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                    <MudMenuItem Href="/profile">My Profile</MudMenuItem>
+                    <MudMenuItem Href="/change-password">Change Password</MudMenuItem>
+                    <MudDivider />
+                    <MudMenuItem OnClick="Logout">Logout</MudMenuItem>
+                </MudMenu>
+            </Authorized>
+        </AuthorizeView>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2"
+               Variant="@(_isMobile ? DrawerVariant.Temporary : DrawerVariant.Responsive)">
+        <NavMenu />
+    </MudDrawer>
+
+    <MudMainContent Class="pa-4">
+        @Body
+    </MudMainContent>
+
+    <BottomNavBar OnMenuToggle="ToggleDrawer" />
+</MudLayout>
+
+@code {
+    private bool _drawerOpen = true;
+    private bool _isDarkMode = false;
+    private bool _isMobile = false;
+    private int _unreadNotifications = 0;
+    private string _currentPageTitle = "";
+
+    private static readonly Dictionary<string, string> PageTitles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        {"/", "Dashboard"}, {"/profile", "My Profile"}, {"/my-payslips", "My Payslips"},
+        {"/my-documents", "My Documents"}, {"/directory", "Company Directory"},
+        {"/change-password", "Change Password"}, {"/assets/my", "My Assets"},
+        {"/journal", "My Journal"}, {"/handbook", "Employee Handbook"},
+        {"/attendance/clock", "Clock In/Out"}, {"/attendance/my-records", "My Attendance"},
+        {"/attendance/qr-scan", "QR Check-in"}, {"/attendance/reports", "Attendance Reports"},
+        {"/attendance/shifts", "Shift Management"}, {"/attendance/qr-generate", "QR Generate"},
+        {"/leave/request", "Request Leave"}, {"/leave/my-requests", "My Leave"},
+        {"/leave/calendar", "Team Calendar"}, {"/leave/approvals", "Leave Approvals"},
+        {"/leave/policies", "Leave Policies"},
+        {"/excuse-duty/request", "Excuse Duty Request"}, {"/excuse-duty/my-requests", "My Excuse Duty"},
+        {"/excuse-duty/approvals", "Excuse Duty Approvals"}, {"/excuse-duty/report", "Excuse Duty Report"},
+        {"/overtime/request", "Request Overtime"}, {"/overtime/my-requests", "My Overtime"},
+        {"/overtime/approvals", "Overtime Approvals"},
+        {"/loans/apply", "Apply for Loan"}, {"/loans/my-applications", "My Loan Applications"},
+        {"/loans/approvals", "Loan Approvals"},
+        {"/medical/claim", "Medical Claim"}, {"/medical/my-claims", "My Medical Claims"},
+        {"/medical/review", "Medical Review"}, {"/medical/policy", "Medical Policy"},
+        {"/expenses/submit", "Submit Expense"}, {"/expenses/my", "My Expenses"},
+        {"/expenses/review", "Expense Review"},
+        {"/travel/request", "Travel Request"}, {"/travel/my-requests", "My Travel"},
+        {"/travel/approvals", "Travel Approvals"},
+        {"/out-of-station/request", "Out of Station Request"}, {"/out-of-station/my", "My Out of Station"},
+        {"/out-of-station/approvals", "Out of Station Approvals"}, {"/out-of-station/rates", "Out of Station Rates"},
+        {"/recognition", "Recognition Wall"}, {"/recognition/leaderboard", "Leaderboard"},
+        {"/surveys", "Surveys"}, {"/surveys/create", "Create Survey"},
+        {"/announcements", "Announcements"}, {"/calendar", "Calendar"},
+        {"/policies", "Company Policies"}, {"/timesheets", "Timesheets"}, {"/projects", "Projects"},
+        {"/employees", "Employees"}, {"/employees/create", "Add Employee"},
+        {"/employees/org-chart", "Org Chart"},
+        {"/departments", "Departments"}, {"/designations", "Designations"},
+        {"/grades", "Grades"}, {"/locations", "Locations"},
+        {"/transfer/initiate", "Transfer/Promotion"}, {"/transfer/approvals", "Transfer Approvals"},
+        {"/transfer/history", "Transfer History"}, {"/probation", "Probation Reviews"},
+        {"/succession", "Succession Planning"},
+        {"/performance/goals", "Goals & OKRs"}, {"/performance/appraisals", "Appraisals"},
+        {"/performance/pips", "PIPs"}, {"/meetings/one-on-one", "1-on-1 Meetings"},
+        {"/training/programs", "Training Programs"}, {"/training/skills", "Skills Matrix"},
+        {"/recruitment/requisitions", "Job Requisitions"}, {"/recruitment/applications", "Applications"},
+        {"/recruitment/interviews", "Interviews"}, {"/recruitment/offers", "Offers"},
+        {"/recruitment/onboarding", "Onboarding"},
+        {"/discipline/cases", "Disciplinary Cases"}, {"/discipline/grievances", "Grievances"},
+        {"/exit/separations", "Separations"}, {"/exit/clearance", "Clearance"},
+        {"/payroll/run", "Run Payroll"}, {"/payroll/history", "Payroll History"},
+        {"/payroll/salary-components", "Salary Components"}, {"/payroll/loans", "Loans & Advances"},
+        {"/payroll/reports", "Payroll Reports"},
+        {"/reports/headcount", "Headcount Report"}, {"/reports/payroll", "Payroll Summary"},
+        {"/reports/leave", "Leave Report"}, {"/reports/attrition", "Attrition Report"},
+        {"/reports/custom", "Custom Report"},
+        {"/analytics/demographics", "Demographics"}, {"/analytics/turnover", "Turnover Prediction"},
+        {"/analytics/compensation", "Compensation"}, {"/analytics/cost", "Cost Analytics"},
+        {"/wellness", "Wellness Dashboard"}, {"/compliance", "Compliance Calendar"},
+        {"/letters/generate", "Letter Generator"},
+        {"/admin/users", "Users & Roles"}, {"/admin/settings", "Company Settings"},
+        {"/admin/workflows", "Workflows"}, {"/admin/email-templates", "Email Templates"},
+        {"/admin/audit-logs", "Audit Logs"}, {"/admin/holidays", "Public Holidays"},
+        {"/admin/import", "Import Data"}, {"/admin/bulk-operations", "Bulk Operations"},
+        {"/admin/profile-changes", "Profile Changes"}, {"/admin/sms-settings", "SMS Settings"},
+        {"/admin/biometric", "Biometric API"},
+        {"/assets", "Asset Management"}, {"/settings/delegation", "Delegation"},
+        {"/notifications", "Notifications"},
+    };
+
+    protected override void OnInitialized()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        UpdatePageTitle();
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        UpdatePageTitle();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdatePageTitle()
+    {
+        var path = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
+        if (string.IsNullOrEmpty(path)) path = "/";
+
+        if (PageTitles.TryGetValue(path, out var title))
+        {
+            _currentPageTitle = "/ " + title;
+        }
+        else if (path.StartsWith("/employees/") && path.Contains("/edit"))
+        {
+            _currentPageTitle = "/ Edit Employee";
+        }
+        else if (path.StartsWith("/employees/"))
+        {
+            _currentPageTitle = "/ Employee Detail";
+        }
+        else if (path.StartsWith("/surveys/take/"))
+        {
+            _currentPageTitle = "/ Take Survey";
+        }
+        else if (path.StartsWith("/surveys/results/"))
+        {
+            _currentPageTitle = "/ Survey Results";
+        }
+        else if (path.StartsWith("/policies/"))
+        {
+            _currentPageTitle = "/ Policy Detail";
+        }
+        else
+        {
+            _currentPageTitle = "";
+        }
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+
+    private MudTheme _theme = new MudTheme
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#1565C0",
+            Secondary = "#00897B",
+            AppbarBackground = "#1565C0",
+            Background = "#F5F5F5",
+            Surface = "#FFFFFF",
+            DrawerBackground = "#FFFFFF",
+            DrawerText = "#424242",
+            Success = "#2E7D32",
+            Warning = "#F57F17",
+            Error = "#C62828",
+            Info = "#0277BD"
+        },
+        PaletteDark = new PaletteDark
+        {
+            Primary = "#42A5F5",
+            Secondary = "#4DB6AC",
+            AppbarBackground = "#1E1E2D",
+            Background = "#121212",
+            Surface = "#1E1E2D",
+            DrawerBackground = "#1E1E2D",
+            DrawerText = "#E0E0E0"
+        },
+        Typography = new Typography
+        {
+            // MudBlazor 8: Default typography class renamed to DefaultTypography
+            Default = new DefaultTypography
+            {
+                FontFamily = new[] { "Inter", "Helvetica", "Arial", "sans-serif" }
+            }
+        }
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                // Re-initialize auth from localStorage after prerender
+                await AuthState.InitializeAsync();
+
+                var width = await JS.InvokeAsync<int>("eval", "window.innerWidth");
+                _isMobile = width <= 768;
+                if (_isMobile) _drawerOpen = false;
+                StateHasChanged();
+            }
+            catch
+            {
+                // JS interop may not be available in SSR prerender
+            }
+        }
+    }
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+    private void ToggleDarkMode() => _isDarkMode = !_isDarkMode;
+
+    private void Logout()
+    {
+        Navigation.NavigateTo("/logout", forceLoad: true);
+    }
+}

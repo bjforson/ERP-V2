@@ -1,0 +1,145 @@
+@page "/expenses/my"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using NickHR.Core.Enums
+@using NickHR.Core.Interfaces
+@inject IExpenseClaimService ExpenseService
+@inject ICurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — My Expenses</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    <MudIcon Icon="@Icons.Material.Filled.ReceiptLong" Class="mr-2" />
+    My Expense Claims
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.body1" Color="Color.Secondary">@_claims.Count claim(s) total</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/expenses/submit"
+               StartIcon="@Icons.Material.Filled.Add">
+        New Claim
+    </MudButton>
+</div>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_claims.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">You have no expense claims yet. <MudLink Href="/expenses/submit">Submit your first claim</MudLink>.</MudAlert>
+}
+else
+{
+    <MudTable Items="_claims" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="2">
+        <HeaderContent>
+            <MudTh>Date</MudTh>
+            <MudTh>Category</MudTh>
+            <MudTh>Description</MudTh>
+            <MudTh>Amount</MudTh>
+            <MudTh>Approved</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Paid At</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Date">@context.ClaimDate.ToLocalTime().ToString("dd MMM yyyy")</MudTd>
+            <MudTd DataLabel="Category">
+                <MudChip T="string" Size="Size.Small" Color="Color.Default">@context.Category</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Description">
+                <MudTooltip Text="@context.Description">
+                    <MudText Typo="Typo.body2">@(context.Description.Length > 50 ? context.Description[..47] + "..." : context.Description)</MudText>
+                </MudTooltip>
+            </MudTd>
+            <MudTd DataLabel="Amount">GH₵ @context.Amount.ToString("N2")</MudTd>
+            <MudTd DataLabel="Approved">
+                @if (context.ApprovedAmount > 0)
+                {
+                    <span>GH₵ @context.ApprovedAmount.ToString("N2")</span>
+                }
+                else
+                {
+                    <MudText Color="Color.Secondary">—</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="Status">
+                <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">@context.Status</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Paid At">
+                @(context.PaidAt.HasValue ? context.PaidAt.Value.ToLocalTime().ToString("dd MMM yyyy") : "—")
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText>No claims found.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+
+    <!-- Summary -->
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" sm="4">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total Submitted</MudText>
+                <MudText Typo="Typo.h6">GH₵ @_claims.Sum(c => c.Amount).ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total Approved</MudText>
+                <MudText Typo="Typo.h6" Color="Color.Success">GH₵ @_claims.Where(c => c.Status is ExpenseClaimStatus.Approved or ExpenseClaimStatus.Paid).Sum(c => c.ApprovedAmount).ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total Paid</MudText>
+                <MudText Typo="Typo.h6" Color="Color.Primary">GH₵ @_claims.Where(c => c.Status == ExpenseClaimStatus.Paid).Sum(c => c.ApprovedAmount).ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private bool _isLoading = true;
+    private List<ExpenseClaimDto> _claims = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Expense Claims", href: null, disabled: true),
+        new BreadcrumbItem("My Claims", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var employeeId = CurrentUser.EmployeeId;
+        if (employeeId == null)
+        {
+            _isLoading = false;
+            return;
+        }
+        try
+        {
+            _claims = await ExpenseService.GetMyClaimsAsync(employeeId.Value);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading claims: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private Color GetStatusColor(ExpenseClaimStatus status) => status switch
+    {
+        ExpenseClaimStatus.Submitted => Color.Default,
+        ExpenseClaimStatus.UnderReview => Color.Info,
+        ExpenseClaimStatus.Approved => Color.Success,
+        ExpenseClaimStatus.Rejected => Color.Error,
+        ExpenseClaimStatus.Paid => Color.Primary,
+        _ => Color.Default
+    };
+}

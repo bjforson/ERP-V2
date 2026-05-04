@@ -1,0 +1,189 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Training
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Psychology" Class="mr-2" />
+            @(EmployeeId.HasValue ? "Assign Skill to Employee" : (IsEdit ? "Edit Skill" : "Add Skill"))
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                @if (EmployeeId.HasValue)
+                {
+                    @* Assign existing skill to employee *@
+                    <MudItem xs="12">
+                        <MudSelect T="int" @bind-Value="_assignSkillId" Label="Skill *"
+                                   Variant="Variant.Outlined" Required="true">
+                            @foreach (var s in _availableSkills)
+                            {
+                                <MudSelectItem T="int" Value="@s.Id">@s.Name @(!string.IsNullOrWhiteSpace(s.Category) ? $"({s.Category})" : "")</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.body2" Class="mb-1">Proficiency Level (1 = Beginner, 5 = Expert)</MudText>
+                        <MudRating @bind-SelectedValue="_proficiencyLevel" MaxValue="5" Color="Color.Warning" />
+                        <MudText Typo="Typo.caption" Class="mt-1">@GetProficiencyLabel(_proficiencyLevel)</MudText>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudDatePicker @bind-Date="_certifiedDate" Label="Certified Date (optional)"
+                                       Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                    </MudItem>
+                }
+                else
+                {
+                    @* Add/edit skill in library *@
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="_name" Label="Skill Name *" Variant="Variant.Outlined"
+                                      Required="true" RequiredError="Name is required" MaxLength="200" Immediate="true" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="_category" Label="Category" Variant="Variant.Outlined"
+                                      MaxLength="100" Placeholder="e.g. Technical, Leadership, Communication" />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="_description" Label="Description" Variant="Variant.Outlined"
+                                      Lines="3" MaxLength="500" />
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(EmployeeId.HasValue ? "Assign" : IsEdit ? "Save" : "Add")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int? SkillId { get; set; }
+    [Parameter] public int? EmployeeId { get; set; }
+    [Parameter] public List<int> ExistingSkillIds { get; set; } = new();
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private bool IsEdit => SkillId.HasValue && !EmployeeId.HasValue;
+
+    // Library skill fields
+    private string _name = "";
+    private string? _category;
+    private string? _description;
+
+    // Employee assignment fields
+    private int _assignSkillId;
+    private int _proficiencyLevel = 3;
+    private DateTime? _certifiedDate;
+    private List<SkillOption> _availableSkills = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (EmployeeId.HasValue)
+            await LoadAvailableSkills();
+        else if (IsEdit)
+            await LoadSkill();
+    }
+
+    private async Task LoadAvailableSkills()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _availableSkills = await db.Skills
+                .Where(s => s.IsActive && !ExistingSkillIds.Contains(s.Id))
+                .OrderBy(s => s.Category).ThenBy(s => s.Name)
+                .Select(s => new SkillOption { Id = s.Id, Name = s.Name, Category = s.Category })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task LoadSkill()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Skills.FindAsync(SkillId!.Value);
+            if (entity == null) return;
+            _name = entity.Name;
+            _category = entity.Category;
+            _description = entity.Description;
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (EmployeeId.HasValue)
+            {
+                var empSkill = new EmployeeSkill
+                {
+                    EmployeeId = EmployeeId.Value,
+                    SkillId = _assignSkillId,
+                    ProficiencyLevel = _proficiencyLevel,
+                    CertifiedDate = _certifiedDate
+                };
+                db.EmployeeSkills.Add(empSkill);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Skill assigned.", Severity.Success);
+            }
+            else if (IsEdit)
+            {
+                var entity = await db.Skills.FindAsync(SkillId!.Value);
+                if (entity == null) { Snackbar.Add("Skill not found.", Severity.Error); return; }
+                entity.Name = _name;
+                entity.Category = _category;
+                entity.Description = _description;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Skill updated.", Severity.Success);
+            }
+            else
+            {
+                var entity = new Skill { Name = _name, Category = _category, Description = _description, IsActive = true };
+                db.Skills.Add(entity);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Skill added.", Severity.Success);
+            }
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private string GetProficiencyLabel(int level) => level switch
+    {
+        1 => "1 — Beginner",
+        2 => "2 — Elementary",
+        3 => "3 — Intermediate",
+        4 => "4 — Advanced",
+        5 => "5 — Expert",
+        _ => ""
+    };
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class SkillOption { public int Id { get; set; } public string Name { get; set; } = ""; public string? Category { get; set; } }
+}

@@ -1,0 +1,551 @@
+@page "/payroll/loans"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHROrPayroll)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Services.Payroll
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject NickHR.Services.Payroll.IPayrollProcessingService PayrollService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Loans &amp; Advances</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.AccountBalance" Class="mr-2" />Loans &amp; Advances
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+
+<!-- Section 1: Active Loans -->
+<MudCard Elevation="2" Class="mb-6">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">Active Loans</MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreateLoanDialogAsync">
+                Create Loan
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        <MudTable Items="_loans" Dense="false" Hover="true" Breakpoint="Breakpoint.Md"
+                  Loading="_loading" Elevation="0">
+            <HeaderContent>
+                <MudTh>Employee</MudTh>
+                <MudTh>Loan Type</MudTh>
+                <MudTh>Amount (GH₵)</MudTh>
+                <MudTh>Monthly EMI</MudTh>
+                <MudTh>Interest Rate</MudTh>
+                <MudTh>Balance Remaining</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Start Date</MudTh>
+                <MudTh>End Date</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Employee">
+                    <MudText Typo="Typo.subtitle2">@context.Employee.FirstName @context.Employee.LastName</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee.EmployeeCode</MudText>
+                </MudTd>
+                <MudTd DataLabel="Loan Type">@context.LoanType</MudTd>
+                <MudTd DataLabel="Amount">GH₵ @context.Amount.ToString("N2")</MudTd>
+                <MudTd DataLabel="Monthly EMI">GH₵ @context.MonthlyInstallment.ToString("N2")</MudTd>
+                <MudTd DataLabel="Interest Rate">@context.InterestRate.ToString("N2")%</MudTd>
+                <MudTd DataLabel="Balance Remaining">
+                    <MudText Color="@(context.BalanceRemaining > 0 ? Color.Warning : Color.Success)" Style="font-weight:600">
+                        GH₵ @context.BalanceRemaining.ToString("N2")
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small" Color="@GetLoanStatusColor(context.LoanStatus)">
+                        @context.LoanStatus
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Start Date">@context.StartDate.ToString("dd MMM yyyy")</MudTd>
+                <MudTd DataLabel="End Date">@context.EndDate.ToString("dd MMM yyyy")</MudTd>
+                <MudTd>
+                    <MudIconButton Icon="@(context == _expandedLoan ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                   Size="Size.Small" Title="View Repayments"
+                                   OnClick="() => ToggleLoanRepayments(context)" />
+                </MudTd>
+            </RowTemplate>
+            <ChildRowContent>
+                @if (context == _expandedLoan)
+                {
+                    <MudTr>
+                        <MudTd colspan="10">
+                            <MudCard Outlined="true" Class="ma-2">
+                                <MudCardHeader>
+                                    <CardHeaderContent>
+                                        <MudText Typo="Typo.subtitle2">Repayment History</MudText>
+                                    </CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardContent Class="pa-0">
+                                    @if (_loadingRepayments)
+                                    {
+                                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                                    }
+                                    else if (!_currentRepayments.Any())
+                                    {
+                                        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-3">No repayments recorded yet.</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudSimpleTable Dense="true" Hover="true">
+                                            <thead>
+                                                <tr>
+                                                    <th>Date</th>
+                                                    <th>Amount</th>
+                                                    <th>Balance After</th>
+                                                    <th>Payroll Run</th>
+                                                    <th>Notes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var r in _currentRepayments)
+                                                {
+                                                    <tr>
+                                                        <td>@r.RepaymentDate.ToLocalTime().ToString("dd MMM yyyy")</td>
+                                                        <td>GH₵ @r.Amount.ToString("N2")</td>
+                                                        <td>GH₵ @r.BalanceAfter.ToString("N2")</td>
+                                                        <td>
+                                                            @if (r.PayrollRun != null)
+                                                            {
+                                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                                                    @(new DateTime(r.PayrollRun.PayPeriodYear, r.PayrollRun.PayPeriodMonth, 1).ToString("MMM yyyy"))
+                                                                </MudChip>
+                                                            }
+                                                            else
+                                                            {
+                                                                <span>-</span>
+                                                            }
+                                                        </td>
+                                                        <td>@(r.Notes ?? "-")</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </MudSimpleTable>
+                                    }
+                                </MudCardContent>
+                            </MudCard>
+                        </MudTd>
+                    </MudTr>
+                }
+            </ChildRowContent>
+            <NoRecordsContent>
+                <MudText>No active loans found.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudCardContent>
+</MudCard>
+
+<!-- Section 2: Loan Applications Pipeline -->
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">Loan Applications Pipeline</MudText>
+        </CardHeaderContent>
+    </MudCardHeader>
+    <MudCardContent>
+        <!-- Summary Cards -->
+        <MudGrid Class="mb-4">
+            <MudItem xs="6" sm="4" md="2">
+                <MudPaper Class="pa-3 text-center" Elevation="1">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Pending</MudText>
+                    <MudText Typo="Typo.h5" Color="Color.Default">
+                        @_applications.Count(a => a.Status == LoanApplicationStatus.Pending)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="2">
+                <MudPaper Class="pa-3 text-center" Elevation="1">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Manager Approved</MudText>
+                    <MudText Typo="Typo.h5" Color="Color.Info">
+                        @_applications.Count(a => a.Status == LoanApplicationStatus.ManagerApproved)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="2">
+                <MudPaper Class="pa-3 text-center" Elevation="1">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">HR Approved</MudText>
+                    <MudText Typo="Typo.h5" Color="Color.Warning">
+                        @_applications.Count(a => a.Status == LoanApplicationStatus.HRApproved)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="2">
+                <MudPaper Class="pa-3 text-center" Elevation="1">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Finance Approved</MudText>
+                    <MudText Typo="Typo.h5" Color="Color.Success">
+                        @_applications.Count(a => a.Status == LoanApplicationStatus.FinanceApproved)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="2">
+                <MudPaper Class="pa-3 text-center" Elevation="1">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Disbursed</MudText>
+                    <MudText Typo="Typo.h5" Color="Color.Success">
+                        @_applications.Count(a => a.Status == LoanApplicationStatus.Disbursed)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="2">
+                <MudPaper Class="pa-3 text-center" Elevation="1">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Rejected</MudText>
+                    <MudText Typo="Typo.h5" Color="Color.Error">
+                        @_applications.Count(a => a.Status == LoanApplicationStatus.Rejected)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudTable Items="_applications" Dense="false" Hover="true" Breakpoint="Breakpoint.Md" Elevation="0">
+            <HeaderContent>
+                <MudTh>Employee</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>Amount (GH₵)</MudTh>
+                <MudTh>Purpose</MudTh>
+                <MudTh>Repayment (Months)</MudTh>
+                <MudTh>Monthly EMI</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Employee">
+                    <MudText Typo="Typo.subtitle2">@context.Employee.FirstName @context.Employee.LastName</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee.EmployeeCode</MudText>
+                </MudTd>
+                <MudTd DataLabel="Type">@context.LoanType</MudTd>
+                <MudTd DataLabel="Amount">GH₵ @context.RequestedAmount.ToString("N2")</MudTd>
+                <MudTd DataLabel="Purpose">
+                    <MudTooltip Text="@context.Purpose">
+                        <MudText Style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                            @context.Purpose
+                        </MudText>
+                    </MudTooltip>
+                </MudTd>
+                <MudTd DataLabel="Repayment">@context.RepaymentMonths months</MudTd>
+                <MudTd DataLabel="Monthly EMI">GH₵ @context.MonthlyInstallment.ToString("N2")</MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small" Color="@GetApplicationStatusColor(context.Status)">
+                        @GetApplicationStatusLabel(context.Status)
+                    </MudChip>
+                </MudTd>
+                <MudTd>
+                    @if (context.Status == LoanApplicationStatus.Pending)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                   OnClick="() => ApproveApplicationAsync(context, LoanApplicationStatus.ManagerApproved)">
+                            Manager Approve
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Class="ml-1"
+                                   OnClick="() => RejectApplicationAsync(context)">
+                            Reject
+                        </MudButton>
+                    }
+                    else if (context.Status == LoanApplicationStatus.ManagerApproved)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning"
+                                   OnClick="() => ApproveApplicationAsync(context, LoanApplicationStatus.HRApproved)">
+                            HR Approve
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Class="ml-1"
+                                   OnClick="() => RejectApplicationAsync(context)">
+                            Reject
+                        </MudButton>
+                    }
+                    else if (context.Status == LoanApplicationStatus.HRApproved)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                   OnClick="() => ApproveApplicationAsync(context, LoanApplicationStatus.FinanceApproved)">
+                            Finance Approve
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Class="ml-1"
+                                   OnClick="() => RejectApplicationAsync(context)">
+                            Reject
+                        </MudButton>
+                    }
+                    else if (context.Status == LoanApplicationStatus.FinanceApproved)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                   OnClick="() => DisburseApplicationAsync(context)">
+                            Disburse
+                        </MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText>No loan applications found.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private bool _loading = true;
+    private bool _loadingRepayments = false;
+    private List<Loan> _loans = new();
+    private List<LoanApplication> _applications = new();
+    private Loan? _expandedLoan;
+    private List<LoanRepayment> _currentRepayments = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Payroll", href: null, disabled: true),
+        new BreadcrumbItem("Loans & Advances", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _loans = await db.Loans
+                .Include(l => l.Employee)
+                .Where(l => !l.IsDeleted)
+                .OrderByDescending(l => l.StartDate)
+                .ToListAsync();
+
+            _applications = await db.LoanApplications
+                .Include(a => a.Employee)
+                .Where(a => !a.IsDeleted)
+                .OrderByDescending(a => a.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading loans: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ToggleLoanRepayments(Loan loan)
+    {
+        if (_expandedLoan == loan)
+        {
+            _expandedLoan = null;
+            _currentRepayments = new();
+            return;
+        }
+
+        _expandedLoan = loan;
+        _loadingRepayments = true;
+        _currentRepayments = new();
+        StateHasChanged();
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _currentRepayments = await db.LoanRepayments
+                .Include(r => r.PayrollRun)
+                .Where(r => r.LoanId == loan.Id)
+                .OrderByDescending(r => r.RepaymentDate)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading repayments: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loadingRepayments = false;
+        }
+    }
+
+    private async Task OpenCreateLoanDialogAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var employees = await db.Employees
+            .Where(e => !e.IsDeleted &&
+                        (e.EmploymentStatus == EmploymentStatus.Active ||
+                         e.EmploymentStatus == EmploymentStatus.Confirmed))
+            .OrderBy(e => e.FirstName).ToListAsync();
+
+        var parameters = new DialogParameters { ["Employees"] = employees };
+        var dialog = await DialogService.ShowAsync<LoanDialog>("Create Loan",
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        if (!(await dialog.Result)?.Canceled ?? false)
+            await LoadDataAsync();
+    }
+
+    private async Task ApproveApplicationAsync(LoanApplication app, LoanApplicationStatus nextStatus)
+    {
+        var label = nextStatus switch
+        {
+            LoanApplicationStatus.ManagerApproved => "Manager Approve",
+            LoanApplicationStatus.HRApproved => "HR Approve",
+            LoanApplicationStatus.FinanceApproved => "Finance Approve",
+            _ => "Approve"
+        };
+
+        var result = await DialogService.ShowMessageBox(
+            $"{label} Application",
+            $"Approve {app.Employee.FirstName} {app.Employee.LastName}'s loan of GH₵ {app.RequestedAmount:N2}?",
+            yesText: "Approve",
+            cancelText: "Cancel");
+
+        if (result != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.LoanApplications.FindAsync(app.Id);
+            if (entity != null)
+            {
+                entity.Status = nextStatus;
+                var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+                // Note: setting approver fields would need employee id lookup - store name in notes for now
+                entity.Notes = (entity.Notes ?? "") + $"\n{nextStatus} by {authState.User.Identity?.Name} on {DateTime.UtcNow:dd MMM yyyy}";
+                await db.SaveChangesAsync();
+                Snackbar.Add($"Application {nextStatus}!", Severity.Success);
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Approve failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task DisburseApplicationAsync(LoanApplication app)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Disburse Loan",
+            $"Mark loan for {app.Employee.FirstName} {app.Employee.LastName} (GH₵ {app.RequestedAmount:N2}) as disbursed? This will create an active Loan record.",
+            yesText: "Disburse",
+            cancelText: "Cancel");
+
+        if (result != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.LoanApplications.FindAsync(app.Id);
+            if (entity != null)
+            {
+                entity.Status = LoanApplicationStatus.Disbursed;
+                entity.DisbursedAt = DateTime.UtcNow;
+
+                // Create active Loan record
+                var loan = new Loan
+                {
+                    EmployeeId = app.EmployeeId,
+                    LoanType = app.LoanType.ToString(),
+                    Amount = app.RequestedAmount,
+                    InterestRate = app.InterestRate,
+                    TotalRepayable = app.TotalRepayable,
+                    MonthlyInstallment = app.MonthlyInstallment,
+                    StartDate = DateTime.UtcNow,
+                    EndDate = DateTime.UtcNow.AddMonths(app.RepaymentMonths),
+                    BalanceRemaining = app.TotalRepayable,
+                    LoanStatus = LoanStatus.Active,
+                    Notes = app.Purpose
+                };
+                db.Loans.Add(loan);
+                await db.SaveChangesAsync();
+
+                entity.LoanId = loan.Id;
+                await db.SaveChangesAsync();
+
+                Snackbar.Add("Loan disbursed and activated!", Severity.Success);
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Disburse failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task RejectApplicationAsync(LoanApplication app)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Reject Application",
+            $"Reject {app.Employee.FirstName} {app.Employee.LastName}'s loan application?",
+            yesText: "Reject",
+            cancelText: "Cancel");
+
+        if (result != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.LoanApplications.FindAsync(app.Id);
+            if (entity != null)
+            {
+                entity.Status = LoanApplicationStatus.Rejected;
+                var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+                entity.RejectionReason = $"Rejected by {authState.User.Identity?.Name} on {DateTime.UtcNow:dd MMM yyyy}";
+                await db.SaveChangesAsync();
+                Snackbar.Add("Application rejected.", Severity.Warning);
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Reject failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private static Color GetLoanStatusColor(LoanStatus status) => status switch
+    {
+        LoanStatus.Active => Color.Info,
+        LoanStatus.FullyPaid => Color.Success,
+        LoanStatus.WrittenOff => Color.Error,
+        LoanStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+
+    private static Color GetApplicationStatusColor(LoanApplicationStatus status) => status switch
+    {
+        LoanApplicationStatus.Pending => Color.Default,
+        LoanApplicationStatus.ManagerApproved => Color.Info,
+        LoanApplicationStatus.HRApproved => Color.Warning,
+        LoanApplicationStatus.FinanceApproved => Color.Success,
+        LoanApplicationStatus.Disbursed => Color.Success,
+        LoanApplicationStatus.Rejected => Color.Error,
+        LoanApplicationStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+
+    private static string GetApplicationStatusLabel(LoanApplicationStatus status) => status switch
+    {
+        LoanApplicationStatus.ManagerApproved => "Mgr Approved",
+        LoanApplicationStatus.HRApproved => "HR Approved",
+        LoanApplicationStatus.FinanceApproved => "Finance Approved",
+        _ => status.ToString()
+    };
+}

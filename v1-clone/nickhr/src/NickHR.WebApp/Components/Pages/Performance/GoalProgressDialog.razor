@@ -1,0 +1,109 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Performance
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.TrendingUp" Class="mr-2" />
+            Update Progress
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_goal != null)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-3">@_goal.Title</MudText>
+        }
+        <MudGrid Spacing="2">
+            <MudItem xs="12">
+                <MudText Typo="Typo.body2" Class="mb-1">Progress: @_progressPercent%</MudText>
+                <MudSlider @bind-Value="_progressPercent" Min="0" Max="100" Step="5" Color="Color.Primary"
+                           Class="mt-2">
+                    @_progressPercent%
+                </MudSlider>
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_achievedValue" Label="Achieved Value" Variant="Variant.Outlined"
+                              MaxLength="200" Placeholder="e.g. 850 units, 95% completion" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudSelect T="string" @bind-Value="_status" Label="Status" Variant="Variant.Outlined">
+                    <MudSelectItem T="string" Value="@("NotStarted")">Not Started</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("InProgress")">In Progress</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Completed")">Completed</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Update
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int GoalId { get; set; }
+
+    private Goal? _goal;
+    private decimal _progressPercent;
+    private string? _achievedValue;
+    private string _status = "InProgress";
+    private bool _isSaving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _goal = await db.Goals.FindAsync(GoalId);
+            if (_goal != null)
+            {
+                _progressPercent = _goal.ProgressPercent;
+                _achievedValue = _goal.AchievedValue;
+                _status = _goal.Status;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading goal: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task Submit()
+    {
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Goals.FindAsync(GoalId);
+            if (entity == null) { Snackbar.Add("Goal not found.", Severity.Error); return; }
+            entity.ProgressPercent = _progressPercent;
+            entity.AchievedValue = _achievedValue;
+            entity.Status = _status;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Progress updated.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error updating: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

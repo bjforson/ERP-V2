@@ -1,0 +1,254 @@
+@page "/leave/my-requests"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — My Leave Requests</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5">My Leave Requests</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="/leave/request">
+        Request Leave
+    </MudButton>
+</div>
+
+<!-- Filters -->
+<MudCard Elevation="1" Class="mb-4">
+    <MudCardContent>
+        <MudGrid>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="LeaveRequestStatus?" @bind-Value="_statusFilter" Label="Filter by Status" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" Clearable="true" @bind-Value:after="ApplyFilters">
+                    @foreach (var s in Enum.GetValues<LeaveRequestStatus>())
+                    {
+                        <MudSelectItem T="LeaveRequestStatus?" Value="@((LeaveRequestStatus?)s)">@s.ToString()</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudSelect T="int?" @bind-Value="_yearFilter" Label="Filter by Year" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" Clearable="true" @bind-Value:after="ApplyFilters">
+                    @foreach (var y in _availableYears)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)y)">@y</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_employeeId == 0 && !_isLoading)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+
+<MudCard Elevation="2">
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_filtered" Dense="true" Hover="true" Striped="true" T="LeaveRequestRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LeaveRequestRow, object>(x => x.LeaveType)">Leave Type</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LeaveRequestRow, object>(x => x.StartDate)">Start Date</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LeaveRequestRow, object>(x => x.EndDate)">End Date</MudTableSortLabel></MudTh>
+                    <MudTh>Days</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LeaveRequestRow, object>(x => x.SubmittedDate)">Submitted</MudTableSortLabel></MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Leave Type">@context.LeaveType</MudTd>
+                    <MudTd DataLabel="Start Date">@context.StartDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="End Date">@context.EndDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Days">@context.NumberOfDays</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                            @context.Status.ToString()
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Submitted">@context.SubmittedDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd>
+                        @if (context.Status == LeaveRequestStatus.Pending)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                       OnClick="@(() => CancelRequest(context))">Cancel</MudButton>
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No leave requests found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<LeaveRequestRow> _all = new();
+    private List<LeaveRequestRow> _filtered = new();
+    private bool _isLoading = true;
+    private int _employeeId = 0;
+    private LeaveRequestStatus? _statusFilter;
+    private int? _yearFilter;
+    private List<int> _availableYears = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var empId = await GetCurrentEmployeeIdAsync();
+        _employeeId = empId ?? 0;
+        await LoadRequests();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadRequests()
+    {
+        if (_employeeId == 0) { _isLoading = false; return; }
+
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _all = await db.LeaveRequests
+                .Include(r => r.LeavePolicy)
+                .Where(r => r.EmployeeId == _employeeId)
+                .OrderByDescending(r => r.CreatedAt)
+                .Select(r => new LeaveRequestRow
+                {
+                    Id = r.Id,
+                    LeaveType = r.LeavePolicy.Name,
+                    StartDate = r.StartDate,
+                    EndDate = r.EndDate,
+                    NumberOfDays = r.NumberOfDays,
+                    Status = r.Status,
+                    SubmittedDate = r.CreatedAt
+                })
+                .ToListAsync();
+
+            _availableYears = _all.Select(r => r.StartDate.Year).Distinct().OrderByDescending(y => y).ToList();
+            if (!_availableYears.Contains(DateTime.Today.Year))
+                _availableYears.Insert(0, DateTime.Today.Year);
+
+            ApplyFilters();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading leave requests: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        _filtered = _all
+            .Where(r => _statusFilter == null || r.Status == _statusFilter)
+            .Where(r => _yearFilter == null || r.StartDate.Year == _yearFilter)
+            .ToList();
+    }
+
+    private async Task CancelRequest(LeaveRequestRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Cancel Leave Request",
+            $"Are you sure you want to cancel this {row.LeaveType} request ({row.StartDate:dd MMM} - {row.EndDate:dd MMM yyyy})?",
+            yesText: "Yes, Cancel",
+            cancelText: "No");
+
+        if (confirmed != true) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.LeaveRequests.FindAsync(row.Id);
+            if (entity == null || entity.Status != LeaveRequestStatus.Pending)
+            {
+                Snackbar.Add("Request not found or cannot be cancelled.", Severity.Warning);
+                return;
+            }
+
+            entity.Status = LeaveRequestStatus.Cancelled;
+
+            // Release pending days from balance
+            var balance = await db.LeaveBalances
+                .FirstOrDefaultAsync(b => b.EmployeeId == entity.EmployeeId
+                    && b.LeavePolicyId == entity.LeavePolicyId
+                    && b.Year == entity.StartDate.Year);
+            if (balance != null)
+            {
+                balance.Pending = Math.Max(0, balance.Pending - entity.NumberOfDays);
+            }
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Leave request cancelled.", Severity.Success);
+            await LoadRequests();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error cancelling request: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private Color GetStatusColor(LeaveRequestStatus status) => status switch
+    {
+        LeaveRequestStatus.Pending => Color.Warning,
+        LeaveRequestStatus.Approved => Color.Success,
+        LeaveRequestStatus.Rejected => Color.Error,
+        LeaveRequestStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+
+    private class LeaveRequestRow
+    {
+        public int Id { get; set; }
+        public string LeaveType { get; set; } = string.Empty;
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+        public decimal NumberOfDays { get; set; }
+        public LeaveRequestStatus Status { get; set; }
+        public DateTime SubmittedDate { get; set; }
+    }
+}

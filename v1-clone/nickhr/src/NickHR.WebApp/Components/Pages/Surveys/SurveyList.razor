@@ -1,0 +1,235 @@
+@page "/surveys"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>NICKSCAN ERP — NickHR — Surveys</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Poll" Class="mr-2" />Surveys
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+
+<AuthorizeView Roles="@RoleSets.SeniorHR">
+    <Authorized>
+        <MudStack Row="true" Class="mb-4" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.h6">All Surveys</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.AddCircle"
+                       Href="/surveys/create">
+                Create Survey
+            </MudButton>
+        </MudStack>
+
+        <MudTable Items="_allSurveys" Dense="false" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="2" Loading="_loading">
+            <HeaderContent>
+                <MudTh>Title</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Period</MudTh>
+                <MudTh>Responses</MudTh>
+                <MudTh>Anonymous</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate Context="row">
+                <MudTd DataLabel="Title">
+                    <MudText Typo="Typo.subtitle2">@row.Survey.Title</MudText>
+                    @if (!string.IsNullOrWhiteSpace(row.Survey.Description))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@TruncateText(row.Survey.Description, 60)</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(row.Survey.Status)">
+                        @row.Survey.Status
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Period">
+                    @row.Survey.StartDate.ToString("dd MMM yyyy") — @row.Survey.EndDate.ToString("dd MMM yyyy")
+                </MudTd>
+                <MudTd DataLabel="Responses">@row.ResponseCount</MudTd>
+                <MudTd DataLabel="Anonymous">
+                    @if (row.Survey.IsAnonymous)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.VisibilityOff" Size="Size.Small" Color="Color.Secondary" Title="Anonymous" />
+                    }
+                    else
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Title="Not Anonymous" />
+                    }
+                </MudTd>
+                <MudTd DataLabel="Actions">
+                    <MudStack Row="true" Spacing="0">
+                        @if (row.Survey.Status == SurveyStatus.Active)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.HowToVote" Title="Take Survey"
+                                           Color="Color.Primary" Size="Size.Small"
+                                           OnClick="@(() => NavigationManager.NavigateTo($"/surveys/take/{row.Survey.Id}"))" />
+                        }
+                        <MudIconButton Icon="@Icons.Material.Filled.BarChart" Title="View Results"
+                                       Color="Color.Info" Size="Size.Small"
+                                       OnClick="@(() => NavigationManager.NavigateTo($"/surveys/results/{row.Survey.Id}"))" />
+                    </MudStack>
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText>No surveys found.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </Authorized>
+    <NotAuthorized>
+        <!-- Employee view: only active surveys they haven't taken -->
+        <MudText Typo="Typo.h6" Class="mb-4">Available Surveys</MudText>
+
+        @if (!_loading && !_availableSurveys.Any())
+        {
+            <MudPaper Class="pa-6 text-center" Elevation="0">
+                <MudIcon Icon="@Icons.Material.Filled.Poll" Size="Size.Large" Color="Color.Secondary" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-2">No surveys available for you right now.</MudText>
+            </MudPaper>
+        }
+
+        <MudGrid>
+            @foreach (var survey in _availableSurveys)
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudCard Elevation="2">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">@survey.Title</MudText>
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            @if (!string.IsNullOrWhiteSpace(survey.Description))
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">@TruncateText(survey.Description, 100)</MudText>
+                            }
+                            <MudText Typo="Typo.caption" Class="mt-2">
+                                Closes: @survey.EndDate.ToString("dd MMM yyyy")
+                            </MudText>
+                            @if (survey.IsAnonymous)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default" Icon="@Icons.Material.Filled.VisibilityOff" Class="mt-1">Anonymous</MudChip>
+                            }
+                        </MudCardContent>
+                        <MudCardActions>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                                       Href="@($"/surveys/take/{survey.Id}")">
+                                Take Survey
+                            </MudButton>
+                        </MudCardActions>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private bool _loading = true;
+    private int _currentEmployeeId = 0;
+    private bool _isHrAdmin = false;
+    private List<SurveyViewModel> _allSurveys = new();
+    private List<Survey> _availableSurveys = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Surveys", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        _isHrAdmin = user.IsInRole("SuperAdmin") || user.IsInRole("HRManager");
+        var userName = user.Identity?.Name;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == userName && !e.IsDeleted);
+        _currentEmployeeId = emp?.Id ?? 0;
+
+        await LoadSurveysAsync(db);
+    }
+
+    private async Task LoadSurveysAsync(NickHRDbContext db)
+    {
+        _loading = true;
+        try
+        {
+            if (_isHrAdmin)
+            {
+                var surveys = await db.Surveys
+                    .Include(s => s.Responses)
+                    .Where(s => !s.IsDeleted)
+                    .OrderByDescending(s => s.CreatedAt)
+                    .ToListAsync();
+
+                _allSurveys = surveys.Select(s => new SurveyViewModel
+                {
+                    Survey = s,
+                    ResponseCount = s.Responses.Count
+                }).ToList();
+            }
+            else
+            {
+                var now = DateTime.UtcNow;
+                var respondedIds = await db.SurveyResponses
+                    .Where(r => !r.IsDeleted && r.EmployeeId == _currentEmployeeId)
+                    .Select(r => r.SurveyId)
+                    .ToListAsync();
+
+                _availableSurveys = await db.Surveys
+                    .Where(s => !s.IsDeleted
+                                && s.Status == SurveyStatus.Active
+                                && s.StartDate <= now
+                                && s.EndDate >= now
+                                && !respondedIds.Contains(s.Id))
+                    .OrderBy(s => s.EndDate)
+                    .ToListAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading surveys: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static Color GetStatusColor(SurveyStatus status) => status switch
+    {
+        SurveyStatus.Draft => Color.Default,
+        SurveyStatus.Active => Color.Success,
+        SurveyStatus.Closed => Color.Dark,
+        _ => Color.Default
+    };
+
+    private static string TruncateText(string text, int maxLength) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "…";
+
+    private class SurveyViewModel
+    {
+        public Survey Survey { get; set; } = null!;
+        public int ResponseCount { get; set; }
+    }
+}

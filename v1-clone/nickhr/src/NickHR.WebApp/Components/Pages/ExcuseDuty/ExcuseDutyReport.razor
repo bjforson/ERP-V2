@@ -1,0 +1,290 @@
+@page "/excuse-duty/report"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>NICKSCAN ERP — NickHR — Excuse Duty Report</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Excuse Duty Report</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<!-- Filters -->
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="6" sm="3">
+                <MudSelect T="int" @bind-Value="_selectedMonth" Label="Month" Variant="Variant.Outlined">
+                    @for (int m = 1; m <= 12; m++)
+                    {
+                        var monthName = new DateTime(2000, m, 1).ToString("MMMM");
+                        <MudSelectItem Value="m">@monthName</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudSelect T="int" @bind-Value="_selectedYear" Label="Year" Variant="Variant.Outlined">
+                    @for (int y = DateTime.Today.Year; y >= DateTime.Today.Year - 2; y--)
+                    {
+                        <MudSelectItem Value="y">@y</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="int?" @bind-Value="_selectedDepartmentId" Label="Department" Variant="Variant.Outlined" Clearable="true">
+                    <MudSelectItem T="int?" Value="null">All Departments</MudSelectItem>
+                    @foreach (var dept in _departments)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)dept.Id)">@dept.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                           OnClick="GenerateReport" StartIcon="@Icons.Material.Filled.Search">
+                    Generate
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else if (_reportRows.Any())
+{
+    <!-- Summary Cards -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="1" Style="border-left: 4px solid var(--mud-palette-primary);">
+                <MudCardContent Class="py-3">
+                    <MudText Typo="Typo.overline" Color="Color.Secondary">Total Hours</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Primary">@_summaryTotalHours.ToString("N1")</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="1" Style="border-left: 4px solid var(--mud-palette-warning);">
+                <MudCardContent Class="py-3">
+                    <MudText Typo="Typo.overline" Color="Color.Secondary">Total Requests</MudText>
+                    <MudText Typo="Typo.h4">@_summaryTotalRequests</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="1" Style="border-left: 4px solid var(--mud-palette-success);">
+                <MudCardContent Class="py-3">
+                    <MudText Typo="Typo.overline" Color="Color.Secondary">Most Common Type</MudText>
+                    <MudText Typo="Typo.h6">@_mostCommonType</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Report Table -->
+    <MudCard Elevation="2">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">
+                    Report — @(new DateTime(2000, _selectedMonth, 1).ToString("MMMM")) @_selectedYear
+                </MudText>
+            </CardHeaderContent>
+            <CardHeaderActions>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                           StartIcon="@Icons.Material.Filled.Download"
+                           OnClick="ExportCsv">
+                    Export CSV
+                </MudButton>
+            </CardHeaderActions>
+        </MudCardHeader>
+        <MudCardContent>
+            <MudTable Items="_reportRows" Dense="true" Striped="true" Hover="true" @bind-RowsPerPage="_rowsPerPage">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<ReportRow, object>(x => x.EmployeeName)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh>Department</MudTh>
+                    <MudTh>Medical (h)</MudTh>
+                    <MudTh>Official (h)</MudTh>
+                    <MudTh>Personal (h)</MudTh>
+                    <MudTh>Other (h)</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<ReportRow, object>(x => x.TotalHours)">Total (h)</MudTableSortLabel></MudTh>
+                    <MudTh>Requests</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.EmployeeName</MudTd>
+                    <MudTd>@context.Department</MudTd>
+                    <MudTd>@context.MedicalHours.ToString("N1")</MudTd>
+                    <MudTd>@context.OfficialHours.ToString("N1")</MudTd>
+                    <MudTd>@context.PersonalHours.ToString("N1")</MudTd>
+                    <MudTd>@context.OtherHours.ToString("N1")</MudTd>
+                    <MudTd>
+                        <MudText Style="font-weight:600;" Color="@(context.TotalHours > 8 ? Color.Error : Color.Default)">
+                            @context.TotalHours.ToString("N1")
+                        </MudText>
+                    </MudTd>
+                    <MudTd>@context.RequestCount</MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTFootRow>
+                        <MudTd colspan="2"><strong>Totals</strong></MudTd>
+                        <MudTd>@_reportRows.Sum(r => r.MedicalHours).ToString("N1")</MudTd>
+                        <MudTd>@_reportRows.Sum(r => r.OfficialHours).ToString("N1")</MudTd>
+                        <MudTd>@_reportRows.Sum(r => r.PersonalHours).ToString("N1")</MudTd>
+                        <MudTd>@_reportRows.Sum(r => r.OtherHours).ToString("N1")</MudTd>
+                        <MudTd><strong>@_reportRows.Sum(r => r.TotalHours).ToString("N1")</strong></MudTd>
+                        <MudTd>@_reportRows.Sum(r => r.RequestCount)</MudTd>
+                    </MudTFootRow>
+                </FooterContent>
+                <PagerContent>
+                    <MudTablePager />
+                </PagerContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+else if (_hasGenerated)
+{
+    <MudAlert Severity="Severity.Info">No excuse duty records found for the selected period.</MudAlert>
+}
+
+@code {
+    private List<ReportRow> _reportRows = new();
+    private List<Department> _departments = new();
+    private bool _isLoading = false;
+    private bool _hasGenerated = false;
+    private int _selectedMonth = DateTime.Today.Month;
+    private int _selectedYear = DateTime.Today.Year;
+    private int? _selectedDepartmentId = null;
+    private int _rowsPerPage = 20;
+    private decimal _summaryTotalHours = 0;
+    private int _summaryTotalRequests = 0;
+    private string _mostCommonType = "—";
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Excuse Duty", href: null, disabled: true),
+        new BreadcrumbItem("Report", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDepartments();
+    }
+
+    private async Task LoadDepartments()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _departments = await db.Departments.OrderBy(d => d.Name).ToListAsync();
+    }
+
+    private async Task GenerateReport()
+    {
+        _isLoading = true;
+        _hasGenerated = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var monthStart = new DateTime(_selectedYear, _selectedMonth, 1);
+            var monthEnd = monthStart.AddMonths(1);
+
+            var query = db.ExcuseDuties
+                .Include(e => e.Employee)
+                .ThenInclude(emp => emp.Department)
+                .Where(e => e.Date >= monthStart && e.Date < monthEnd &&
+                            e.Status != ExcuseDutyStatus.Rejected &&
+                            e.Status != ExcuseDutyStatus.Cancelled);
+
+            if (_selectedDepartmentId.HasValue)
+                query = query.Where(e => e.Employee.DepartmentId == _selectedDepartmentId.Value);
+
+            var duties = await query.ToListAsync();
+
+            _reportRows = duties
+                .GroupBy(d => new
+                {
+                    d.EmployeeId,
+                    Name = d.Employee != null ? $"{d.Employee.FirstName} {d.Employee.LastName}" : "Unknown",
+                    Dept = d.Employee?.Department?.Name ?? "—"
+                })
+                .Select(g => new ReportRow
+                {
+                    EmployeeName = g.Key.Name,
+                    Department = g.Key.Dept,
+                    MedicalHours = g.Where(d => d.ExcuseDutyType == ExcuseDutyType.Medical).Sum(d => d.DurationHours),
+                    OfficialHours = g.Where(d => d.ExcuseDutyType == ExcuseDutyType.OfficialErrand).Sum(d => d.DurationHours),
+                    PersonalHours = g.Where(d => d.ExcuseDutyType == ExcuseDutyType.PersonalEmergency).Sum(d => d.DurationHours),
+                    OtherHours = g.Where(d => d.ExcuseDutyType != ExcuseDutyType.Medical &&
+                                               d.ExcuseDutyType != ExcuseDutyType.OfficialErrand &&
+                                               d.ExcuseDutyType != ExcuseDutyType.PersonalEmergency)
+                                  .Sum(d => d.DurationHours),
+                    RequestCount = g.Count()
+                })
+                .OrderBy(r => r.EmployeeName)
+                .ToList();
+
+            foreach (var row in _reportRows)
+                row.TotalHours = row.MedicalHours + row.OfficialHours + row.PersonalHours + row.OtherHours;
+
+            _summaryTotalHours = _reportRows.Sum(r => r.TotalHours);
+            _summaryTotalRequests = _reportRows.Sum(r => r.RequestCount);
+
+            if (duties.Any())
+            {
+                var topType = duties.GroupBy(d => d.ExcuseDutyType)
+                    .OrderByDescending(g => g.Count())
+                    .FirstOrDefault()?.Key;
+                _mostCommonType = topType?.ToString() ?? "—";
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error generating report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ExportCsv()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Employee,Department,Medical Hours,Official Hours,Personal Hours,Other Hours,Total Hours,Request Count");
+        foreach (var row in _reportRows)
+        {
+            sb.AppendLine($"\"{row.EmployeeName}\",\"{row.Department}\",{row.MedicalHours:N1},{row.OfficialHours:N1},{row.PersonalHours:N1},{row.OtherHours:N1},{row.TotalHours:N1},{row.RequestCount}");
+        }
+
+        var fileName = $"ExcuseDutyReport_{_selectedYear}_{_selectedMonth:D2}.csv";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+
+        await JS.InvokeVoidAsync("eval",
+            $"var a = document.createElement('a'); a.href = 'data:text/csv;base64,{base64}'; a.download = '{fileName}'; a.click();");
+
+        Snackbar.Add("CSV exported!", Severity.Success);
+    }
+
+    public class ReportRow
+    {
+        public string EmployeeName { get; set; } = "";
+        public string Department { get; set; } = "";
+        public decimal MedicalHours { get; set; }
+        public decimal OfficialHours { get; set; }
+        public decimal PersonalHours { get; set; }
+        public decimal OtherHours { get; set; }
+        public decimal TotalHours { get; set; }
+        public int RequestCount { get; set; }
+    }
+}

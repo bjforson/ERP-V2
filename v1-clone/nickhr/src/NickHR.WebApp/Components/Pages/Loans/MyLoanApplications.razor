@@ -1,0 +1,234 @@
+@page "/loans/my-applications"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — My Loan Applications</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-2">
+    <MudText Typo="Typo.h5">My Loan Applications</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+               Href="/loans/apply">
+        Apply for Loan
+    </MudButton>
+</div>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (!_applications.Any())
+        {
+            <div class="d-flex flex-column align-center pa-8">
+                <MudIcon Icon="@Icons.Material.Filled.AccountBalance" Size="Size.Large" Color="Color.Secondary" Class="mb-3" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary">No loan applications yet.</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/loans/apply" Class="mt-3">Apply for Loan</MudButton>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="_applications" Dense="true" Striped="true" Hover="true"
+                      @bind-RowsPerPage="_rowsPerPage" MultiSelection="false">
+                <HeaderContent>
+                    <MudTh>Loan Type</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LoanApplication, object>(x => x.RequestedAmount)">Amount (GH₵)</MudTableSortLabel></MudTh>
+                    <MudTh>Purpose</MudTh>
+                    <MudTh>Months</MudTh>
+                    <MudTh>Monthly EMI (GH₵)</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LoanApplication, object>(x => x.Status.ToString())">Status</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LoanApplication, object>(x => x.CreatedAt)">Applied Date</MudTableSortLabel></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="GetLoanTypeColor(context.LoanType)">
+                            @GetLoanTypeLabel(context.LoanType)
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>@context.RequestedAmount.ToString("N2")</MudTd>
+                    <MudTd>
+                        <MudTooltip Text="@context.Purpose">
+                            <MudText Typo="Typo.body2" Style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                @context.Purpose
+                            </MudText>
+                        </MudTooltip>
+                    </MudTd>
+                    <MudTd>@context.RepaymentMonths</MudTd>
+                    <MudTd>@context.MonthlyInstallment.ToString("N2")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="GetStatusColor(context.Status)"
+                                 Icon="@GetStatusIcon(context.Status)">
+                            @GetStatusLabel(context.Status)
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>@context.CreatedAt.ToString("dd/MM/yyyy")</MudTd>
+                </RowTemplate>
+                <ChildRowContent>
+                    <MudTr>
+                        <MudTd colspan="7" Class="pa-0">
+                            <MudCollapse Expanded="@IsExpanded(context)">
+                                <MudCard Elevation="0" Class="ma-2 pa-2" Style="background: var(--mud-palette-background-grey);">
+                                    <MudText Typo="Typo.subtitle2" Class="mb-2">Approval Timeline</MudText>
+                                    <MudTimeline TimelineAlign="TimelineAlign.Start" TimelineOrientation="TimelineOrientation.Horizontal">
+                                        <MudTimelineItem Color="Color.Warning" Size="Size.Small">
+                                            <ItemContent>
+                                                <MudText Typo="Typo.caption" Style="font-weight:600;">Submitted</MudText>
+                                                <MudText Typo="Typo.caption">@context.CreatedAt.ToString("dd/MM/yyyy HH:mm")</MudText>
+                                            </ItemContent>
+                                        </MudTimelineItem>
+                                        <MudTimelineItem Color="@(context.ManagerApprovedAt.HasValue ? Color.Info : Color.Default)" Size="Size.Small">
+                                            <ItemContent>
+                                                <MudText Typo="Typo.caption" Style="font-weight:600;">Manager</MudText>
+                                                <MudText Typo="Typo.caption">
+                                                    @(context.ManagerApprovedAt.HasValue ? context.ManagerApprovedAt.Value.ToString("dd/MM/yyyy") : "Pending")
+                                                </MudText>
+                                            </ItemContent>
+                                        </MudTimelineItem>
+                                        <MudTimelineItem Color="@(context.HRApprovedAt.HasValue ? Color.Info : Color.Default)" Size="Size.Small">
+                                            <ItemContent>
+                                                <MudText Typo="Typo.caption" Style="font-weight:600;">HR</MudText>
+                                                <MudText Typo="Typo.caption">
+                                                    @(context.HRApprovedAt.HasValue ? context.HRApprovedAt.Value.ToString("dd/MM/yyyy") : "Pending")
+                                                </MudText>
+                                            </ItemContent>
+                                        </MudTimelineItem>
+                                        <MudTimelineItem Color="@(context.FinanceApprovedAt.HasValue ? Color.Success : Color.Default)" Size="Size.Small">
+                                            <ItemContent>
+                                                <MudText Typo="Typo.caption" Style="font-weight:600;">Finance</MudText>
+                                                <MudText Typo="Typo.caption">
+                                                    @(context.FinanceApprovedAt.HasValue ? context.FinanceApprovedAt.Value.ToString("dd/MM/yyyy") : "Pending")
+                                                </MudText>
+                                            </ItemContent>
+                                        </MudTimelineItem>
+                                        <MudTimelineItem Color="@(context.DisbursedAt.HasValue ? Color.Success : Color.Default)" Size="Size.Small">
+                                            <ItemContent>
+                                                <MudText Typo="Typo.caption" Style="font-weight:600;">Disbursed</MudText>
+                                                <MudText Typo="Typo.caption">
+                                                    @(context.DisbursedAt.HasValue ? context.DisbursedAt.Value.ToString("dd/MM/yyyy") : "Pending")
+                                                </MudText>
+                                            </ItemContent>
+                                        </MudTimelineItem>
+                                    </MudTimeline>
+                                    @if (context.Status == LoanApplicationStatus.Rejected && !string.IsNullOrEmpty(context.RejectionReason))
+                                    {
+                                        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">
+                                            <strong>Rejection Reason:</strong> @context.RejectionReason
+                                        </MudAlert>
+                                    }
+                                </MudCard>
+                            </MudCollapse>
+                        </MudTd>
+                    </MudTr>
+                </ChildRowContent>
+                <PagerContent>
+                    <MudTablePager />
+                </PagerContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<LoanApplication> _applications = new();
+    private bool _isLoading = true;
+    private int _rowsPerPage = 10;
+    private HashSet<int> _expandedIds = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Loans", href: null, disabled: true),
+        new BreadcrumbItem("My Applications", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _applications = await db.LoanApplications
+                .Include(la => la.Employee)
+                .OrderByDescending(la => la.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading applications: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private bool IsExpanded(LoanApplication app) => _expandedIds.Contains(app.Id);
+
+    private void ToggleExpand(LoanApplication app)
+    {
+        if (_expandedIds.Contains(app.Id))
+            _expandedIds.Remove(app.Id);
+        else
+            _expandedIds.Add(app.Id);
+    }
+
+    private Color GetStatusColor(LoanApplicationStatus status) => status switch
+    {
+        LoanApplicationStatus.Pending => Color.Warning,
+        LoanApplicationStatus.ManagerApproved => Color.Info,
+        LoanApplicationStatus.HRApproved => Color.Info,
+        LoanApplicationStatus.FinanceApproved => Color.Success,
+        LoanApplicationStatus.Disbursed => Color.Success,
+        LoanApplicationStatus.Rejected => Color.Error,
+        LoanApplicationStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+
+    private string GetStatusIcon(LoanApplicationStatus status) => status switch
+    {
+        LoanApplicationStatus.Pending => Icons.Material.Filled.HourglassEmpty,
+        LoanApplicationStatus.ManagerApproved => Icons.Material.Filled.SupervisorAccount,
+        LoanApplicationStatus.HRApproved => Icons.Material.Filled.People,
+        LoanApplicationStatus.FinanceApproved => Icons.Material.Filled.AccountBalance,
+        LoanApplicationStatus.Disbursed => Icons.Material.Filled.CheckCircle,
+        LoanApplicationStatus.Rejected => Icons.Material.Filled.Cancel,
+        _ => Icons.Material.Filled.Circle
+    };
+
+    private string GetStatusLabel(LoanApplicationStatus status) => status switch
+    {
+        LoanApplicationStatus.ManagerApproved => "Manager Approved",
+        LoanApplicationStatus.HRApproved => "HR Approved",
+        LoanApplicationStatus.FinanceApproved => "Finance Approved",
+        _ => status.ToString()
+    };
+
+    private Color GetLoanTypeColor(LoanApplicationType type) => type switch
+    {
+        LoanApplicationType.SalaryAdvance => Color.Info,
+        LoanApplicationType.StaffLoan => Color.Primary,
+        LoanApplicationType.EmergencyLoan => Color.Error,
+        _ => Color.Default
+    };
+
+    private string GetLoanTypeLabel(LoanApplicationType type) => type switch
+    {
+        LoanApplicationType.SalaryAdvance => "Salary Advance",
+        LoanApplicationType.StaffLoan => "Staff Loan",
+        LoanApplicationType.EmergencyLoan => "Emergency Loan",
+        _ => type.ToString()
+    };
+}

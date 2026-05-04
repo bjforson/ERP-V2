@@ -1,0 +1,116 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudGrid>
+            <MudItem xs="12">
+                <MudSelect T="int" @bind-Value="_selectedComponentId" Label="Salary Component *"
+                           Variant="Variant.Outlined" Required="true">
+                    @foreach (var comp in Components)
+                    {
+                        <MudSelectItem Value="@comp.Id">
+                            [@comp.Code] @comp.Name (@comp.ComponentType)
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" @bind-Value="_amount" Label="Amount (GH₵) *"
+                                 Variant="Variant.Outlined" Min="0" Format="N2" Required="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker @bind-Date="_effectiveFrom" Label="Effective From *"
+                               Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                               Required="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker @bind-Date="_effectiveTo" Label="Effective To (leave blank for ongoing)"
+                               Variant="Variant.Outlined" DateFormat="dd/MM/yyyy"
+                               Clearable="true" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync"
+                   Disabled="_saving">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Assign
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter] public int EmployeeId { get; set; }
+    [Parameter] public List<SalaryComponent> Components { get; set; } = new();
+
+    private int _selectedComponentId;
+    private decimal _amount;
+    private DateTime? _effectiveFrom = DateTime.Today;
+    private DateTime? _effectiveTo;
+    private bool _saving = false;
+
+    protected override void OnInitialized()
+    {
+        if (Components.Any())
+            _selectedComponentId = Components.First().Id;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_selectedComponentId == 0)
+        {
+            Snackbar.Add("Please select a component.", Severity.Warning);
+            return;
+        }
+        if (_amount <= 0)
+        {
+            Snackbar.Add("Amount must be greater than zero.", Severity.Warning);
+            return;
+        }
+        if (!_effectiveFrom.HasValue)
+        {
+            Snackbar.Add("Effective From date is required.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = new EmployeeSalaryStructure
+            {
+                EmployeeId = EmployeeId,
+                SalaryComponentId = _selectedComponentId,
+                Amount = _amount,
+                EffectiveFrom = _effectiveFrom.Value,
+                EffectiveTo = _effectiveTo,
+                IsActive = true
+            };
+            db.EmployeeSalaryStructures.Add(entity);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Component assigned to employee!", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

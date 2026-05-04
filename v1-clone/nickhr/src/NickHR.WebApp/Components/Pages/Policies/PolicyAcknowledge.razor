@@ -1,0 +1,163 @@
+@page "/policies/{Id:int}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using NickHR.Core.Interfaces
+@inject IPolicyDocumentService PolicyService
+@inject ICurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Policy</PageTitle>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_policy == null)
+{
+    <MudAlert Severity="Severity.Error">Policy not found.</MudAlert>
+    <MudButton Href="/policies" Variant="Variant.Outlined" Class="mt-2">Back to Policies</MudButton>
+}
+else
+{
+    <MudText Typo="Typo.h5" Class="mb-2">
+        <MudIcon Icon="@Icons.Material.Filled.Policy" Class="mr-2" />
+        @_policy.Title
+    </MudText>
+    <MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+    <MudGrid>
+        <MudItem xs="12" md="8">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="6" sm="3">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Category</MudText>
+                            <MudText Typo="Typo.body1">@_policy.Category</MudText>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Version</MudText>
+                            <MudText Typo="Typo.body1">@_policy.Version</MudText>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Effective Date</MudText>
+                            <MudText Typo="Typo.body1">@_policy.EffectiveDate.ToString("dd MMM yyyy")</MudText>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <MudText Typo="Typo.overline" Color="Color.Secondary">Status</MudText>
+                            <MudChip T="string" Size="Size.Small" Color="@(_policy.IsActive ? Color.Success : Color.Error)">
+                                @(_policy.IsActive ? "Active" : "Inactive")
+                            </MudChip>
+                        </MudItem>
+                    </MudGrid>
+
+                    @if (!string.IsNullOrWhiteSpace(_policy.Description))
+                    {
+                        <MudDivider Class="my-3" />
+                        <MudText Typo="Typo.subtitle1" Class="mb-1">Description</MudText>
+                        <MudText Typo="Typo.body2">@_policy.Description</MudText>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(_policy.FilePath))
+                    {
+                        <MudDivider Class="my-3" />
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                   Href="@_policy.FilePath" Target="_blank"
+                                   StartIcon="@Icons.Material.Filled.OpenInNew">
+                            Open Document
+                        </MudButton>
+                    }
+                </MudCardContent>
+                @if (_policy.RequiresAcknowledgement)
+                {
+                    <MudCardActions Class="pa-4 pt-0">
+                        @if (_hasAcknowledged)
+                        {
+                            <MudAlert Severity="Severity.Success" Dense="true">
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Class="mr-1" />
+                                You have acknowledged this policy.
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Success"
+                                       StartIcon="@Icons.Material.Filled.CheckCircle"
+                                       OnClick="AcknowledgeAsync" Disabled="_isAcknowledging">
+                                @if (_isAcknowledging)
+                                { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+                                I Have Read and Acknowledge This Policy
+                            </MudButton>
+                        }
+                    </MudCardActions>
+                }
+            </MudCard>
+        </MudItem>
+
+        @if (_policy.RequiresAcknowledgement)
+        {
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="2">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">Acknowledgement Status</MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>@_policy.AcknowledgedCount</strong> of <strong>@_policy.TotalEmployees</strong> employees acknowledged
+                        </MudText>
+                        <MudProgressLinear Color="Color.Success"
+                                           Value="@(_policy.TotalEmployees > 0 ? (double)_policy.AcknowledgedCount / _policy.TotalEmployees * 100 : 0)"
+                                           Rounded="true" Size="Size.Medium" />
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool _isLoading = true;
+    private bool _hasAcknowledged;
+    private bool _isAcknowledging;
+    private PolicyDocumentDto? _policy;
+    private int? _employeeId;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Policies", href: "/policies"),
+        new BreadcrumbItem("View Policy", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employeeId = CurrentUser.EmployeeId;
+        try
+        {
+            _policy = await PolicyService.GetByIdAsync(Id);
+            if (_policy != null && _employeeId.HasValue)
+                _hasAcknowledged = await PolicyService.HasAcknowledgedAsync(Id, _employeeId.Value);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task AcknowledgeAsync()
+    {
+        if (_employeeId == null) return;
+        _isAcknowledging = true;
+        try
+        {
+            await PolicyService.AcknowledgeAsync(Id, _employeeId.Value);
+            _hasAcknowledged = true;
+            _policy = await PolicyService.GetByIdAsync(Id);
+            Snackbar.Add("Policy acknowledged successfully.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isAcknowledging = false; }
+    }
+}

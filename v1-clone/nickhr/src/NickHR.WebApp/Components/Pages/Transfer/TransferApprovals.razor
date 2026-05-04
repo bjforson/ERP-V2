@@ -1,0 +1,275 @@
+@page "/transfer/approvals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+<PageTitle>NICKSCAN ERP — NickHR — Transfer Approvals</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    Transfer / Promotion Approvals
+    @if (!_isLoading && _pending.Count > 0)
+    {
+        <MudChip T="string" Color="Color.Warning" Size="Size.Small" Class="ml-2">@_pending.Count</MudChip>
+    }
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <MudTabPanel Text="Pending" BadgeData="@_pending.Count" BadgeColor="Color.Warning"
+                 Icon="@Icons.Material.Filled.HourglassEmpty">
+        @TransferTable(_pending, showActions: true)
+    </MudTabPanel>
+    <MudTabPanel Text="Approved" Icon="@Icons.Material.Filled.CheckCircle">
+        @TransferTable(_approved, showActions: false)
+    </MudTabPanel>
+    <MudTabPanel Text="Rejected" Icon="@Icons.Material.Filled.Cancel">
+        @TransferTable(_rejected, showActions: false)
+    </MudTabPanel>
+</MudTabs>
+
+<!-- Reject Dialog -->
+@if (_rejectDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_rejectDialogOpen">
+        <TitleContent><MudText Typo="Typo.h6">Reject Transfer/Promotion</MudText></TitleContent>
+        <DialogContent>
+            <MudTextField @bind-Value="_rejectReason" Label="Rejection Reason *"
+                          Variant="Variant.Outlined" Lines="3" Required="true" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _rejectDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ConfirmReject"
+                       Disabled="string.IsNullOrWhiteSpace(_rejectReason)">Reject</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<TransferPromotion> _pending = new();
+    private List<TransferPromotion> _approved = new();
+    private List<TransferPromotion> _rejected = new();
+    private bool _isLoading = true;
+    private int? _currentEmployeeId;
+
+    private bool _rejectDialogOpen;
+    private TransferPromotion? _selectedTransfer;
+    private string _rejectReason = string.Empty;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Transfers", href: null, disabled: true),
+        new BreadcrumbItem("Approvals", href: null, disabled: true)
+    };
+
+    private RenderFragment TransferTable(List<TransferPromotion> items, bool showActions) =>
+        @<div>
+            @if (!items.Any())
+            {
+                <div class="d-flex flex-column align-center pa-6">
+                    <MudText Typo="Typo.body1" Color="Color.Secondary">No records.</MudText>
+                </div>
+            }
+            else
+            {
+                <MudTable Items="items" Dense="true" Striped="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh>Employee</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>From Dept → To Dept</MudTh>
+                        <MudTh>From Grade → To Grade</MudTh>
+                        <MudTh>Salary Change</MudTh>
+                        <MudTh>Effective Date</MudTh>
+                        <MudTh>Reason</MudTh>
+                        @if (showActions)
+                        {
+                            <MudTh>Actions</MudTh>
+                        }
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">
+                                @(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")
+                            </MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee?.EmployeeCode</MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Color="@GetTypeColor(context.Type)">@context.Type</MudChip>
+                        </MudTd>
+                        <MudTd>
+                            <MudText Typo="Typo.body2">@(context.FromDepartment?.Name ?? "—")</MudText>
+                            <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" Color="Color.Secondary" />
+                            <MudText Typo="Typo.body2">@(context.ToDepartment?.Name ?? "—")</MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudText Typo="Typo.body2">@(context.FromGrade?.Name ?? "—")</MudText>
+                            <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" Color="Color.Secondary" />
+                            <MudText Typo="Typo.body2">@(context.ToGrade?.Name ?? "—")</MudText>
+                        </MudTd>
+                        <MudTd>
+                            @{
+                                var diff = context.NewBasicSalary - context.OldBasicSalary;
+                                var color = diff > 0 ? Color.Success : diff < 0 ? Color.Error : Color.Default;
+                            }
+                            <MudText Typo="Typo.body2" Color="@color">
+                                @(diff >= 0 ? "+" : "")GHS @diff.ToString("N2")
+                            </MudText>
+                        </MudTd>
+                        <MudTd>@context.EffectiveDate.ToString("dd/MM/yyyy")</MudTd>
+                        <MudTd>
+                            <MudTooltip Text="@context.Reason">
+                                <MudText Typo="Typo.body2" Style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                    @context.Reason
+                                </MudText>
+                            </MudTooltip>
+                        </MudTd>
+                        @if (showActions)
+                        {
+                            <MudTd>
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                           OnClick="() => Approve(context)" Class="mr-1">Approve</MudButton>
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                           OnClick="() => OpenRejectDialog(context)">Reject</MudButton>
+                            </MudTd>
+                        }
+                    </RowTemplate>
+                </MudTable>
+            }
+        </div>;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentEmployeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var all = await db.TransferPromotions
+                .Include(t => t.Employee)
+                .Include(t => t.FromDepartment)
+                .Include(t => t.ToDepartment)
+                .Include(t => t.FromGrade)
+                .Include(t => t.ToGrade)
+                .OrderByDescending(t => t.CreatedAt)
+                .ToListAsync();
+
+            _pending = all.Where(t => t.Status == ApprovalStatus.Pending).ToList();
+            _approved = all.Where(t => t.Status == ApprovalStatus.Approved).ToList();
+            _rejected = all.Where(t => t.Status == ApprovalStatus.Rejected).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task Approve(TransferPromotion transfer)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.TransferPromotions.FindAsync(transfer.Id);
+            if (entity == null) return;
+
+            entity.Status = ApprovalStatus.Approved;
+            entity.ApprovedById = _currentEmployeeId;
+            entity.ApprovedAt = DateTime.UtcNow;
+
+            // Apply changes to employee if effective date is today or past
+            if (entity.EffectiveDate <= DateTime.Today)
+            {
+                var emp = await db.Employees.FindAsync(entity.EmployeeId);
+                if (emp != null)
+                {
+                    emp.DepartmentId = entity.ToDepartmentId;
+                    emp.DesignationId = entity.ToDesignationId;
+                    emp.GradeId = entity.ToGradeId;
+                    emp.LocationId = entity.ToLocationId;
+                    emp.BasicSalary = entity.NewBasicSalary;
+                }
+            }
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Transfer approved and applied!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void OpenRejectDialog(TransferPromotion transfer)
+    {
+        _selectedTransfer = transfer;
+        _rejectReason = string.Empty;
+        _rejectDialogOpen = true;
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (_selectedTransfer == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.TransferPromotions.FindAsync(_selectedTransfer.Id);
+            if (entity == null) return;
+            entity.Status = ApprovalStatus.Rejected;
+            entity.RejectionReason = _rejectReason;
+            await db.SaveChangesAsync();
+            _rejectDialogOpen = false;
+            Snackbar.Add("Transfer rejected.", Severity.Warning);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private Color GetTypeColor(TransferType t) => t switch
+    {
+        TransferType.Promotion => Color.Success,
+        TransferType.Demotion => Color.Error,
+        _ => Color.Info
+    };
+}

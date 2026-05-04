@@ -1,0 +1,304 @@
+@page "/admin/audit-logs"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SuperAdminOnly)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Audit Logs</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Audit Logs</MudText>
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" Class="mb-4">
+
+    <!-- System Audit Logs Tab -->
+    <MudTabPanel Text="System Audit" Icon="@Icons.Material.Filled.ManageHistory">
+        <!-- Filters -->
+        <MudCard Elevation="0" Class="mb-4 mt-4">
+            <MudCardContent>
+                <MudGrid>
+                    <MudItem xs="12" sm="6" md="2">
+                        <MudDatePicker Label="From" @bind-Date="_auditDateFrom" Dense="true" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="2">
+                        <MudDatePicker Label="To" @bind-Date="_auditDateTo" Dense="true" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="2">
+                        <MudTextField @bind-Value="_auditUserFilter" Label="User" Dense="true" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="2">
+                        <MudTextField @bind-Value="_auditActionFilter" Label="Action" Dense="true" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="2">
+                        <MudTextField @bind-Value="_auditEntityFilter" Label="Entity Type" Dense="true" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="2" Class="d-flex align-end">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadAuditLogs"
+                                   StartIcon="@Icons.Material.Filled.Search" FullWidth="true">Search</MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+
+        @if (_auditLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudCard Elevation="2">
+                <MudCardContent Class="pa-0">
+                    <MudTable Items="@_auditLogs" Dense="true" Hover="true" Striped="true" T="AuditLog"
+                              DetailRowContent="@AuditDetailRow" @bind-SelectedItem="_selectedAudit">
+                        <HeaderContent>
+                            <MudTh><MudTableSortLabel SortBy="new Func<AuditLog, object>(x => x.Timestamp)">Timestamp</MudTableSortLabel></MudTh>
+                            <MudTh>User</MudTh>
+                            <MudTh>Action</MudTh>
+                            <MudTh>Entity Type</MudTh>
+                            <MudTh>Entity ID</MudTh>
+                            <MudTh>IP Address</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Timestamp">@context.Timestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss")</MudTd>
+                            <MudTd DataLabel="User">@(context.UserName ?? context.UserId ?? "System")</MudTd>
+                            <MudTd DataLabel="Action">
+                                <MudChip T="string" Size="Size.Small" Color="@GetActionColor(context.Action)">@context.Action</MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Entity Type">@context.EntityType</MudTd>
+                            <MudTd DataLabel="Entity ID">@(context.EntityId ?? "—")</MudTd>
+                            <MudTd DataLabel="IP">@(context.IPAddress ?? "—")</MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No audit logs found for the selected filters.</MudText>
+                        </NoRecordsContent>
+                        <PagerContent>
+                            <MudTablePager PageSizeOptions="new[] { 25, 50, 100 }" />
+                        </PagerContent>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        }
+    </MudTabPanel>
+
+    <!-- Login Audit Tab -->
+    <MudTabPanel Text="Login Audit" Icon="@Icons.Material.Filled.Login">
+        <!-- Filters -->
+        <MudCard Elevation="0" Class="mb-4 mt-4">
+            <MudCardContent>
+                <MudGrid>
+                    <MudItem xs="12" sm="4" md="3">
+                        <MudDatePicker Label="From" @bind-Date="_loginDateFrom" Dense="true" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="4" md="3">
+                        <MudDatePicker Label="To" @bind-Date="_loginDateTo" Dense="true" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="4" md="2">
+                        <MudSelect T="bool?" Label="Result" @bind-Value="_loginSuccessFilter" Clearable="true" Dense="true">
+                            <MudSelectItem T="bool?" Value="@((bool?)true)">Success</MudSelectItem>
+                            <MudSelectItem T="bool?" Value="@((bool?)false)">Failed</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="4" md="2" Class="d-flex align-end">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadLoginAudits"
+                                   StartIcon="@Icons.Material.Filled.Search" FullWidth="true">Search</MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+
+        @if (_loginLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudCard Elevation="2">
+                <MudCardContent Class="pa-0">
+                    <MudTable Items="@_loginAudits" Dense="true" Hover="true" Striped="true" T="LoginAudit">
+                        <HeaderContent>
+                            <MudTh><MudTableSortLabel SortBy="new Func<LoginAudit, object>(x => x.LoginTime)">Time</MudTableSortLabel></MudTh>
+                            <MudTh>Email</MudTh>
+                            <MudTh>Employee</MudTh>
+                            <MudTh>Result</MudTh>
+                            <MudTh>Lat / Lng</MudTh>
+                            <MudTh>Nearest Location</MudTh>
+                            <MudTh>Distance (m)</MudTh>
+                            <MudTh>Geo-fence</MudTh>
+                            <MudTh>IP</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Time">@context.LoginTime.ToLocalTime().ToString("dd MMM HH:mm:ss")</MudTd>
+                            <MudTd DataLabel="Email">@context.Email</MudTd>
+                            <MudTd DataLabel="Employee">@(context.EmployeeName ?? "—")</MudTd>
+                            <MudTd DataLabel="Result">
+                                @if (context.Success)
+                                { <MudChip T="string" Size="Size.Small" Color="Color.Success">Success</MudChip> }
+                                else
+                                { <MudChip T="string" Size="Size.Small" Color="Color.Error">Failed</MudChip> }
+                            </MudTd>
+                            <MudTd DataLabel="Lat/Lng">
+                                @if (context.Latitude.HasValue && context.Longitude.HasValue)
+                                { <MudText Typo="Typo.caption">@context.Latitude.Value.ToString("F4"), @context.Longitude.Value.ToString("F4")</MudText> }
+                                else { <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText> }
+                            </MudTd>
+                            <MudTd DataLabel="Nearest Location">@(context.NearestLocationName ?? "—")</MudTd>
+                            <MudTd DataLabel="Distance">
+                                @if (context.DistanceFromNearestLocation.HasValue)
+                                { <MudText Typo="Typo.caption">@context.DistanceFromNearestLocation.Value.ToString("F0") m</MudText> }
+                                else { <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText> }
+                            </MudTd>
+                            <MudTd DataLabel="Geo-fence">
+                                @if (context.WithinGeoFence.HasValue)
+                                {
+                                    @if (context.WithinGeoFence.Value)
+                                    { <MudChip T="string" Size="Size.Small" Color="Color.Success">Inside</MudChip> }
+                                    else
+                                    { <MudChip T="string" Size="Size.Small" Color="Color.Error">Outside</MudChip> }
+                                }
+                                else { <MudText Typo="Typo.caption" Color="Color.Secondary">N/A</MudText> }
+                            </MudTd>
+                            <MudTd DataLabel="IP">@(context.IPAddress ?? "—")</MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No login audit records found.</MudText>
+                        </NoRecordsContent>
+                        <PagerContent>
+                            <MudTablePager PageSizeOptions="new[] { 25, 50, 100 }" />
+                        </PagerContent>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        }
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    // Audit Logs
+    private bool _auditLoading = false;
+    private DateTime? _auditDateFrom = DateTime.Today.AddDays(-7);
+    private DateTime? _auditDateTo;
+    private string _auditUserFilter = string.Empty;
+    private string _auditActionFilter = string.Empty;
+    private string _auditEntityFilter = string.Empty;
+    private List<AuditLog> _auditLogs = new();
+    private AuditLog? _selectedAudit;
+
+    // Login Audits
+    private bool _loginLoading = false;
+    private DateTime? _loginDateFrom = DateTime.Today.AddDays(-7);
+    private DateTime? _loginDateTo;
+    private bool? _loginSuccessFilter;
+    private List<LoginAudit> _loginAudits = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.WhenAll(LoadAuditLogs(), LoadLoginAudits());
+    }
+
+    private async Task LoadAuditLogs()
+    {
+        _auditLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var q = db.AuditLogs.AsQueryable();
+            if (_auditDateFrom.HasValue) q = q.Where(a => a.Timestamp >= _auditDateFrom.Value.ToUniversalTime());
+            if (_auditDateTo.HasValue) q = q.Where(a => a.Timestamp <= _auditDateTo.Value.AddDays(1).ToUniversalTime());
+            if (!string.IsNullOrWhiteSpace(_auditUserFilter))
+                q = q.Where(a => a.UserName != null && a.UserName.Contains(_auditUserFilter));
+            if (!string.IsNullOrWhiteSpace(_auditActionFilter))
+                q = q.Where(a => a.Action.Contains(_auditActionFilter));
+            if (!string.IsNullOrWhiteSpace(_auditEntityFilter))
+                q = q.Where(a => a.EntityType.Contains(_auditEntityFilter));
+            _auditLogs = await q.OrderByDescending(a => a.Timestamp).Take(500).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading audit logs: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _auditLoading = false;
+        }
+    }
+
+    private async Task LoadLoginAudits()
+    {
+        _loginLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var q = db.LoginAudits.AsQueryable();
+            if (_loginDateFrom.HasValue) q = q.Where(a => a.LoginTime >= _loginDateFrom.Value.ToUniversalTime());
+            if (_loginDateTo.HasValue) q = q.Where(a => a.LoginTime <= _loginDateTo.Value.AddDays(1).ToUniversalTime());
+            if (_loginSuccessFilter.HasValue) q = q.Where(a => a.Success == _loginSuccessFilter.Value);
+            _loginAudits = await q.OrderByDescending(a => a.LoginTime).Take(500).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading login audits: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loginLoading = false;
+        }
+    }
+
+    private RenderFragment<AuditLog> AuditDetailRow => log => @<MudTr>
+        <MudTd colspan="6">
+            <MudGrid Class="pa-2">
+                @if (!string.IsNullOrEmpty(log.OldValues))
+                {
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Error"><strong>Old Values:</strong></MudText>
+                        <MudTextField Value="@FormatJson(log.OldValues)" ReadOnly="true" Lines="5"
+                                      Variant="Variant.Outlined" Style="font-family:monospace; font-size:0.75rem;" />
+                    </MudItem>
+                }
+                @if (!string.IsNullOrEmpty(log.NewValues))
+                {
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Success"><strong>New Values:</strong></MudText>
+                        <MudTextField Value="@FormatJson(log.NewValues)" ReadOnly="true" Lines="5"
+                                      Variant="Variant.Outlined" Style="font-family:monospace; font-size:0.75rem;" />
+                    </MudItem>
+                }
+                @if (!string.IsNullOrEmpty(log.AdditionalInfo))
+                {
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.caption"><strong>Additional Info:</strong> @log.AdditionalInfo</MudText>
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudTd>
+    </MudTr>;
+
+    private string FormatJson(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return string.Empty;
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return json; }
+    }
+
+    private Color GetActionColor(string action) => action?.ToUpper() switch
+    {
+        "CREATE" or "INSERT" => Color.Success,
+        "UPDATE" or "EDIT" => Color.Warning,
+        "DELETE" or "REMOVE" => Color.Error,
+        "LOGIN" => Color.Info,
+        _ => Color.Default
+    };
+}

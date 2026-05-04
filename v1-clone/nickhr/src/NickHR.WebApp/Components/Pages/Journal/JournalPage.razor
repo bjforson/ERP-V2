@@ -1,0 +1,164 @@
+@page "/journal"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Services.Journal
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — My Journal</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.MenuBook" Class="mr-2" />Self-Appraisal Journal
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <MudItem xs="12" md="4">
+        <MudCard Elevation="2">
+            <MudCardHeader><MudText Typo="Typo.h6">New Entry</MudText></MudCardHeader>
+            <MudCardContent>
+                <MudTextField @bind-Value="_newTitle" Label="Title" Required="true" />
+                <MudSelect T="AchievementCategory" @bind-Value="_newCategory" Label="Category" Class="mt-3">
+                    @foreach (var c in Enum.GetValues<AchievementCategory>())
+                    {
+                        <MudSelectItem T="AchievementCategory" Value="@c">@c</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTextField @bind-Value="_newDescription" Label="Description" Lines="4" Class="mt-3" />
+                <MudSelect T="int?" @bind-Value="_linkedGoalId" Label="Link to Goal (optional)" Class="mt-3">
+                    <MudSelectItem T="int?" Value="@((int?)null)">None</MudSelectItem>
+                    @foreach (var g in _goals)
+                    {
+                        <MudSelectItem T="int?" Value="@g.Id">@g.Title</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-4"
+                           OnClick="AddEntry" Disabled="@(string.IsNullOrEmpty(_newTitle))">
+                    Add Entry
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="8">
+        <MudText Typo="Typo.h6" Class="mb-3">Timeline</MudText>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (!_entries.Any())
+        {
+            <MudAlert Severity="Severity.Info">No journal entries yet. Add your first achievement or learning!</MudAlert>
+        }
+        else
+        {
+            <MudTimeline TimelinePosition="TimelinePosition.Start">
+                @foreach (var entry in _entries)
+                {
+                    <MudTimelineItem Color="@GetCategoryColor(entry.Category)" Size="Size.Small">
+                        <ItemOpposite>
+                            <MudText Typo="Typo.caption">@entry.EntryDate.ToString("dd MMM yyyy")</MudText>
+                        </ItemOpposite>
+                        <ItemContent>
+                            <MudCard Elevation="1" Class="mb-2">
+                                <MudCardContent>
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                        <MudChip T="string" Size="Size.Small" Color="@GetCategoryColor(entry.Category)">@entry.Category</MudChip>
+                                        <MudText Typo="Typo.subtitle1"><strong>@entry.Title</strong></MudText>
+                                    </MudStack>
+                                    @if (!string.IsNullOrEmpty(entry.Description))
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mt-1">@entry.Description</MudText>
+                                    }
+                                    @if (entry.LinkedGoal != null)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Flag" Class="mt-1">
+                                            Goal: @entry.LinkedGoal.Title
+                                        </MudChip>
+                                    }
+                                </MudCardContent>
+                                <MudCardActions>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                                   OnClick="@(() => DeleteEntry(entry.Id))" />
+                                </MudCardActions>
+                            </MudCard>
+                        </ItemContent>
+                    </MudTimelineItem>
+                }
+            </MudTimeline>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private List<AchievementEntry> _entries = new();
+    private List<NickHR.Core.Entities.Performance.Goal> _goals = new();
+    private bool _loading = true;
+    private string _newTitle = "", _newDescription = "";
+    private AchievementCategory _newCategory = AchievementCategory.Achievement;
+    private int? _linkedGoalId;
+    private int _currentEmployeeId;
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Journal", null, true) };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var username = authState.User?.Identity?.Name;
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == username || e.PersonalEmail == username);
+        _currentEmployeeId = emp?.Id ?? 0;
+
+        _goals = await db.Goals.Where(g => g.EmployeeId == _currentEmployeeId).OrderBy(g => g.Title).ToListAsync();
+        await LoadEntries();
+    }
+
+    private async Task LoadEntries()
+    {
+        _loading = true;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<JournalService>();
+        _entries = await svc.GetMyEntriesAsync(_currentEmployeeId);
+        _loading = false;
+    }
+
+    private async Task AddEntry()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<JournalService>();
+        await svc.CreateEntryAsync(new AchievementEntry
+        {
+            EmployeeId = _currentEmployeeId, Title = _newTitle, Description = _newDescription,
+            Category = _newCategory, LinkedGoalId = _linkedGoalId, EntryDate = DateTime.UtcNow
+        });
+        _newTitle = ""; _newDescription = "";
+        Snackbar.Add("Entry added", Severity.Success);
+        await LoadEntries();
+    }
+
+    private async Task DeleteEntry(int id)
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<JournalService>();
+        await svc.DeleteEntryAsync(id, _currentEmployeeId);
+        Snackbar.Add("Entry deleted", Severity.Info);
+        await LoadEntries();
+    }
+
+    private Color GetCategoryColor(AchievementCategory cat) => cat switch
+    {
+        AchievementCategory.Achievement => Color.Success,
+        AchievementCategory.Challenge => Color.Error,
+        AchievementCategory.Learning => Color.Info,
+        AchievementCategory.Feedback => Color.Warning,
+        AchievementCategory.GoalProgress => Color.Primary,
+        _ => Color.Default
+    };
+}

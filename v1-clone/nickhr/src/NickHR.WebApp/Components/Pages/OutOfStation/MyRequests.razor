@@ -1,0 +1,209 @@
+@page "/out-of-station/my"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+@using NickHR.Services.OutOfStation
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — My Out-of-Station Requests</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Luggage" Class="mr-2" />
+    My Out-of-Station Requests
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudStack Row="true" Class="mb-4" AlignItems="AlignItems.Center">
+    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+               Href="/out-of-station/request"
+               StartIcon="@Icons.Material.Filled.Add">
+        New Request
+    </MudButton>
+    <MudSpacer />
+    <MudText Typo="Typo.body2" Color="Color.Secondary">
+        @_requests.Count request(s) total
+    </MudText>
+</MudStack>
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        <MudTable Items="_requests" Dense="true" Hover="true" Loading="_loading"
+                  LoadingProgressColor="Color.Primary" T="OutOfStationRequest"
+                  RowClassFunc="@((r,i) => "cursor-pointer")"
+                  OnRowClick="@(args => ToggleExpand(args.Item))">
+            <HeaderContent>
+                <MudTh>Destination</MudTh>
+                <MudTh>Dates</MudTh>
+                <MudTh>Duration</MudTh>
+                <MudTh>Transport</MudTh>
+                <MudTh Style="text-align:right">Total Allowance</MudTh>
+                <MudTh Style="text-align:right">Advance Paid</MudTh>
+                <MudTh>Status</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Destination">
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.body2"><strong>@context.Destination</strong></MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.DestinationType</MudText>
+                    </MudStack>
+                </MudTd>
+                <MudTd DataLabel="Dates">
+                    @context.DepartureDate.ToString("dd MMM yyyy") –
+                    @context.ReturnDate.ToString("dd MMM yyyy")
+                </MudTd>
+                <MudTd DataLabel="Duration">
+                    @context.NumberOfDays day(s) / @context.NumberOfNights night(s)
+                </MudTd>
+                <MudTd DataLabel="Transport">
+                    <MudChip T="string" Size="Size.Small" Color="@(context.TransportMode == TransportMode.Air ? Color.Info : Color.Default)">
+                        <MudIcon Icon="@(context.TransportMode == TransportMode.Air ? Icons.Material.Filled.Flight : Icons.Material.Filled.DirectionsBus)" Size="Size.Small" Class="mr-1" />
+                        @context.TransportMode
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Total Allowance" Style="text-align:right">
+                    <strong>GH₵@context.TotalAllowance.ToString("N2")</strong>
+                </MudTd>
+                <MudTd DataLabel="Advance Paid" Style="text-align:right">
+                    @if (context.AdvancePaid > 0)
+                    {
+                        <span>GH₵@context.AdvancePaid.ToString("N2")</span>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Secondary">—</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                        @context.Status
+                    </MudChip>
+                </MudTd>
+            </RowTemplate>
+            <ChildRowContent>
+                @if (_expandedId == context.Id)
+                {
+                    <MudTr>
+                        <MudTd colspan="7" Style="padding:0;">
+                            <MudPaper Elevation="0" Class="pa-4 mud-background-gray">
+                                <MudGrid>
+                                    <MudItem xs="12" md="4">
+                                        <MudText Typo="Typo.subtitle2" Class="mb-2">Allowance Breakdown</MudText>
+                                        <MudSimpleTable Dense="true">
+                                            <tbody>
+                                                <tr><td>Accommodation</td><td style="text-align:right">GH₵@context.AccommodationTotal.ToString("N2")</td></tr>
+                                                <tr><td>Feeding</td><td style="text-align:right">GH₵@context.FeedingTotal.ToString("N2")</td></tr>
+                                                <tr><td>Transport</td><td style="text-align:right">GH₵@context.TransportTotal.ToString("N2")</td></tr>
+                                                <tr><td>Miscellaneous</td><td style="text-align:right">GH₵@context.MiscellaneousTotal.ToString("N2")</td></tr>
+                                                <tr style="font-weight:bold;"><td>Total</td><td style="text-align:right">GH₵@context.TotalAllowance.ToString("N2")</td></tr>
+                                            </tbody>
+                                        </MudSimpleTable>
+                                    </MudItem>
+                                    <MudItem xs="12" md="4">
+                                        <MudText Typo="Typo.subtitle2" Class="mb-2">Purpose</MudText>
+                                        <MudText Typo="Typo.body2">@context.Purpose</MudText>
+                                        @if (context.Notes != null)
+                                        {
+                                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">@context.Notes</MudText>
+                                        }
+                                        @if (context.Status == OutOfStationStatus.Rejected && context.RejectionReason != null)
+                                        {
+                                            <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">
+                                                Rejected: @context.RejectionReason
+                                            </MudAlert>
+                                        }
+                                    </MudItem>
+                                    @if (context.Status == OutOfStationStatus.Settled)
+                                    {
+                                        <MudItem xs="12" md="4">
+                                            <MudText Typo="Typo.subtitle2" Class="mb-2">Settlement</MudText>
+                                            <MudText Typo="Typo.body2">Actual Expenses: GH₵@(context.ActualExpenses?.ToString("N2") ?? "—")</MudText>
+                                            <MudText Typo="Typo.body2">Advance Paid: GH₵@context.AdvancePaid.ToString("N2")</MudText>
+                                            @if (context.SettlementAmount.HasValue)
+                                            {
+                                                var isRefund = context.SettlementAmount.Value < 0;
+                                                <MudAlert Severity="@(isRefund ? Severity.Warning : Severity.Success)" Dense="true" Class="mt-2">
+                                                    @if (isRefund)
+                                                    {
+                                                        <span>Refund to company: GH₵@Math.Abs(context.SettlementAmount.Value).ToString("N2")</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span>Reimbursement due: GH₵@context.SettlementAmount.Value.ToString("N2")</span>
+                                                    }
+                                                </MudAlert>
+                                            }
+                                        </MudItem>
+                                    }
+                                </MudGrid>
+                            </MudPaper>
+                        </MudTd>
+                    </MudTr>
+                }
+            </ChildRowContent>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">
+                    No out-of-station requests found. Click <strong>New Request</strong> to submit one.
+                </MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<OutOfStationRequest> _requests = new();
+    private bool _loading = true;
+    private int _currentEmployeeId;
+    private int? _expandedId;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new("Home", "/"),
+        new("My Out-of-Station Requests", null, true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var username = authState.User?.Identity?.Name
+            ?? authState.User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == username || e.PersonalEmail == username);
+        _currentEmployeeId = emp?.Id ?? 0;
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<OutOfStationService>();
+        _requests = await svc.GetMyRequestsAsync(_currentEmployeeId);
+        _loading = false;
+    }
+
+    private void ToggleExpand(OutOfStationRequest request)
+    {
+        _expandedId = _expandedId == request.Id ? null : request.Id;
+    }
+
+    private Color GetStatusColor(OutOfStationStatus status) => status switch
+    {
+        OutOfStationStatus.Pending => Color.Warning,
+        OutOfStationStatus.Approved => Color.Info,
+        OutOfStationStatus.Rejected => Color.Error,
+        OutOfStationStatus.Completed => Color.Success,
+        OutOfStationStatus.Settled => Color.Dark,
+        _ => Color.Default
+    };
+}

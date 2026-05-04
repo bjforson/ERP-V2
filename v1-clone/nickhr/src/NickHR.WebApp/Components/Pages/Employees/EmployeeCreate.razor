@@ -1,0 +1,473 @@
+@page "/employees/create"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject AuthStateProvider AuthStateProvider
+@inject IIdentityProvisioningService Provisioning
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Constants
+@using NickHR.WebApp.Components.Shared
+@using NickHR.WebApp.Services
+
+<PageTitle>NICKSCAN ERP — NickHR — Add Employee</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Add New Employee</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (!string.IsNullOrEmpty(_provisioningWarning))
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-3" ShowCloseIcon="true"
+              CloseIconClicked="() => _provisioningWarning = null">
+        @_provisioningWarning
+    </MudAlert>
+}
+
+<EditForm Model="_model" OnValidSubmit="HandleSubmit">
+    <DataAnnotationsValidator />
+
+    <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+        <!-- Personal Information Tab -->
+        <MudTabPanel Text="Personal Info" Icon="@Icons.Material.Filled.Person">
+            <MudGrid>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.FirstName" Label="First Name *" Variant="Variant.Outlined" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.MiddleName" Label="Middle Name" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.LastName" Label="Last Name *" Variant="Variant.Outlined" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudDatePicker @bind-Date="_dateOfBirth" Label="Date of Birth" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="Gender" @bind-Value="_model.Gender" Label="Gender *" Variant="Variant.Outlined" Required="true">
+                        @foreach (var g in Enum.GetValues<Gender>())
+                        {
+                            <MudSelectItem Value="@g">@g.ToString()</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="MaritalStatus" @bind-Value="_model.MaritalStatus" Label="Marital Status" Variant="Variant.Outlined">
+                        @foreach (var s in Enum.GetValues<MaritalStatus>())
+                        {
+                            <MudSelectItem Value="@s">@s.ToString()</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.Nationality" Label="Nationality" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.GhanaCardNumber" Label="Ghana Card Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.TIN" Label="TIN" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.SSNITNumber" Label="SSNIT Number" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <!-- Contact Tab -->
+        <MudTabPanel Text="Contact" Icon="@Icons.Material.Filled.ContactPhone">
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.PrimaryPhone" Label="Primary Phone *" Variant="Variant.Outlined" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.SecondaryPhone" Label="Secondary Phone" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.PersonalEmail" Label="Personal Email" Variant="Variant.Outlined" InputType="InputType.Email" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Email" Label="Work Email *" Variant="Variant.Outlined" InputType="InputType.Email" Required="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.ResidentialAddress" Label="Residential Address" Variant="Variant.Outlined" Lines="2" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.PostalAddress" Label="Postal Address" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.Hometown" Label="Hometown" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.Region" Label="Region" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <!-- Employment Tab -->
+        <MudTabPanel Text="Employment" Icon="@Icons.Material.Filled.Work">
+            <MudGrid>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="int" @bind-Value="_model.DepartmentId" Label="Department *" Variant="Variant.Outlined" Required="true">
+                        @foreach (var dept in _departments)
+                        {
+                            <MudSelectItem Value="@dept.Id">@dept.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="int" @bind-Value="_model.DesignationId" Label="Designation *" Variant="Variant.Outlined" Required="true">
+                        @foreach (var desig in _designations)
+                        {
+                            <MudSelectItem Value="@desig.Id">@desig.Title</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="int" @bind-Value="_model.GradeId" Label="Grade *" Variant="Variant.Outlined" Required="true">
+                        @foreach (var grade in _grades)
+                        {
+                            <MudSelectItem Value="@grade.Id">@grade.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="int" @bind-Value="_model.LocationId" Label="Location *" Variant="Variant.Outlined" Required="true">
+                        @foreach (var loc in _locations)
+                        {
+                            <MudSelectItem Value="@loc.Id">@loc.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="EmploymentType" @bind-Value="_model.EmploymentType" Label="Employment Type *" Variant="Variant.Outlined" Required="true">
+                        @foreach (var t in Enum.GetValues<EmploymentType>())
+                        {
+                            <MudSelectItem Value="@t">@t.ToString()</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudDatePicker @bind-Date="_hireDate" Label="Hire Date *" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="int?" @bind-Value="_model.ReportingManagerId" Label="Reporting Manager" Variant="Variant.Outlined">
+                        <MudSelectItem T="int?" Value="null">— None —</MudSelectItem>
+                        @foreach (var mgr in _managers)
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)mgr.Id)">@mgr.FullName (@mgr.EmployeeCode)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <!-- Compensation Tab -->
+        <MudTabPanel Text="Compensation" Icon="@Icons.Material.Filled.Payments">
+            <MudGrid>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField @bind-Value="_model.BasicSalary" Label="Basic Salary (GHS) *" Variant="Variant.Outlined"
+                                     Format="N2" Min="0m" Required="true" Adornment="Adornment.Start" AdornmentText="GH₵" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudDivider Class="my-2" />
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Bank Details</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.BankName" Label="Bank Name" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.BankBranch" Label="Branch" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.BankAccountNumber" Label="Account Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_model.MobileMoneyNumber" Label="Mobile Money Number" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        @* W3B Phase 2 (2026-04-29) — NickFinance access (multi-role).
+           Site-scoping is enforced inline; Apply runs after the
+           employee row + identity row have both committed. *@
+        <MudTabPanel Text="Module access" Icon="@Icons.Material.Filled.Security">
+            @if (string.IsNullOrWhiteSpace(_model.Email))
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-2">
+                    Add a work email under <strong>Contact</strong> to enable NickFinance role grants.
+                    Identity rows are keyed by lower-cased email.
+                </MudAlert>
+            }
+            else
+            {
+                <NickFinanceAccessSection @ref="_nickFinanceAccessSection"
+                                          Email="@_model.Email"
+                                          DisplayName="@BuildDisplayName()"
+                                          UserId="@((Guid?)null)"
+                                          OnStateChanged="OnNickFinanceStateChanged" />
+            }
+        </MudTabPanel>
+    </MudTabs>
+
+    @if (_nickFinanceState is not null && !_nickFinanceState.IsValid)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mt-3">
+            NickFinance access tab has invalid grants — pick a site for every site-required role and
+            fill ExpiresAt + audit firm for ExternalAuditor before saving.
+        </MudAlert>
+    }
+
+    <!-- Form Actions -->
+    <MudPaper Class="d-flex justify-end gap-2 pa-4 mt-4" Elevation="0">
+        <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/employees">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(_isSubmitting || (_nickFinanceState is not null && !_nickFinanceState.IsValid))"
+                   StartIcon="@Icons.Material.Filled.Save">
+            @if (_isSubmitting)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save Employee
+        </MudButton>
+    </MudPaper>
+</EditForm>
+
+@code {
+    private CreateEmployeeDto _model = new();
+    private DateTime? _dateOfBirth;
+    private DateTime? _hireDate = DateTime.Today;
+    private bool _isSubmitting = false;
+    // W3B: surfaced when the canonical identity upsert into identity.users
+    // fails. We don't roll back the employee insert — HR can re-run the
+    // provisioning from the employee detail page's "Module access" panel.
+    private string? _provisioningWarning;
+
+    private List<Department> _departments = new();
+    private List<Designation> _designations = new();
+    private List<Grade> _grades = new();
+    private List<Location> _locations = new();
+    private List<EmployeeListItem> _managers = new();
+
+    // W3B Phase 2 — NickFinance access section.
+    private NickFinanceAccessSection? _nickFinanceAccessSection;
+    private NickFinanceAccessSectionState? _nickFinanceState;
+
+    private Task OnNickFinanceStateChanged(NickFinanceAccessSectionState state)
+    {
+        _nickFinanceState = state;
+        return Task.CompletedTask;
+    }
+
+    private string BuildDisplayName() =>
+        $"{_model.FirstName}{(string.IsNullOrWhiteSpace(_model.MiddleName) ? "" : $" {_model.MiddleName}")} {_model.LastName}".Trim();
+
+    /// <summary>
+    /// Resolve the cookie-authenticated admin's identity.users id, auto-
+    /// provisioning a row if needed. Used as <c>granted_by_user_id</c> on
+    /// every NickFinance role grant created from this form.
+    /// </summary>
+    private async Task<Guid> ResolveGrantedByUserIdAsync(IServiceProvider sp)
+    {
+        try
+        {
+            var state = await AuthStateProvider.GetAuthenticationStateAsync();
+            var email = state.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                       ?? state.User.FindFirst("email")?.Value
+                       ?? state.User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(email)) return Guid.Empty;
+
+            var existing = await Provisioning.GetUserIdByEmailAsync(email, tenantId: 1L);
+            if (existing is not null) return existing.Value;
+
+            var userManager = sp.GetService<UserManager<ApplicationUser>>();
+            var displayName = email;
+            if (userManager is not null)
+            {
+                var u = await userManager.FindByEmailAsync(email);
+                if (u is not null) displayName = $"{u.FirstName} {u.LastName}".Trim();
+            }
+            return await Provisioning.ProvisionEmployeeAsync(email, displayName, tenantId: 1L);
+        }
+        catch
+        {
+            return Guid.Empty;
+        }
+    }
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Employees", href: "/employees"),
+        new BreadcrumbItem("Add New", href: null, disabled: true)
+    };
+
+    private record EmployeeListItem(int Id, string EmployeeCode, string FullName);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDropdownData();
+    }
+
+    private async Task LoadDropdownData()
+    {
+        await using var scope = ServiceProvider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        _departments = await db.Departments
+            .Where(d => d.IsActive)
+            .OrderBy(d => d.Name)
+            .ToListAsync();
+
+        _designations = await db.Designations
+            .Where(d => d.IsActive)
+            .OrderBy(d => d.Title)
+            .ToListAsync();
+
+        _grades = await db.Grades
+            .Where(g => g.IsActive)
+            .OrderBy(g => g.Level)
+            .ToListAsync();
+
+        _locations = await db.Locations
+            .Where(l => l.IsActive)
+            .OrderBy(l => l.Name)
+            .ToListAsync();
+
+        _managers = await db.Employees
+            .Where(e => e.EmploymentStatus == EmploymentStatus.Active ||
+                        e.EmploymentStatus == EmploymentStatus.Confirmed)
+            .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+            .Select(e => new EmployeeListItem(
+                e.Id,
+                e.EmployeeCode,
+                (e.FirstName + " " + (e.MiddleName != null ? e.MiddleName + " " : "") + e.LastName).Trim()))
+            .ToListAsync();
+    }
+
+    private async Task HandleSubmit()
+    {
+        _isSubmitting = true;
+        try
+        {
+            if (_dateOfBirth.HasValue)
+                _model.DateOfBirth = _dateOfBirth.Value;
+            if (_hireDate.HasValue)
+                _model.HireDate = _hireDate.Value;
+
+            await using var scope = ServiceProvider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            // Generate employee code
+            var last = await db.Employees
+                .Where(e => e.EmployeeCode.StartsWith("NHR-"))
+                .OrderByDescending(e => e.EmployeeCode)
+                .Select(e => e.EmployeeCode)
+                .FirstOrDefaultAsync();
+
+            int next = 1;
+            if (last != null && int.TryParse(last.Replace("NHR-", ""), out var num))
+                next = num + 1;
+            var employeeCode = $"NHR-{next:D4}";
+
+            var employee = new Employee
+            {
+                EmployeeCode = employeeCode,
+                FirstName = _model.FirstName,
+                MiddleName = _model.MiddleName,
+                LastName = _model.LastName,
+                DateOfBirth = _model.DateOfBirth,
+                Gender = _model.Gender,
+                MaritalStatus = _model.MaritalStatus,
+                Nationality = _model.Nationality,
+                GhanaCardNumber = _model.GhanaCardNumber,
+                TIN = _model.TIN,
+                SSNITNumber = _model.SSNITNumber,
+                PrimaryPhone = _model.PrimaryPhone,
+                SecondaryPhone = _model.SecondaryPhone,
+                PersonalEmail = _model.PersonalEmail,
+                WorkEmail = _model.Email,
+                ResidentialAddress = _model.ResidentialAddress,
+                PostalAddress = _model.PostalAddress,
+                Hometown = _model.Hometown,
+                Region = _model.Region,
+                DepartmentId = _model.DepartmentId,
+                DesignationId = _model.DesignationId,
+                GradeId = _model.GradeId,
+                LocationId = _model.LocationId,
+                ReportingManagerId = _model.ReportingManagerId,
+                EmploymentType = _model.EmploymentType,
+                HireDate = _model.HireDate,
+                EmploymentStatus = EmploymentStatus.OnProbation,
+                BasicSalary = _model.BasicSalary,
+                BankName = _model.BankName,
+                BankBranch = _model.BankBranch,
+                BankAccountNumber = _model.BankAccountNumber,
+                MobileMoneyNumber = _model.MobileMoneyNumber,
+            };
+
+            db.Employees.Add(employee);
+            await db.SaveChangesAsync();
+
+            // W3B (2026-04-29): seed the canonical identity.users row so
+            // NickFinance (and every future NickERP consumer) can find this
+            // employee via Cloudflare Access. Failure here does NOT roll
+            // back the employee insert — we surface a yellow warning and
+            // HR re-runs from the employee detail page's "Module access"
+            // panel.
+            if (!string.IsNullOrWhiteSpace(_model.Email))
+            {
+                try
+                {
+                    var provisioning = scope.ServiceProvider.GetRequiredService<IIdentityProvisioningService>();
+                    var displayName = BuildDisplayName();
+                    var defaultTenantId = 1L;
+                    var identityUserId = await provisioning.ProvisionEmployeeAsync(_model.Email, displayName, defaultTenantId);
+
+                    // W3B Phase 2: apply the NickFinance access section's
+                    // intended grants. The section captured intent during
+                    // form fill; we now have a real identity uuid to attach
+                    // grants to. If the section hits an SoD violation we
+                    // surface a warning but still navigate to the new
+                    // employee — HR can fix from the Module access panel.
+                    if (_nickFinanceAccessSection is not null)
+                    {
+                        try
+                        {
+                            var grantedBy = await ResolveGrantedByUserIdAsync(scope.ServiceProvider);
+                            var ok = await _nickFinanceAccessSection.ApplyAsync(identityUserId, grantedBy);
+                            if (!ok)
+                            {
+                                _provisioningWarning =
+                                    "Employee + identity created, but a NickFinance role grant was blocked by an SoD violation — fix it from the Module access panel.";
+                            }
+                        }
+                        catch (Exception nfx)
+                        {
+                            _provisioningWarning =
+                                $"Employee + identity created, but NickFinance role grants failed: {nfx.Message} — fix from the Module access panel.";
+                        }
+                    }
+                }
+                catch (Exception px)
+                {
+                    _provisioningWarning =
+                        $"Employee record saved, but identity provisioning failed: {px.Message} — re-run from the employee detail page (Module access).";
+                }
+            }
+
+            Snackbar.Add("Employee created successfully!", Severity.Success);
+            Navigation.NavigateTo($"/employees/{employee.Id}");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

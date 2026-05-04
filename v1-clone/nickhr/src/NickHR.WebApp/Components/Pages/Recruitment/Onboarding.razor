@@ -1,0 +1,251 @@
+@page "/recruitment/onboarding"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Onboarding</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Onboarding Dashboard</MudText>
+
+<MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
+    Showing employees hired in the last 90 days (On Probation or recently Active). Checklist progress is stored in-memory per session.
+    <strong>TODO:</strong> Persist checklist to database in a future sprint.
+</MudAlert>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else if (_employees.Count == 0)
+{
+    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined">
+        No employees currently in onboarding. When an offer is accepted and an employee record is created, they will appear here.
+    </MudAlert>
+}
+else
+{
+    @foreach (var emp in _employees)
+    {
+        var checklist = GetChecklist(emp.Id);
+        var completedCount = checklist.Count(c => c.Completed);
+        var progressPct = checklist.Count > 0 ? (int)Math.Round((double)completedCount / checklist.Count * 100) : 0;
+
+        <MudCard Elevation="2" Class="mb-3">
+            <MudCardHeader>
+                <CardHeaderAvatar>
+                    <MudAvatar Color="Color.Primary">
+                        @emp.FirstName[0]@emp.LastName[0]
+                    </MudAvatar>
+                </CardHeaderAvatar>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">@emp.FirstName @emp.LastName</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        @emp.EmployeeCode
+                        @if (!string.IsNullOrEmpty(emp.DepartmentName))
+                        {
+                            <span> · @emp.DepartmentName</span>
+                        }
+                        @if (!string.IsNullOrEmpty(emp.DesignationTitle))
+                        {
+                            <span> · @emp.DesignationTitle</span>
+                        }
+                    </MudText>
+                </CardHeaderContent>
+                <CardHeaderActions>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Person"
+                               OnClick="@(() => Navigation.NavigateTo($"/employees/{emp.Id}"))">
+                        View Profile
+                    </MudButton>
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudGrid Spacing="2">
+                    <!-- Summary Info -->
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Hire Date</MudText>
+                        <MudText Typo="Typo.body2">@(emp.HireDate?.ToString("dd MMM yyyy") ?? "N/A")</MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Probation End</MudText>
+                        <MudText Typo="Typo.body2">
+                            @(emp.ProbationEndDate.HasValue ? emp.ProbationEndDate.Value.ToString("dd MMM yyyy") : "—")
+                            @if (emp.ProbationEndDate.HasValue && emp.ProbationEndDate.Value < DateTime.Today)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Class="ml-1">Overdue</MudChip>
+                            }
+                        </MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Status</MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@(emp.Status == EmploymentStatus.OnProbation ? Color.Warning : Color.Success)">
+                            @emp.Status
+                        </MudChip>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Onboarding Progress</MudText>
+                        <MudText Typo="Typo.body2" Class="mb-1">@completedCount / @checklist.Count tasks</MudText>
+                        <MudProgressLinear Value="@progressPct" Color="@GetProgressColor(progressPct)"
+                                           Rounded="true" Size="Size.Medium" />
+                    </MudItem>
+
+                    <!-- Checklist -->
+                    <MudItem xs="12">
+                        <MudDivider Class="my-2" />
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">Onboarding Checklist</MudText>
+                        <MudGrid Spacing="1">
+                            @foreach (var item in checklist)
+                            {
+                                var itemCopy = item;
+                                <MudItem xs="12" sm="6" md="4">
+                                    <MudCheckBox T="bool"
+                                                 Value="itemCopy.Completed"
+                                                 Color="Color.Success"
+                                                 Label="@itemCopy.Label"
+                                                 ValueChanged="@((bool v) => OnChecklistChanged(emp.Id, itemCopy, v))" />
+                                </MudItem>
+                            }
+                        </MudGrid>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+    }
+}
+
+@code {
+    private List<OnboardingEmployee> _employees = new();
+    private bool _isLoading = true;
+
+    // In-memory checklist storage: key = employeeId
+    private Dictionary<int, List<ChecklistItem>> _checklists = new();
+
+    private static readonly string[] ChecklistLabels =
+    {
+        "IT Setup (email, system access)",
+        "ID Card Issued",
+        "Bank Details Collected",
+        "Policy Acknowledgement Signed",
+        "Buddy Assigned",
+        "Probation Objectives Set",
+        "First Week Check-in Done",
+        "Month 1 Review Done"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var cutoff = DateTime.UtcNow.AddDays(-90);
+
+            _employees = await db.Employees
+                .Include(e => e.Department)
+                .Include(e => e.Designation)
+                .Where(e =>
+                    e.HireDate.HasValue && e.HireDate.Value >= cutoff &&
+                    (e.EmploymentStatus == EmploymentStatus.OnProbation ||
+                     e.EmploymentStatus == EmploymentStatus.Active ||
+                     e.EmploymentStatus == EmploymentStatus.Confirmed))
+                .OrderByDescending(e => e.HireDate)
+                .Select(e => new OnboardingEmployee
+                {
+                    Id = e.Id,
+                    FirstName = e.FirstName,
+                    LastName = e.LastName,
+                    EmployeeCode = e.EmployeeCode,
+                    DepartmentName = e.Department != null ? e.Department.Name : null,
+                    DesignationTitle = e.Designation != null ? e.Designation.Title : null,
+                    HireDate = e.HireDate,
+                    ProbationEndDate = e.ProbationEndDate,
+                    Status = e.EmploymentStatus
+                })
+                .ToListAsync();
+
+            // Initialise checklists for new employees
+            foreach (var emp in _employees)
+            {
+                if (!_checklists.ContainsKey(emp.Id))
+                {
+                    _checklists[emp.Id] = ChecklistLabels
+                        .Select(label => new ChecklistItem { Label = label, Completed = false })
+                        .ToList();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading onboarding data: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private List<ChecklistItem> GetChecklist(int employeeId)
+    {
+        if (!_checklists.ContainsKey(employeeId))
+        {
+            _checklists[employeeId] = ChecklistLabels
+                .Select(label => new ChecklistItem { Label = label, Completed = false })
+                .ToList();
+        }
+        return _checklists[employeeId];
+    }
+
+    private void OnChecklistChanged(int employeeId, ChecklistItem item, bool value)
+    {
+        item.Completed = value;
+        var checklist = GetChecklist(employeeId);
+        var completed = checklist.Count(c => c.Completed);
+        if (value)
+        {
+            Snackbar.Add($"'{item.Label}' marked complete.", Severity.Success);
+        }
+    }
+
+    private Color GetProgressColor(int pct) => pct switch
+    {
+        100 => Color.Success,
+        >= 60 => Color.Info,
+        >= 30 => Color.Warning,
+        _ => Color.Error
+    };
+
+    private class OnboardingEmployee
+    {
+        public int Id { get; set; }
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string EmployeeCode { get; set; } = string.Empty;
+        public string? DepartmentName { get; set; }
+        public string? DesignationTitle { get; set; }
+        public DateTime? HireDate { get; set; }
+        public DateTime? ProbationEndDate { get; set; }
+        public EmploymentStatus Status { get; set; }
+    }
+
+    private class ChecklistItem
+    {
+        public string Label { get; set; } = string.Empty;
+        public bool Completed { get; set; }
+    }
+}

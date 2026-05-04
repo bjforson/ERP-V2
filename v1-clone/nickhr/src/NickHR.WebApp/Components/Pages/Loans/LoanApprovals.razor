@@ -1,0 +1,289 @@
+@page "/loans/approvals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffPlusDeptAndPayroll)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Loan Approvals</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Loan Approvals</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <!-- Manager Pending -->
+    <MudTabPanel Text="Manager Pending" Icon="@Icons.Material.Filled.SupervisorAccount"
+                 BadgeData="@_managerPending.Count" BadgeColor="Color.Warning">
+        @ApprovalTable(_managerPending, "Manager Pending", ApprovalStage.Manager)
+    </MudTabPanel>
+
+    <!-- HR Pending -->
+    <MudTabPanel Text="HR Pending" Icon="@Icons.Material.Filled.People"
+                 BadgeData="@_hrPending.Count" BadgeColor="Color.Info">
+        @ApprovalTable(_hrPending, "HR Pending", ApprovalStage.HR)
+    </MudTabPanel>
+
+    <!-- Finance Pending -->
+    <MudTabPanel Text="Finance Pending" Icon="@Icons.Material.Filled.AccountBalance"
+                 BadgeData="@_financePending.Count" BadgeColor="Color.Info">
+        @ApprovalTable(_financePending, "Finance / Disburse", ApprovalStage.Finance)
+    </MudTabPanel>
+</MudTabs>
+
+<!-- Reject Dialog -->
+@if (_rejectDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_rejectDialogOpen">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Reject Loan Application</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Rejecting loan application for <strong>@(_selectedApp?.Employee != null ? $"{_selectedApp.Employee.FirstName} {_selectedApp.Employee.LastName}" : "—")</strong>
+                — GH₵ @(_selectedApp?.RequestedAmount.ToString("N2"))
+            </MudText>
+            <MudTextField @bind-Value="_rejectionReason" Label="Rejection Reason *" Variant="Variant.Outlined"
+                          Lines="3" Required="true" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _rejectDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ConfirmReject"
+                       Disabled="@(string.IsNullOrWhiteSpace(_rejectionReason))">
+                Confirm Reject
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<LoanApplication> _managerPending = new();
+    private List<LoanApplication> _hrPending = new();
+    private List<LoanApplication> _financePending = new();
+    private bool _isLoading = true;
+    private bool _rejectDialogOpen = false;
+    private string _rejectionReason = "";
+    private LoanApplication? _selectedApp;
+    private ApprovalStage _rejectStage;
+    private int? _currentEmployeeId;
+
+    public enum ApprovalStage { Manager, HR, Finance }
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Loans", href: null, disabled: true),
+        new BreadcrumbItem("Approvals", href: null, disabled: true)
+    };
+
+    private RenderFragment ApprovalTable(List<LoanApplication> apps, string label, ApprovalStage stage) =>
+        @<div>
+            @if (!apps.Any())
+            {
+                <div class="d-flex flex-column align-center pa-6">
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Large" Color="Color.Success" Class="mb-2" />
+                    <MudText Typo="Typo.body1" Color="Color.Secondary">No pending applications at this stage.</MudText>
+                </div>
+            }
+            else
+            {
+                <MudTable Items="apps" Dense="true" Striped="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh>Employee</MudTh>
+                        <MudTh>Amount (GH₵)</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Purpose</MudTh>
+                        <MudTh>Months</MudTh>
+                        <MudTh>Monthly EMI</MudTh>
+                        <MudTh>Applied Date</MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>
+                            <div>
+                                <MudText Typo="Typo.body2" Style="font-weight:600;">@(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee?.EmployeeCode</MudText>
+                            </div>
+                        </MudTd>
+                        <MudTd>@context.RequestedAmount.ToString("N2")</MudTd>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Color="Color.Primary">
+                                @GetLoanTypeLabel(context.LoanType)
+                            </MudChip>
+                        </MudTd>
+                        <MudTd>
+                            <MudTooltip Text="@context.Purpose">
+                                <MudText Typo="Typo.body2" Style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                    @context.Purpose
+                                </MudText>
+                            </MudTooltip>
+                        </MudTd>
+                        <MudTd>@context.RepaymentMonths</MudTd>
+                        <MudTd>GH₵ @context.MonthlyInstallment.ToString("N2")</MudTd>
+                        <MudTd>@context.CreatedAt.ToString("dd/MM/yyyy")</MudTd>
+                        <MudTd>
+                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                       StartIcon="@Icons.Material.Filled.Check"
+                                       OnClick="() => ApproveApplication(context, stage)"
+                                       Class="mr-1">
+                                Approve
+                            </MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                       StartIcon="@Icons.Material.Filled.Close"
+                                       OnClick="() => OpenRejectDialog(context, stage)">
+                                Reject
+                            </MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </div>;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentEmployeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var all = await db.LoanApplications
+                .Include(la => la.Employee)
+                .OrderBy(la => la.CreatedAt)
+                .ToListAsync();
+
+            _managerPending = all.Where(la => la.Status == LoanApplicationStatus.Pending).ToList();
+            _hrPending = all.Where(la => la.Status == LoanApplicationStatus.ManagerApproved).ToList();
+            _financePending = all.Where(la => la.Status == LoanApplicationStatus.HRApproved).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading applications: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ApproveApplication(LoanApplication app, ApprovalStage stage)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.LoanApplications.FindAsync(app.Id);
+            if (entity == null) return;
+
+            var now = DateTime.UtcNow;
+            switch (stage)
+            {
+                case ApprovalStage.Manager:
+                    entity.Status = LoanApplicationStatus.ManagerApproved;
+                    entity.ManagerApprovedAt = now;
+                    entity.ManagerApprovedById = _currentEmployeeId;
+                    break;
+                case ApprovalStage.HR:
+                    entity.Status = LoanApplicationStatus.HRApproved;
+                    entity.HRApprovedAt = now;
+                    entity.HRApprovedById = _currentEmployeeId;
+                    break;
+                case ApprovalStage.Finance:
+                    entity.Status = LoanApplicationStatus.FinanceApproved;
+                    entity.FinanceApprovedAt = now;
+                    entity.FinanceApprovedById = _currentEmployeeId;
+                    entity.DisbursedAt = now;
+                    break;
+            }
+            entity.UpdatedAt = now;
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Application approved!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error approving: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void OpenRejectDialog(LoanApplication app, ApprovalStage stage)
+    {
+        _selectedApp = app;
+        _rejectStage = stage;
+        _rejectionReason = "";
+        _rejectDialogOpen = true;
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (_selectedApp == null) return;
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.LoanApplications.FindAsync(_selectedApp.Id);
+            if (entity == null) return;
+
+            entity.Status = LoanApplicationStatus.Rejected;
+            entity.RejectedById = _currentEmployeeId;
+            entity.RejectionReason = _rejectionReason;
+            entity.UpdatedAt = DateTime.UtcNow;
+
+            await db.SaveChangesAsync();
+
+            _rejectDialogOpen = false;
+            Snackbar.Add("Application rejected.", Severity.Warning);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error rejecting: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private string GetLoanTypeLabel(LoanApplicationType type) => type switch
+    {
+        LoanApplicationType.SalaryAdvance => "Salary Advance",
+        LoanApplicationType.StaffLoan => "Staff Loan",
+        LoanApplicationType.EmergencyLoan => "Emergency Loan",
+        _ => type.ToString()
+    };
+}

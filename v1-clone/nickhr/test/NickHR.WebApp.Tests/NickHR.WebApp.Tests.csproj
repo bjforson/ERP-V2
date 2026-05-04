@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickHR.WebApp.Tests</RootNamespace>
+    <AssemblyName>NickHR.WebApp.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- W3B (2026-04-29): tests target the new IdentityProvisioningService
+         in NickHR.WebApp. We reference the WebApp project itself rather
+         than re-exporting the type from a separate Services library. -->
+    <ProjectReference Include="..\..\src\NickHR.WebApp\NickHR.WebApp.csproj" />
+    <ProjectReference Include="..\..\..\platform\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
+  </ItemGroup>
+
+</Project>

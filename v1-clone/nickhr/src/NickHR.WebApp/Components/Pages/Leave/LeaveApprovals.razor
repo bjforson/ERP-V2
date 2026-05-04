@@ -1,0 +1,302 @@
+@page "/leave/approvals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Pending Approvals</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    Pending Approvals
+    @if (!_isLoading && _pending.Count > 0)
+    {
+        <MudChip T="string" Color="Color.Warning" Size="Size.Small" Class="ml-2">@_pending.Count</MudChip>
+    }
+</MudText>
+
+<MudCard Elevation="2">
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else if (_pending.Count == 0)
+        {
+            <div class="d-flex flex-column align-center pa-8">
+                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Large" Class="mb-2" />
+                <MudText Typo="Typo.body1">No pending leave requests. All caught up!</MudText>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_pending" Dense="true" Hover="true" Striped="true" T="PendingRow">
+                <HeaderContent>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Department</MudTh>
+                    <MudTh>Leave Type</MudTh>
+                    <MudTh>Dates</MudTh>
+                    <MudTh>Days</MudTh>
+                    <MudTh>Reason</MudTh>
+                    <MudTh>Submitted</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.EmployeeName</MudText>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.EmployeeCode</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Department">@(context.Department ?? "—")</MudTd>
+                    <MudTd DataLabel="Leave Type">@context.LeaveType</MudTd>
+                    <MudTd DataLabel="Dates">
+                        @context.StartDate.ToString("dd MMM") – @context.EndDate.ToString("dd MMM yyyy")
+                    </MudTd>
+                    <MudTd DataLabel="Days">@context.NumberOfDays</MudTd>
+                    <MudTd DataLabel="Reason">
+                        @if (!string.IsNullOrWhiteSpace(context.Reason))
+                        {
+                            <MudTooltip Text="@context.Reason">
+                                <MudText Typo="Typo.body2" Style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                    @context.Reason
+                                </MudText>
+                            </MudTooltip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Submitted">@context.SubmittedDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                   StartIcon="@Icons.Material.Filled.CheckCircle"
+                                   Class="mr-1"
+                                   OnClick="@(() => Approve(context))">
+                            Approve
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.Cancel"
+                                   OnClick="@(() => OpenRejectDialog(context))">
+                            Reject
+                        </MudButton>
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+<!-- Reject Dialog -->
+<MudDialog @bind-Visible="_showRejectDialog" Options="@(new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Cancel" Class="mr-2" Color="Color.Error" />
+            Reject Leave Request
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_rejectTarget != null)
+        {
+            <MudText Class="mb-3">
+                Rejecting <strong>@_rejectTarget.LeaveType</strong> request for <strong>@_rejectTarget.EmployeeName</strong>
+                (@_rejectTarget.StartDate.ToString("dd MMM") – @_rejectTarget.EndDate.ToString("dd MMM yyyy")).
+            </MudText>
+        }
+        <MudTextField @bind-Value="_rejectionReason"
+                      Label="Rejection Reason *"
+                      Variant="Variant.Outlined"
+                      Lines="3"
+                      Required="true"
+                      Immediate="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _showRejectDialog = false)" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled"
+                   Disabled="@(string.IsNullOrWhiteSpace(_rejectionReason) || _isProcessing)"
+                   OnClick="ConfirmReject">
+            @if (_isProcessing)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Reject Request
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<PendingRow> _pending = new();
+    private bool _isLoading = true;
+    private bool _isProcessing = false;
+
+    private bool _showRejectDialog = false;
+    private PendingRow? _rejectTarget;
+    private string _rejectionReason = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPending();
+    }
+
+    private async Task LoadPending()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _pending = await db.LeaveRequests
+                .Include(r => r.Employee).ThenInclude(e => e.Department)
+                .Include(r => r.LeavePolicy)
+                .Where(r => r.Status == LeaveRequestStatus.Pending)
+                .OrderBy(r => r.CreatedAt)
+                .Select(r => new PendingRow
+                {
+                    Id = r.Id,
+                    EmployeeId = r.EmployeeId,
+                    LeavePolicyId = r.LeavePolicyId,
+                    EmployeeName = r.Employee.FirstName + " " + r.Employee.LastName,
+                    EmployeeCode = r.Employee.EmployeeCode,
+                    Department = r.Employee.Department != null ? r.Employee.Department.Name : null,
+                    LeaveType = r.LeavePolicy.Name,
+                    StartDate = r.StartDate,
+                    EndDate = r.EndDate,
+                    NumberOfDays = r.NumberOfDays,
+                    Reason = r.Reason,
+                    SubmittedDate = r.CreatedAt
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading approvals: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task Approve(PendingRow row)
+    {
+        _isProcessing = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.LeaveRequests.FindAsync(row.Id);
+            if (entity == null || entity.Status != LeaveRequestStatus.Pending)
+            {
+                Snackbar.Add("Request not found or already processed.", Severity.Warning);
+                return;
+            }
+
+            entity.Status = LeaveRequestStatus.Approved;
+            entity.ApprovedAt = DateTime.UtcNow;
+            // ApprovedById would be set to current user's employee id once auth is wired
+
+            // Update leave balance: move from Pending to Taken
+            var balance = await db.LeaveBalances
+                .FirstOrDefaultAsync(b => b.EmployeeId == entity.EmployeeId
+                    && b.LeavePolicyId == entity.LeavePolicyId
+                    && b.Year == entity.StartDate.Year);
+            if (balance != null)
+            {
+                balance.Pending = Math.Max(0, balance.Pending - entity.NumberOfDays);
+                balance.Taken += entity.NumberOfDays;
+            }
+
+            await db.SaveChangesAsync();
+            Snackbar.Add($"Leave request approved for {row.EmployeeName}.", Severity.Success);
+            await LoadPending();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error approving request: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private void OpenRejectDialog(PendingRow row)
+    {
+        _rejectTarget = row;
+        _rejectionReason = string.Empty;
+        _showRejectDialog = true;
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (_rejectTarget == null || string.IsNullOrWhiteSpace(_rejectionReason)) return;
+
+        _isProcessing = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var entity = await db.LeaveRequests.FindAsync(_rejectTarget.Id);
+            if (entity == null || entity.Status != LeaveRequestStatus.Pending)
+            {
+                Snackbar.Add("Request not found or already processed.", Severity.Warning);
+                _showRejectDialog = false;
+                return;
+            }
+
+            entity.Status = LeaveRequestStatus.Rejected;
+            entity.RejectionReason = _rejectionReason;
+
+            // Release pending days back to available
+            var balance = await db.LeaveBalances
+                .FirstOrDefaultAsync(b => b.EmployeeId == entity.EmployeeId
+                    && b.LeavePolicyId == entity.LeavePolicyId
+                    && b.Year == entity.StartDate.Year);
+            if (balance != null)
+            {
+                balance.Pending = Math.Max(0, balance.Pending - entity.NumberOfDays);
+            }
+
+            await db.SaveChangesAsync();
+            Snackbar.Add($"Leave request rejected for {_rejectTarget.EmployeeName}.", Severity.Info);
+            _showRejectDialog = false;
+            await LoadPending();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error rejecting request: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private class PendingRow
+    {
+        public int Id { get; set; }
+        public int EmployeeId { get; set; }
+        public int LeavePolicyId { get; set; }
+        public string EmployeeName { get; set; } = string.Empty;
+        public string EmployeeCode { get; set; } = string.Empty;
+        public string? Department { get; set; }
+        public string LeaveType { get; set; } = string.Empty;
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+        public decimal NumberOfDays { get; set; }
+        public string? Reason { get; set; }
+        public DateTime SubmittedDate { get; set; }
+    }
+}

@@ -1,0 +1,333 @@
+@page "/excuse-duty/request"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Request Excuse Duty</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Request Excuse Duty</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_employeeId == null && !_isLoadingEmployee)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+else
+{
+<MudGrid>
+    <!-- Monthly Balance Card -->
+    <MudItem xs="12">
+        <MudCard Elevation="2" Class="mb-2">
+            <MudCardContent>
+                <MudGrid Spacing="2" AlignItems="Center">
+                    <MudItem xs="12" sm="6">
+                        <div class="d-flex align-center gap-3">
+                            <MudIcon Icon="@Icons.Material.Filled.AccessTime" Color="Color.Primary" />
+                            <div>
+                                <MudText Typo="Typo.overline" Color="Color.Secondary">Monthly Hours Balance</MudText>
+                                <MudText Typo="Typo.body1">
+                                    Used <strong>@_usedHoursThisMonth.ToString("N1")</strong> of <strong>8</strong> hours this month
+                                </MudText>
+                            </div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudProgressLinear Value="@GetHoursPercent()" Color="@GetHoursColor()"
+                                           Rounded="true" Size="Size.Medium" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            @(_remainingHours.ToString("N1")) hours remaining
+                        </MudText>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Request Form -->
+    <MudItem xs="12" md="7">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Excuse Duty Details</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <EditForm Model="_model" OnValidSubmit="HandleSubmit">
+                    <DataAnnotationsValidator />
+                    <MudGrid>
+                        <MudItem xs="12" sm="6">
+                            <MudSelect T="ExcuseDutyType" Value="_model.ExcuseDutyType"
+                                       Label="Excuse Duty Type *" Variant="Variant.Outlined"
+                                       ValueChanged="@((ExcuseDutyType v) => { _model.ExcuseDutyType = v; OnTypeChanged(v); })">
+                                <MudSelectItem Value="ExcuseDutyType.Medical">Medical</MudSelectItem>
+                                <MudSelectItem Value="ExcuseDutyType.OfficialErrand">Official Errand</MudSelectItem>
+                                <MudSelectItem Value="ExcuseDutyType.PersonalEmergency">Personal Emergency</MudSelectItem>
+                                <MudSelectItem Value="ExcuseDutyType.CourtAppearance">Court Appearance</MudSelectItem>
+                                <MudSelectItem Value="ExcuseDutyType.CommunalDuty">Communal Duty</MudSelectItem>
+                                <MudSelectItem Value="ExcuseDutyType.Other">Other</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker @bind-Date="_requestDate" Label="Date *" Variant="Variant.Outlined"
+                                           DateFormat="dd/MM/yyyy" MinDate="DateTime.Today.AddDays(-7)" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudTimePicker Time="_startTime" Label="Start Time *" Variant="Variant.Outlined"
+                                           AmPm="false" TimeChanged="@((TimeSpan? v) => { _startTime = v; OnTimeChanged(v); })" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudTimePicker Time="_endTime" Label="End Time *" Variant="Variant.Outlined"
+                                           AmPm="false" TimeChanged="@((TimeSpan? v) => { _endTime = v; OnTimeChanged(v); })" />
+                        </MudItem>
+
+                        @if (_startTime.HasValue && _endTime.HasValue && _durationHours > 0)
+                        {
+                            <MudItem xs="12">
+                                <MudAlert Severity="Severity.Info" Dense="true" Icon="@Icons.Material.Filled.AccessTime">
+                                    Duration: <strong>@_durationHours.ToString("N1") hours</strong>
+                                    @if (_durationHours > _remainingHours)
+                                    {
+                                        <span style="color: var(--mud-palette-error);"> — exceeds remaining balance of @_remainingHours.ToString("N1")h</span>
+                                    }
+                                </MudAlert>
+                            </MudItem>
+                        }
+
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_model.Reason" Label="Reason *" Variant="Variant.Outlined"
+                                          Lines="3" Required="true" MaxLength="500" />
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_model.Destination" Label="Destination"
+                                          Variant="Variant.Outlined" MaxLength="200"
+                                          HelperText="Where are you going? (hospital, court, etc.)" />
+                        </MudItem>
+
+                        @if (_model.ExcuseDutyType == ExcuseDutyType.Medical)
+                        {
+                            <MudItem xs="12">
+                                <MudTextField @bind-Value="_model.MedicalCertificatePath"
+                                              Label="Medical Certificate Path"
+                                              Variant="Variant.Outlined" MaxLength="500"
+                                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.MedicalServices"
+                                              HelperText="Required for medical excuse duty. TODO: file upload coming soon." />
+                            </MudItem>
+                        }
+
+                        <MudItem xs="12" Class="d-flex justify-end gap-2 mt-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/excuse-duty/my-requests">Cancel</MudButton>
+                            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                                       Disabled="@(_isSubmitting || _durationHours <= 0)"
+                                       StartIcon="@Icons.Material.Filled.Send">
+                                @if (_isSubmitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+                                Submit Request
+                            </MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </EditForm>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <!-- Info Sidebar -->
+    <MudItem xs="12" md="5">
+        <MudCard Elevation="1">
+            <MudCardContent>
+                <MudText Typo="Typo.subtitle2" Class="mb-2">About Excuse Duty</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    Excuse Duty is a partial-day absence that does <strong>not</strong> deduct from your annual leave balance.
+                </MudText>
+                <MudList T="string" Dense="true" DisablePadding="true">
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.Schedule">Maximum 8 hours per month</MudListItem>
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.MedicalServices">Medical type requires certificate</MudListItem>
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.Approval">Subject to supervisor approval</MudListItem>
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.AssignmentReturn">Return must be confirmed by supervisor</MudListItem>
+                </MudList>
+                <MudDivider Class="my-2" />
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Per Ghana Labour Act, certified medical excuse duty does not affect annual leave entitlement.
+                </MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+}
+
+@code {
+    private ExcuseDutyFormModel _model = new();
+    private DateTime? _requestDate = DateTime.Today;
+    private TimeSpan? _startTime;
+    private TimeSpan? _endTime;
+    private decimal _durationHours = 0;
+    private bool _isSubmitting = false;
+    private bool _isLoadingEmployee = true;
+    private int? _employeeId;
+    private decimal _usedHoursThisMonth = 0;
+    private const decimal MaxMonthlyHours = 8m;
+    private decimal _remainingHours = MaxMonthlyHours;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Excuse Duty", href: "/excuse-duty/my-requests"),
+        new BreadcrumbItem("Request", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employeeId = await GetCurrentEmployeeIdAsync();
+        _isLoadingEmployee = false;
+        await LoadMonthlyBalance();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadMonthlyBalance()
+    {
+        if (_employeeId == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var monthStart = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            var monthEnd = monthStart.AddMonths(1);
+
+            _usedHoursThisMonth = await db.ExcuseDuties
+                .Where(e => e.EmployeeId == _employeeId.Value &&
+                            e.Date >= monthStart && e.Date < monthEnd &&
+                            e.Status == ExcuseDutyStatus.Approved)
+                .SumAsync(e => (decimal?)e.DurationHours) ?? 0m;
+
+            _remainingHours = Math.Max(0, MaxMonthlyHours - _usedHoursThisMonth);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading balance: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void OnTypeChanged(ExcuseDutyType type)
+    {
+        _model.ExcuseDutyType = type;
+    }
+
+    private void OnTimeChanged(TimeSpan? _)
+    {
+        if (_startTime.HasValue && _endTime.HasValue && _endTime > _startTime)
+        {
+            var duration = _endTime.Value - _startTime.Value;
+            _durationHours = (decimal)duration.TotalHours;
+        }
+        else
+        {
+            _durationHours = 0;
+        }
+        StateHasChanged();
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (_employeeId == null)
+        {
+            Snackbar.Add("Your account is not linked to an employee record. Contact HR.", Severity.Warning);
+            return;
+        }
+        if (!_requestDate.HasValue)
+        {
+            Snackbar.Add("Please select a date", Severity.Warning);
+            return;
+        }
+        if (!_startTime.HasValue || !_endTime.HasValue || _durationHours <= 0)
+        {
+            Snackbar.Add("Please select valid start and end times", Severity.Warning);
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var duty = new ExcuseDuty
+            {
+                EmployeeId = _employeeId.Value,
+                ExcuseDutyType = _model.ExcuseDutyType,
+                Date = _requestDate.Value,
+                StartTime = _startTime.Value,
+                EndTime = _endTime.Value,
+                DurationHours = _durationHours,
+                Reason = _model.Reason,
+                Destination = _model.Destination,
+                MedicalCertificatePath = _model.MedicalCertificatePath,
+                Status = ExcuseDutyStatus.Pending,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.ExcuseDuties.Add(duty);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Excuse duty request submitted!", Severity.Success);
+            Navigation.NavigateTo("/excuse-duty/my-requests");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error submitting: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private double GetHoursPercent()
+    {
+        return (double)(_usedHoursThisMonth / MaxMonthlyHours * 100);
+    }
+
+    private Color GetHoursColor()
+    {
+        var pct = GetHoursPercent();
+        if (pct < 50) return Color.Success;
+        if (pct < 80) return Color.Warning;
+        return Color.Error;
+    }
+
+    public class ExcuseDutyFormModel
+    {
+        public ExcuseDutyType ExcuseDutyType { get; set; } = ExcuseDutyType.OfficialErrand;
+        public string Reason { get; set; } = "";
+        public string? Destination { get; set; }
+        public string? MedicalCertificatePath { get; set; }
+    }
+}

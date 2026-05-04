@@ -1,0 +1,184 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.CalendarMonth" Class="mr-2" />
+            Schedule Interview
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudSelect T="int" @bind-Value="_model.ApplicationId"
+                               Label="Candidate / Application *"
+                               Variant="Variant.Outlined"
+                               Required="true"
+                               RequiredError="Please select an application">
+                        @foreach (var a in _applications)
+                        {
+                            <MudSelectItem T="int" Value="@a.Id">@a.CandidateName — @a.RequisitionTitle</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect T="int" @bind-Value="_model.InterviewerId"
+                               Label="Interviewer *"
+                               Variant="Variant.Outlined"
+                               Required="true"
+                               RequiredError="Please select an interviewer">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int" Value="@e.Id">@e.FullName</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_model.ScheduledAt"
+                                       Label="Scheduled Date *"
+                                       Variant="Variant.Outlined"
+                                       Required="true"
+                                       RequiredError="Please select a date and time" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect T="string" @bind-Value="_model.InterviewType"
+                               Label="Interview Type *"
+                               Variant="Variant.Outlined"
+                               Required="true"
+                               RequiredError="Please select interview type">
+                        <MudSelectItem T="string" Value="@("Phone")">Phone</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("Video")">Video</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("InPerson")">In Person</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Schedule
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private InterviewFormModel _model = new();
+    private List<AppOption> _applications = new();
+    private List<EmpOption> _employees = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDropdowns();
+    }
+
+    private async Task LoadDropdowns()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _applications = await db.Applications
+                .Include(a => a.Candidate)
+                .Include(a => a.JobRequisition)
+                .Where(a => a.Stage == ApplicationStage.Interview || a.Stage == ApplicationStage.Screening)
+                .OrderBy(a => a.Candidate.LastName)
+                .Select(a => new AppOption
+                {
+                    Id = a.Id,
+                    CandidateName = a.Candidate.FirstName + " " + a.Candidate.LastName,
+                    RequisitionTitle = a.JobRequisition.Title
+                })
+                .ToListAsync();
+
+            _employees = await db.Employees
+                .Where(e => e.EmploymentStatus == EmploymentStatus.Active || e.EmploymentStatus == EmploymentStatus.Confirmed)
+                .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
+                .Select(e => new EmpOption { Id = e.Id, FullName = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading data: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+        if (!_model.ScheduledAt.HasValue)
+        {
+            Snackbar.Add("Please select a scheduled date and time.", Severity.Warning);
+            return;
+        }
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var interview = new Interview
+            {
+                ApplicationId = _model.ApplicationId,
+                InterviewerId = _model.InterviewerId,
+                ScheduledAt = _model.ScheduledAt.Value.ToUniversalTime(),
+                InterviewType = _model.InterviewType
+            };
+            db.Interviews.Add(interview);
+            await db.SaveChangesAsync();
+
+            Snackbar.Add("Interview scheduled successfully.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error scheduling interview: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class InterviewFormModel
+    {
+        public int ApplicationId { get; set; }
+        public int InterviewerId { get; set; }
+        public DateTime? ScheduledAt { get; set; }
+        public string InterviewType { get; set; } = "Phone";
+    }
+
+    private class AppOption
+    {
+        public int Id { get; set; }
+        public string CandidateName { get; set; } = string.Empty;
+        public string RequisitionTitle { get; set; } = string.Empty;
+    }
+
+    private class EmpOption
+    {
+        public int Id { get; set; }
+        public string FullName { get; set; } = string.Empty;
+    }
+}

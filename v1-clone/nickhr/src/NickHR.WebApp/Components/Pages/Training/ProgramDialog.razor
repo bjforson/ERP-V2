@@ -1,0 +1,208 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Training
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.Edit : Icons.Material.Filled.Add)" Class="mr-2" />
+            @(IsEdit ? "Edit Training Program" : "Add Training Program")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Title" Label="Title *" Variant="Variant.Outlined"
+                                  Required="true" RequiredError="Title is required" MaxLength="300" Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Description" Label="Description" Variant="Variant.Outlined"
+                                  Lines="3" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Provider" Label="Provider" Variant="Variant.Outlined"
+                                  MaxLength="300" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.Location" Label="Location" Variant="Variant.Outlined"
+                                  MaxLength="300" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_model.StartDate" Label="Start Date" Variant="Variant.Outlined"
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_model.EndDate" Label="End Date" Variant="Variant.Outlined"
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField @bind-Value="_model.MaxParticipants" Label="Max Participants"
+                                     Variant="Variant.Outlined" Min="1" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField @bind-Value="_model.Cost" Label="Cost (GH₵)" Variant="Variant.Outlined"
+                                     Format="N2" Min="0" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="string" @bind-Value="_model.TrainingType" Label="Training Type"
+                               Variant="Variant.Outlined">
+                        <MudSelectItem T="string" Value="@("Internal")">Internal</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("External")">External</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect T="int?" @bind-Value="_model.DepartmentId" Label="Department (optional)"
+                               Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var d in _departments)
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)d.Id)">@d.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Add Program")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int? ProgramId { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private bool IsEdit => ProgramId.HasValue;
+
+    private ProgramFormModel _model = new();
+    private List<DeptOption> _departments = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDepartments();
+        if (IsEdit) await LoadProgram();
+    }
+
+    private async Task LoadDepartments()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _departments = await db.Departments
+                .Where(d => d.IsActive)
+                .OrderBy(d => d.Name)
+                .Select(d => new DeptOption { Id = d.Id, Name = d.Name })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task LoadProgram()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.TrainingPrograms.FindAsync(ProgramId!.Value);
+            if (entity == null) return;
+            _model = new ProgramFormModel
+            {
+                Title = entity.Title,
+                Description = entity.Description,
+                Provider = entity.Provider,
+                Location = entity.Location,
+                StartDate = entity.StartDate,
+                EndDate = entity.EndDate,
+                MaxParticipants = entity.MaxParticipants,
+                Cost = entity.Cost,
+                TrainingType = entity.TrainingType,
+                DepartmentId = entity.DepartmentId
+            };
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            if (IsEdit)
+            {
+                var entity = await db.TrainingPrograms.FindAsync(ProgramId!.Value);
+                if (entity == null) { Snackbar.Add("Program not found.", Severity.Error); return; }
+                entity.Title = _model.Title;
+                entity.Description = _model.Description;
+                entity.Provider = _model.Provider;
+                entity.Location = _model.Location;
+                entity.StartDate = _model.StartDate;
+                entity.EndDate = _model.EndDate;
+                entity.MaxParticipants = _model.MaxParticipants;
+                entity.Cost = _model.Cost;
+                entity.TrainingType = _model.TrainingType;
+                entity.DepartmentId = _model.DepartmentId;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Program updated.", Severity.Success);
+            }
+            else
+            {
+                var entity = new TrainingProgram
+                {
+                    Title = _model.Title,
+                    Description = _model.Description,
+                    Provider = _model.Provider,
+                    Location = _model.Location,
+                    StartDate = _model.StartDate,
+                    EndDate = _model.EndDate,
+                    MaxParticipants = _model.MaxParticipants,
+                    Cost = _model.Cost,
+                    TrainingType = _model.TrainingType,
+                    DepartmentId = _model.DepartmentId,
+                    IsActive = true
+                };
+                db.TrainingPrograms.Add(entity);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Program added.", Severity.Success);
+            }
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class ProgramFormModel
+    {
+        public string Title { get; set; } = "";
+        public string? Description { get; set; }
+        public string? Provider { get; set; }
+        public string? Location { get; set; }
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public int MaxParticipants { get; set; } = 20;
+        public decimal Cost { get; set; }
+        public string TrainingType { get; set; } = "Internal";
+        public int? DepartmentId { get; set; }
+    }
+
+    private class DeptOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

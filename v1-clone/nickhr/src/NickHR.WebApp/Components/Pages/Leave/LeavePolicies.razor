@@ -1,0 +1,148 @@
+@page "/leave/policies"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Leave Policies</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Leave Policies</MudText>
+
+<MudCard Elevation="2">
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_policies" Dense="true" Hover="true" Striped="true" T="LeavePolicy">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LeavePolicy, object>(x => x.LeaveType.ToString())">Leave Type</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<LeavePolicy, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
+                    <MudTh>Default Days</MudTh>
+                    <MudTh>Max Accumulation</MudTh>
+                    <MudTh>Carry Forward Max</MudTh>
+                    <MudTh>Requires Medical Cert</MudTh>
+                    <MudTh>Min Service Months</MudTh>
+                    <MudTh>Active</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Leave Type">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                            @context.LeaveType.ToString()
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Name">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.Name</MudText>
+                        @if (!string.IsNullOrWhiteSpace(context.Description))
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.Description</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Default Days">@context.DefaultDays</MudTd>
+                    <MudTd DataLabel="Max Accumulation">@context.MaxAccumulation</MudTd>
+                    <MudTd DataLabel="Carry Forward Max">@context.CarryForwardMax</MudTd>
+                    <MudTd DataLabel="Requires Medical Cert">
+                        @if (context.RequiresMedicalCertificate)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                        }
+                        else
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Min Service Months">@context.MinServiceMonthsRequired</MudTd>
+                    <MudTd DataLabel="Active">
+                        @if (context.IsActive)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default">Inactive</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                       Size="Size.Small"
+                                       Color="Color.Warning"
+                                       title="Edit Policy"
+                                       OnClick="@(() => OpenEditDialog(context))" />
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No leave policies configured.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<LeavePolicy> _policies = new();
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPolicies();
+    }
+
+    private async Task LoadPolicies()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _policies = await db.LeavePolicies
+                .OrderBy(p => p.LeaveType)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading policies: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenEditDialog(LeavePolicy policy)
+    {
+        var parameters = new DialogParameters<LeavePolicyDialog>
+        {
+            { x => x.Policy, policy }
+        };
+
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<LeavePolicyDialog>("Edit Leave Policy", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false })
+        {
+            await LoadPolicies();
+        }
+    }
+}

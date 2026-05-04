@@ -1,0 +1,357 @@
+@page "/excuse-duty/approvals"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaffOrDeptManager)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Excuse Duty Approvals</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    Excuse Duty Approvals
+    @if (!_isLoading && _pendingRequests.Count > 0)
+    {
+        <MudChip T="string" Color="Color.Warning" Size="Size.Small" Class="ml-2">@_pendingRequests.Count</MudChip>
+    }
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<!-- Tabs -->
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+    <MudTabPanel Text="Pending" Icon="@Icons.Material.Filled.HourglassEmpty"
+                 BadgeData="@_pendingRequests.Count" BadgeColor="Color.Warning">
+        @RequestsTable(_pendingRequests, showActions: true)
+    </MudTabPanel>
+    <MudTabPanel Text="Approved" Icon="@Icons.Material.Filled.CheckCircle">
+        @RequestsTable(_approvedRequests, showActions: false)
+    </MudTabPanel>
+    <MudTabPanel Text="Rejected" Icon="@Icons.Material.Filled.Cancel">
+        @RequestsTable(_rejectedRequests, showActions: false)
+    </MudTabPanel>
+</MudTabs>
+
+<!-- Reject Dialog -->
+@if (_rejectDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_rejectDialogOpen">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Reject Excuse Duty Request</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Rejecting request for <strong>@(_selectedRequest?.Employee != null ? $"{_selectedRequest.Employee.FirstName} {_selectedRequest.Employee.LastName}" : "—")</strong>
+                on @_selectedRequest?.Date.ToString("dd/MM/yyyy")
+            </MudText>
+            <MudTextField @bind-Value="_rejectionReason" Label="Rejection Reason *" Variant="Variant.Outlined"
+                          Lines="3" Required="true" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _rejectDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ConfirmReject"
+                       Disabled="@(string.IsNullOrWhiteSpace(_rejectionReason))">
+                Confirm Reject
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Confirm Return Dialog -->
+@if (_returnDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_returnDialogOpen">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Confirm Employee Return</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Confirming return for <strong>@(_selectedRequest?.Employee != null ? $"{_selectedRequest.Employee.FirstName} {_selectedRequest.Employee.LastName}" : "—")</strong>
+            </MudText>
+            <MudTimePicker @bind-Time="_returnTime" Label="Actual Return Time" Variant="Variant.Outlined"
+                           AmPm="false" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _returnDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ConfirmReturn">
+                Confirm Return
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<ExcuseDuty> _pendingRequests = new();
+    private List<ExcuseDuty> _approvedRequests = new();
+    private List<ExcuseDuty> _rejectedRequests = new();
+    private bool _isLoading = true;
+    private int? _currentEmployeeId;
+
+    private bool _rejectDialogOpen = false;
+    private bool _returnDialogOpen = false;
+    private ExcuseDuty? _selectedRequest;
+    private string _rejectionReason = "";
+    private TimeSpan? _returnTime = DateTime.Now.TimeOfDay;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Excuse Duty", href: null, disabled: true),
+        new BreadcrumbItem("Approvals", href: null, disabled: true)
+    };
+
+    private RenderFragment RequestsTable(List<ExcuseDuty> items, bool showActions) =>
+        @<div>
+            @if (!items.Any())
+            {
+                <div class="d-flex flex-column align-center pa-6">
+                    <MudText Typo="Typo.body1" Color="Color.Secondary">No requests in this category.</MudText>
+                </div>
+            }
+            else
+            {
+                <MudTable Items="items" Dense="true" Striped="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh>Employee</MudTh>
+                        <MudTh>Date</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Time Range</MudTh>
+                        <MudTh>Duration</MudTh>
+                        <MudTh>Reason</MudTh>
+                        <MudTh>Destination</MudTh>
+                        <MudTh>Med. Cert</MudTh>
+                        @if (showActions)
+                        {
+                            <MudTh>Actions</MudTh>
+                        }
+                        else
+                        {
+                            <MudTh>Return</MudTh>
+                        }
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">@(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee?.EmployeeCode</MudText>
+                        </MudTd>
+                        <MudTd>@context.Date.ToString("dd/MM/yyyy")</MudTd>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Color="GetTypeColor(context.ExcuseDutyType)">
+                                @GetTypeLabel(context.ExcuseDutyType)
+                            </MudChip>
+                        </MudTd>
+                        <MudTd>
+                            @(DateTime.Today.Add(context.StartTime).ToString("HH:mm")) – @(DateTime.Today.Add(context.EndTime).ToString("HH:mm"))
+                        </MudTd>
+                        <MudTd>@context.DurationHours.ToString("N1")h</MudTd>
+                        <MudTd>
+                            <MudTooltip Text="@context.Reason">
+                                <MudText Typo="Typo.body2" Style="max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                    @context.Reason
+                                </MudText>
+                            </MudTooltip>
+                        </MudTd>
+                        <MudTd>@(context.Destination ?? "—")</MudTd>
+                        <MudTd>
+                            @if (!string.IsNullOrEmpty(context.MedicalCertificatePath))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.AttachFile">Yes</MudChip>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                            }
+                        </MudTd>
+                        <MudTd>
+                            @if (showActions)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                           OnClick="() => Approve(context)" Class="mr-1">
+                                    Approve
+                                </MudButton>
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                           OnClick="() => OpenRejectDialog(context)">
+                                    Reject
+                                </MudButton>
+                            }
+                            else if (context.Status == ExcuseDutyStatus.Approved)
+                            {
+                                @if (context.ReturnConfirmed)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">
+                                        @(context.ReturnTime.HasValue ? DateTime.Today.Add(context.ReturnTime.Value).ToString("HH:mm") : "Confirmed")
+                                    </MudChip>
+                                }
+                                else
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                               OnClick="() => OpenReturnDialog(context)">
+                                        Confirm Return
+                                    </MudButton>
+                                }
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </div>;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentEmployeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var all = await db.ExcuseDuties
+                .Include(e => e.Employee)
+                .OrderByDescending(e => e.Date)
+                .ToListAsync();
+
+            _pendingRequests = all.Where(e => e.Status == ExcuseDutyStatus.Pending).ToList();
+            _approvedRequests = all.Where(e => e.Status == ExcuseDutyStatus.Approved).ToList();
+            _rejectedRequests = all.Where(e => e.Status == ExcuseDutyStatus.Rejected).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task Approve(ExcuseDuty duty)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.ExcuseDuties.FindAsync(duty.Id);
+            if (entity == null) return;
+            entity.Status = ExcuseDutyStatus.Approved;
+            entity.ApprovedById = _currentEmployeeId;
+            entity.ApprovedAt = DateTime.UtcNow;
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Request approved!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void OpenRejectDialog(ExcuseDuty duty)
+    {
+        _selectedRequest = duty;
+        _rejectionReason = "";
+        _rejectDialogOpen = true;
+    }
+
+    private void OpenReturnDialog(ExcuseDuty duty)
+    {
+        _selectedRequest = duty;
+        _returnTime = DateTime.Now.TimeOfDay;
+        _returnDialogOpen = true;
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (_selectedRequest == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.ExcuseDuties.FindAsync(_selectedRequest.Id);
+            if (entity == null) return;
+            entity.Status = ExcuseDutyStatus.Rejected;
+            entity.RejectionReason = _rejectionReason;
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            _rejectDialogOpen = false;
+            Snackbar.Add("Request rejected.", Severity.Warning);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ConfirmReturn()
+    {
+        if (_selectedRequest == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.ExcuseDuties.FindAsync(_selectedRequest.Id);
+            if (entity == null) return;
+            entity.ReturnConfirmed = true;
+            entity.ReturnTime = _returnTime;
+            if (_returnTime.HasValue)
+            {
+                var actualDuration = _returnTime.Value - entity.StartTime;
+                entity.ActualDurationHours = actualDuration.TotalHours > 0 ? (decimal)actualDuration.TotalHours : 0;
+            }
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            _returnDialogOpen = false;
+            Snackbar.Add("Return confirmed!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private Color GetTypeColor(ExcuseDutyType type) => type switch
+    {
+        ExcuseDutyType.Medical => Color.Error,
+        ExcuseDutyType.OfficialErrand => Color.Primary,
+        ExcuseDutyType.PersonalEmergency => Color.Warning,
+        ExcuseDutyType.CourtAppearance => Color.Secondary,
+        _ => Color.Default
+    };
+
+    private string GetTypeLabel(ExcuseDutyType type) => type switch
+    {
+        ExcuseDutyType.OfficialErrand => "Official",
+        ExcuseDutyType.PersonalEmergency => "Emergency",
+        ExcuseDutyType.CourtAppearance => "Court",
+        ExcuseDutyType.CommunalDuty => "Communal",
+        _ => type.ToString()
+    };
+}

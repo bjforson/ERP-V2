@@ -1,0 +1,229 @@
+@page "/recruitment/interviews"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Interviews</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Interviews</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Interviews
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_filtered.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudToggleGroup T="string" @bind-Value="_viewFilter" Color="Color.Primary"
+                            SelectionMode="SelectionMode.SingleSelection" Class="mr-2">
+                <MudToggleItem Value="@("upcoming")">Upcoming</MudToggleItem>
+                <MudToggleItem Value="@("completed")">Completed</MudToggleItem>
+            </MudToggleGroup>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.CalendarMonth"
+                       OnClick="OpenScheduleDialog">
+                Schedule Interview
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_filtered" Dense="true" Hover="true" Striped="true" T="InterviewRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<InterviewRow, object>(x => x.CandidateName)">Candidate</MudTableSortLabel></MudTh>
+                    <MudTh>Position</MudTh>
+                    <MudTh>Interviewer</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<InterviewRow, object>(x => x.ScheduledAt)">Scheduled Date</MudTableSortLabel></MudTh>
+                    <MudTh>Type</MudTh>
+                    <MudTh>Score</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Candidate">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.CandidateName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Position">@context.RequisitionTitle</MudTd>
+                    <MudTd DataLabel="Interviewer">@context.InterviewerName</MudTd>
+                    <MudTd DataLabel="Scheduled Date">@context.ScheduledAt.ToString("dd MMM yyyy HH:mm")</MudTd>
+                    <MudTd DataLabel="Type">
+                        <MudChip T="string" Size="Size.Small" Color="@GetTypeColor(context.InterviewType)" Variant="Variant.Outlined">
+                            @context.InterviewType
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Score">
+                        @if (context.OverallScore.HasValue)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="@GetScoreColor(context.OverallScore.Value)">
+                                @context.OverallScore.Value.ToString("0.#") / 100
+                            </MudChip>
+                        }
+                        else
+                        {
+                            <span class="mud-text-secondary">—</span>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        @if (context.IsCompleted)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">Completed</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info">Scheduled</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        @if (!context.IsCompleted)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.RateReview" Size="Size.Small" Color="Color.Warning"
+                                           title="Record Result" OnClick="@(() => OpenResultDialog(context))" />
+                        }
+                        else if (!string.IsNullOrEmpty(context.Recommendation))
+                        {
+                            <MudTooltip Text="@($"Recommendation: {context.Recommendation}")">
+                                <MudIconButton Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Default" />
+                            </MudTooltip>
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">
+                        No @_viewFilter interviews found.
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<InterviewRow> _all = new();
+    private List<InterviewRow> _filtered = new();
+    private bool _isLoading = true;
+    private string _viewFilter = "upcoming";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _all = await db.Interviews
+                .Include(i => i.Application).ThenInclude(a => a.Candidate)
+                .Include(i => i.Application).ThenInclude(a => a.JobRequisition)
+                .Include(i => i.Interviewer)
+                .OrderByDescending(i => i.ScheduledAt)
+                .Select(i => new InterviewRow
+                {
+                    Id = i.Id,
+                    CandidateName = i.Application.Candidate.FirstName + " " + i.Application.Candidate.LastName,
+                    RequisitionTitle = i.Application.JobRequisition.Title,
+                    InterviewerName = i.Interviewer.FirstName + " " + i.Interviewer.LastName,
+                    ScheduledAt = i.ScheduledAt,
+                    InterviewType = i.InterviewType,
+                    OverallScore = i.OverallScore,
+                    Recommendation = i.Recommendation,
+                    IsCompleted = i.CompletedAt != null
+                })
+                .ToListAsync();
+
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading interviews: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        var now = DateTime.UtcNow;
+        _filtered = _viewFilter == "completed"
+            ? _all.Where(i => i.IsCompleted).ToList()
+            : _all.Where(i => !i.IsCompleted).ToList();
+    }
+
+    private Color GetTypeColor(string type) => type switch
+    {
+        "Phone" => Color.Info,
+        "Video" => Color.Primary,
+        "InPerson" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private Color GetScoreColor(decimal score) => score switch
+    {
+        >= 75 => Color.Success,
+        >= 50 => Color.Warning,
+        _ => Color.Error
+    };
+
+    private async Task OpenScheduleDialog()
+    {
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<ScheduleInterviewDialog>("Schedule Interview", options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadData();
+    }
+
+    private async Task OpenResultDialog(InterviewRow row)
+    {
+        var parameters = new DialogParameters<InterviewResultDialog>
+        {
+            { x => x.InterviewId, row.Id },
+            { x => x.CandidateName, row.CandidateName }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<InterviewResultDialog>("Record Interview Result", parameters, options);
+        var result = await dialog.Result;
+        if (result is { Canceled: false }) await LoadData();
+    }
+
+    private class InterviewRow
+    {
+        public int Id { get; set; }
+        public string CandidateName { get; set; } = string.Empty;
+        public string RequisitionTitle { get; set; } = string.Empty;
+        public string InterviewerName { get; set; } = string.Empty;
+        public DateTime ScheduledAt { get; set; }
+        public string InterviewType { get; set; } = string.Empty;
+        public decimal? OverallScore { get; set; }
+        public string? Recommendation { get; set; }
+        public bool IsCompleted { get; set; }
+    }
+}

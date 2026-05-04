@@ -1,0 +1,264 @@
+@page "/calendar"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Entities.Training
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Unified Calendar</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    <MudIcon Icon="@Icons.Material.Filled.CalendarMonth" Class="mr-2" />
+    Company Calendar
+</MudText>
+
+<!-- Navigation & Filters -->
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid AlignItems="Center">
+            <MudItem xs="12" sm="6" Class="d-flex align-center gap-2">
+                <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" OnClick="PrevMonth" />
+                <MudText Typo="Typo.h6" Class="flex-1 text-center">@_currentDate.ToString("MMMM yyyy")</MudText>
+                <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" OnClick="NextMonth" />
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="GoToToday">Today</MudButton>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <div class="d-flex flex-wrap gap-2">
+                    <MudChip T="string" Color="Color.Error" Variant="@(_showHolidays ? Variant.Filled : Variant.Outlined)"
+                             OnClick="() => _showHolidays = !_showHolidays" Size="Size.Small">Holidays</MudChip>
+                    <MudChip T="string" Color="Color.Info" Variant="@(_showLeave ? Variant.Filled : Variant.Outlined)"
+                             OnClick="() => _showLeave = !_showLeave" Size="Size.Small">Leave</MudChip>
+                    <MudChip T="string" Color="Color.Success" Variant="@(_showTraining ? Variant.Filled : Variant.Outlined)"
+                             OnClick="() => _showTraining = !_showTraining" Size="Size.Small">Training</MudChip>
+                    <MudChip T="string" Color="Color.Warning" Variant="@(_showInterviews ? Variant.Filled : Variant.Outlined)"
+                             OnClick="() => _showInterviews = !_showInterviews" Size="Size.Small">Interviews</MudChip>
+                </div>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else
+{
+    <!-- Legend -->
+    <div class="d-flex flex-wrap gap-3 mb-3">
+        <div class="d-flex align-center gap-1">
+            <div style="width:14px;height:14px;background:#f44336;border-radius:3px;"></div>
+            <MudText Typo="Typo.caption">Holidays</MudText>
+        </div>
+        <div class="d-flex align-center gap-1">
+            <div style="width:14px;height:14px;background:#2196f3;border-radius:3px;"></div>
+            <MudText Typo="Typo.caption">Approved Leave</MudText>
+        </div>
+        <div class="d-flex align-center gap-1">
+            <div style="width:14px;height:14px;background:#4caf50;border-radius:3px;"></div>
+            <MudText Typo="Typo.caption">Training</MudText>
+        </div>
+        <div class="d-flex align-center gap-1">
+            <div style="width:14px;height:14px;background:#ff9800;border-radius:3px;"></div>
+            <MudText Typo="Typo.caption">Interviews</MudText>
+        </div>
+    </div>
+
+    <!-- Calendar Grid -->
+    <MudPaper Elevation="2" Class="pa-2">
+        <!-- Day headers -->
+        <MudGrid Spacing="0" Class="mb-1">
+            @foreach (var day in new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" })
+            {
+                <MudItem xs="1" Style="min-width:calc(100%/7);max-width:calc(100%/7);">
+                    <div class="text-center pa-1">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"><strong>@day</strong></MudText>
+                    </div>
+                </MudItem>
+            }
+        </MudGrid>
+
+        @foreach (var week in GetCalendarWeeks())
+        {
+            <MudGrid Spacing="0">
+                @foreach (var day in week)
+                {
+                    var dayEvents = GetEventsForDay(day);
+                    var isToday = day == DateTime.Today;
+                    var isCurrentMonth = day.Month == _currentDate.Month;
+                    <MudItem xs="1" Style="min-width:calc(100%/7);max-width:calc(100%/7);">
+                        <div class="pa-1" style="min-height:80px;border:1px solid #e0e0e0;@(isToday ? "background:#e3f2fd;" : "")">
+                            <MudText Typo="Typo.caption"
+                                     Color="@(isToday ? Color.Primary : isCurrentMonth ? Color.Default : Color.Secondary)"
+                                     Style="@(isToday ? "font-weight:700;" : "")">
+                                @day.Day
+                            </MudText>
+                            @foreach (var ev in dayEvents.Take(3))
+                            {
+                                <MudTooltip Text="@ev.Title">
+                                    <div class="rounded px-1 mb-1 text-truncate"
+                                         style="background:@ev.Color;color:white;font-size:10px;cursor:default;">
+                                        @(ev.Title.Length > 14 ? ev.Title[..11] + "..." : ev.Title)
+                                    </div>
+                                </MudTooltip>
+                            }
+                            @if (dayEvents.Count > 3)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">+@(dayEvents.Count - 3) more</MudText>
+                            }
+                        </div>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    </MudPaper>
+}
+
+@code {
+    private DateTime _currentDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private bool _isLoading = true;
+    private bool _showHolidays = true;
+    private bool _showLeave = true;
+    private bool _showTraining = true;
+    private bool _showInterviews = true;
+
+    private List<CalendarEvent> _events = new();
+
+    protected override async Task OnInitializedAsync() => await LoadEventsAsync();
+
+    private async Task LoadEventsAsync()
+    {
+        _isLoading = true;
+        _events.Clear();
+        try
+        {
+            var start = new DateTime(_currentDate.Year, _currentDate.Month, 1);
+            var end = start.AddMonths(1).AddDays(-1);
+
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            // Holidays
+            var holidays = await db.Holidays
+                .Where(h => !h.IsDeleted && h.Date >= start && h.Date <= end)
+                .Select(h => new { h.Name, h.Date })
+                .ToListAsync();
+            foreach (var h in holidays)
+                _events.Add(new CalendarEvent { Date = h.Date, Title = h.Name, Color = "#f44336", Type = "Holiday" });
+
+            // Approved Leave
+            var leaves = await db.LeaveRequests
+                .Include(l => l.Employee)
+                .Include(l => l.LeavePolicy)
+                .Where(l => !l.IsDeleted && l.Status == LeaveRequestStatus.Approved &&
+                             l.StartDate <= end && l.EndDate >= start)
+                .ToListAsync();
+            foreach (var l in leaves)
+            {
+                var evDate = l.StartDate >= start ? l.StartDate : start;
+                _events.Add(new CalendarEvent
+                {
+                    Date = evDate,
+                    Title = $"{l.Employee.FirstName} {l.Employee.LastName} ({l.LeavePolicy?.Name ?? "Leave"})",
+                    Color = "#2196f3",
+                    Type = "Leave"
+                });
+            }
+
+            // Training
+            var training = await db.TrainingPrograms
+                .Where(t => !t.IsDeleted && t.IsActive && t.StartDate.HasValue &&
+                             t.StartDate.Value >= start && t.StartDate.Value <= end)
+                .Select(t => new { t.Title, t.StartDate })
+                .ToListAsync();
+            foreach (var t in training)
+                _events.Add(new CalendarEvent { Date = t.StartDate!.Value, Title = t.Title, Color = "#4caf50", Type = "Training" });
+
+            // Interviews
+            var interviews = await db.Interviews
+                .Where(i => !i.IsDeleted && i.ScheduledAt >= start && i.ScheduledAt <= end.AddDays(1))
+                .Include(i => i.Application).ThenInclude(a => a.Candidate)
+                .ToListAsync();
+            foreach (var i in interviews)
+            {
+                var cand = i.Application?.Candidate;
+                var name = cand != null ? $"{cand.FirstName} {cand.LastName}".Trim() : "Candidate";
+                _events.Add(new CalendarEvent { Date = i.ScheduledAt.Date, Title = $"Interview: {name}", Color = "#ff9800", Type = "Interview" });
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading calendar: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private List<CalendarEvent> GetEventsForDay(DateTime day)
+    {
+        return _events
+            .Where(e => e.Date.Date == day.Date &&
+                (e.Type == "Holiday" && _showHolidays ||
+                 e.Type == "Leave" && _showLeave ||
+                 e.Type == "Training" && _showTraining ||
+                 e.Type == "Interview" && _showInterviews))
+            .ToList();
+    }
+
+    private List<List<DateTime>> GetCalendarWeeks()
+    {
+        var firstDay = new DateTime(_currentDate.Year, _currentDate.Month, 1);
+        var lastDay = firstDay.AddMonths(1).AddDays(-1);
+        var startDay = firstDay.AddDays(-(int)firstDay.DayOfWeek);
+        var endDay = lastDay.AddDays(6 - (int)lastDay.DayOfWeek);
+
+        var weeks = new List<List<DateTime>>();
+        var current = startDay;
+        while (current <= endDay)
+        {
+            var week = new List<DateTime>();
+            for (int i = 0; i < 7; i++)
+            {
+                week.Add(current);
+                current = current.AddDays(1);
+            }
+            weeks.Add(week);
+        }
+        return weeks;
+    }
+
+    private async Task PrevMonth()
+    {
+        _currentDate = _currentDate.AddMonths(-1);
+        await LoadEventsAsync();
+    }
+
+    private async Task NextMonth()
+    {
+        _currentDate = _currentDate.AddMonths(1);
+        await LoadEventsAsync();
+    }
+
+    private async Task GoToToday()
+    {
+        _currentDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        await LoadEventsAsync();
+    }
+
+    private class CalendarEvent
+    {
+        public DateTime Date { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Color { get; set; } = "#9e9e9e";
+        public string Type { get; set; } = string.Empty;
+    }
+}

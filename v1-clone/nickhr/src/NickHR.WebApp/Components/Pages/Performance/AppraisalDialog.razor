@@ -1,0 +1,134 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Performance
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Assignment" Class="mr-2" />
+            Create Appraisal
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudSelect T="int" @bind-Value="_model.AppraisalCycleId" Label="Appraisal Cycle *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Cycle is required">
+                        @foreach (var c in _cycles)
+                        {
+                            <MudSelectItem T="int" Value="@c.Id">@c.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect T="int" @bind-Value="_model.EmployeeId" Label="Employee *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Employee is required">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int" Value="@e.Id">@e.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect T="int" @bind-Value="_model.ReviewerId" Label="Reviewer *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Reviewer is required">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int" Value="@e.Id">@e.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Create
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int? AppraisalId { get; set; }
+    [Parameter] public int? DefaultCycleId { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+
+    private AppraisalFormModel _model = new();
+    private List<EmpOption> _employees = new();
+    private List<CycleOption> _cycles = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDropdowns();
+        if (DefaultCycleId.HasValue) _model.AppraisalCycleId = DefaultCycleId.Value;
+    }
+
+    private async Task LoadDropdowns()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+            _cycles = await db.AppraisalCycles
+                .OrderByDescending(c => c.StartDate)
+                .Select(c => new CycleOption { Id = c.Id, Name = c.Name })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = new AppraisalForm
+            {
+                AppraisalCycleId = _model.AppraisalCycleId,
+                EmployeeId = _model.EmployeeId,
+                ReviewerId = _model.ReviewerId,
+                Status = AppraisalStatus.NotStarted
+            };
+            db.AppraisalForms.Add(entity);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Appraisal created.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class AppraisalFormModel
+    {
+        public int AppraisalCycleId { get; set; }
+        public int EmployeeId { get; set; }
+        public int ReviewerId { get; set; }
+    }
+
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+    private class CycleOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

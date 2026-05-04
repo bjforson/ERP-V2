@@ -1,0 +1,434 @@
+@page "/medical/review"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Medical
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — Medical Claim Review</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Medical Claim Review</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<!-- Status Filter Chips -->
+<div class="d-flex gap-2 flex-wrap mb-4">
+    @foreach (var filter in _statusFilters)
+    {
+        <MudChip T="string" Color="@(filter == _activeFilter ? Color.Primary : Color.Default)"
+                 OnClick="() => SetFilter(filter)" Variant="Variant.Outlined">
+            @filter
+        </MudChip>
+    }
+</div>
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (!_filteredClaims.Any())
+        {
+            <div class="d-flex flex-column align-center pa-8">
+                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Large" Color="Color.Success" Class="mb-2" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary">No claims to review at this stage.</MudText>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="_filteredClaims" Dense="true" Striped="true" Hover="true" @bind-RowsPerPage="_rowsPerPage">
+                <HeaderContent>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Date</MudTh>
+                    <MudTh>Category</MudTh>
+                    <MudTh>Provider</MudTh>
+                    <MudTh>Amount (GH₵)</MudTh>
+                    <MudTh>Receipt</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee?.EmployeeCode</MudText>
+                    </MudTd>
+                    <MudTd>@context.ClaimDate.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.Category.ToString()</MudChip>
+                    </MudTd>
+                    <MudTd>@(context.ProviderName ?? "—")</MudTd>
+                    <MudTd>@context.ClaimAmount.ToString("N2")</MudTd>
+                    <MudTd>
+                        @if (!string.IsNullOrEmpty(context.ReceiptPaths))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.AttachFile">
+                                Attached
+                            </MudChip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">None</MudText>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="GetStatusColor(context.Status)">
+                            @GetStatusLabel(context.Status)
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <div class="d-flex gap-1 flex-wrap">
+                            @if (context.Status == MedicalClaimStatus.Submitted)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Search" Size="Size.Small"
+                                               Color="Color.Warning" Title="Set Under Review"
+                                               OnClick="() => SetUnderReview(context)" />
+                            }
+                            @if (context.Status == MedicalClaimStatus.Submitted || context.Status == MedicalClaimStatus.UnderReview)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small"
+                                               Color="Color.Success" Title="Approve"
+                                               OnClick="() => OpenApproveDialog(context)" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Cancel" Size="Size.Small"
+                                               Color="Color.Error" Title="Reject"
+                                               OnClick="() => OpenRejectDialog(context)" />
+                            }
+                            @if (context.Status == MedicalClaimStatus.Approved || context.Status == MedicalClaimStatus.PartiallyApproved)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Paid" Size="Size.Small"
+                                               Color="Color.Primary" Title="Mark Paid"
+                                               OnClick="() => OpenMarkPaidDialog(context)" />
+                            }
+                        </div>
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager />
+                </PagerContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+<!-- Approve Dialog -->
+@if (_approveDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_approveDialogOpen">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Approve Medical Claim</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-1">
+                Employee: <strong>@(_selectedClaim?.Employee != null ? $"{_selectedClaim.Employee.FirstName} {_selectedClaim.Employee.LastName}" : "—")</strong>
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Claimed: <strong>GH₵ @(_selectedClaim?.ClaimAmount.ToString("N2"))</strong>
+            </MudText>
+            <MudNumericField T="decimal" @bind-Value="_approvedAmount" Label="Approved Amount (GH₵) *"
+                             Variant="Variant.Outlined" Min="0.01m"
+                             Max="@(_selectedClaim?.ClaimAmount ?? 0)"
+                             Format="N2" HelperText="Can be less than claimed for partial approval" />
+            <MudSelect T="MedicalPaymentMethod" @bind-Value="_paymentMethod" Label="Payment Method *"
+                       Variant="Variant.Outlined" Class="mt-3">
+                <MudSelectItem Value="MedicalPaymentMethod.Payroll">Payroll Deduction</MudSelectItem>
+                <MudSelectItem Value="MedicalPaymentMethod.BankTransfer">Bank Transfer</MudSelectItem>
+                <MudSelectItem Value="MedicalPaymentMethod.Cash">Cash</MudSelectItem>
+            </MudSelect>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _approveDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ConfirmApprove"
+                       Disabled="@(_approvedAmount <= 0)">
+                Approve
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Reject Dialog -->
+@if (_rejectDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_rejectDialogOpen">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Reject Medical Claim</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Rejecting claim for <strong>@(_selectedClaim?.Employee != null ? $"{_selectedClaim.Employee.FirstName} {_selectedClaim.Employee.LastName}" : "—")</strong>
+            </MudText>
+            <MudTextField @bind-Value="_rejectionReason" Label="Rejection Reason *" Variant="Variant.Outlined"
+                          Lines="3" Required="true" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _rejectDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ConfirmReject"
+                       Disabled="@(string.IsNullOrWhiteSpace(_rejectionReason))">
+                Confirm Reject
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Mark Paid Dialog -->
+@if (_paidDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_paidDialogOpen">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Mark Claim as Paid</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Marking GH₵ @(_selectedClaim?.ApprovedAmount.ToString("N2")) paid to
+                <strong>@(_selectedClaim?.Employee != null ? $"{_selectedClaim.Employee.FirstName} {_selectedClaim.Employee.LastName}" : "—")</strong>
+            </MudText>
+            <MudTextField @bind-Value="_paymentReference" Label="Payment Reference *" Variant="Variant.Outlined"
+                          HelperText="Cheque number, transfer reference, or voucher number" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _paidDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ConfirmMarkPaid"
+                       Disabled="@(string.IsNullOrWhiteSpace(_paymentReference))">
+                Confirm Payment
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<MedicalClaim> _allClaims = new();
+    private List<MedicalClaim> _filteredClaims = new();
+    private bool _isLoading = true;
+    private int _rowsPerPage = 15;
+    private string _activeFilter = "Pending Review";
+    private MedicalClaim? _selectedClaim;
+    private int? _currentEmployeeId;
+
+    private bool _approveDialogOpen = false;
+    private bool _rejectDialogOpen = false;
+    private bool _paidDialogOpen = false;
+
+    private decimal _approvedAmount = 0;
+    private MedicalPaymentMethod _paymentMethod = MedicalPaymentMethod.BankTransfer;
+    private string _rejectionReason = "";
+    private string _paymentReference = "";
+
+    private readonly string[] _statusFilters = { "Pending Review", "Under Review", "Approved", "Paid", "Rejected", "All" };
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Medical", href: null, disabled: true),
+        new BreadcrumbItem("Review Claims", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentEmployeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _allClaims = await db.MedicalClaims
+                .Include(c => c.Employee)
+                .OrderByDescending(c => c.ClaimDate)
+                .ToListAsync();
+
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading claims: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void SetFilter(string filter)
+    {
+        _activeFilter = filter;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        _filteredClaims = _activeFilter switch
+        {
+            "Pending Review" => _allClaims.Where(c => c.Status == MedicalClaimStatus.Submitted).ToList(),
+            "Under Review" => _allClaims.Where(c => c.Status == MedicalClaimStatus.UnderReview).ToList(),
+            "Approved" => _allClaims.Where(c => c.Status == MedicalClaimStatus.Approved || c.Status == MedicalClaimStatus.PartiallyApproved).ToList(),
+            "Paid" => _allClaims.Where(c => c.Status == MedicalClaimStatus.Paid).ToList(),
+            "Rejected" => _allClaims.Where(c => c.Status == MedicalClaimStatus.Rejected).ToList(),
+            _ => _allClaims
+        };
+    }
+
+    private async Task SetUnderReview(MedicalClaim claim)
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.MedicalClaims.FindAsync(claim.Id);
+            if (entity == null) return;
+            entity.Status = MedicalClaimStatus.UnderReview;
+            entity.ReviewedById = _currentEmployeeId;
+            entity.ReviewedAt = DateTime.UtcNow;
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Claim set to Under Review.", Severity.Info);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void OpenApproveDialog(MedicalClaim claim)
+    {
+        _selectedClaim = claim;
+        _approvedAmount = claim.ClaimAmount;
+        _paymentMethod = MedicalPaymentMethod.BankTransfer;
+        _approveDialogOpen = true;
+    }
+
+    private void OpenRejectDialog(MedicalClaim claim)
+    {
+        _selectedClaim = claim;
+        _rejectionReason = "";
+        _rejectDialogOpen = true;
+    }
+
+    private void OpenMarkPaidDialog(MedicalClaim claim)
+    {
+        _selectedClaim = claim;
+        _paymentReference = "";
+        _paidDialogOpen = true;
+    }
+
+    private async Task ConfirmApprove()
+    {
+        if (_selectedClaim == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.MedicalClaims.FindAsync(_selectedClaim.Id);
+            if (entity == null) return;
+
+            entity.ApprovedAmount = _approvedAmount;
+            entity.Status = _approvedAmount < entity.ClaimAmount
+                ? MedicalClaimStatus.PartiallyApproved
+                : MedicalClaimStatus.Approved;
+            entity.PaymentMethod = _paymentMethod;
+            entity.ApprovedById = _currentEmployeeId;
+            entity.ApprovedAt = DateTime.UtcNow;
+            entity.UpdatedAt = DateTime.UtcNow;
+
+            await db.SaveChangesAsync();
+            _approveDialogOpen = false;
+            Snackbar.Add("Claim approved!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (_selectedClaim == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.MedicalClaims.FindAsync(_selectedClaim.Id);
+            if (entity == null) return;
+            entity.Status = MedicalClaimStatus.Rejected;
+            entity.RejectionReason = _rejectionReason;
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            _rejectDialogOpen = false;
+            Snackbar.Add("Claim rejected.", Severity.Warning);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ConfirmMarkPaid()
+    {
+        if (_selectedClaim == null) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.MedicalClaims.FindAsync(_selectedClaim.Id);
+            if (entity == null) return;
+            entity.Status = MedicalClaimStatus.Paid;
+            entity.PaymentReference = _paymentReference;
+            entity.PaidAt = DateTime.UtcNow;
+            entity.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            _paidDialogOpen = false;
+            Snackbar.Add("Claim marked as paid!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private Color GetStatusColor(MedicalClaimStatus status) => status switch
+    {
+        MedicalClaimStatus.Submitted => Color.Info,
+        MedicalClaimStatus.UnderReview => Color.Warning,
+        MedicalClaimStatus.Approved => Color.Success,
+        MedicalClaimStatus.PartiallyApproved => Color.Warning,
+        MedicalClaimStatus.Rejected => Color.Error,
+        MedicalClaimStatus.Paid => Color.Success,
+        _ => Color.Default
+    };
+
+    private string GetStatusLabel(MedicalClaimStatus status) => status switch
+    {
+        MedicalClaimStatus.PartiallyApproved => "Partial",
+        MedicalClaimStatus.UnderReview => "Under Review",
+        _ => status.ToString()
+    };
+}

@@ -1,0 +1,529 @@
+@*
+    Phase 2 of the role-overhaul wave (2026-04-30) — NickFinance access section.
+
+    Inline section embedded in three HR forms:
+        - Components/Pages/Admin/UserDialog.razor      (system / non-employee users)
+        - Components/Pages/Employees/EmployeeCreate.razor
+        - Components/Pages/Employees/EmployeeEdit.razor
+
+    Lifecycle:
+        - On parameters set: if UserId is non-null, load existing grants
+          + phone via IIdentityProvisioningService and pre-select the
+          matching grade (if any).
+        - On every dropdown / site / phone / expiry / firm change: emit
+          OnStateChanged so the parent form knows the current intent
+          (and IsValid flag).
+        - On parent Save: parent calls ApplyAsync(provisioning, grantedBy)
+          which transactionally revokes any prior grant and grants the
+          newly-selected grade.
+
+    Design notes:
+        - The 10-grade catalogue is mirrored from NickFinance into
+          NickHR.WebApp.Identity.RoleNames so this component does NOT
+          take a project reference on NickFinance.WebApp (which would
+          invert the dependency direction).
+        - Single-select model: ONE grade per user. The ops-ladder
+          dropdown and the audit-ring dropdown are mutually exclusive
+          — picking from one disables the other.
+        - Site catalogue is hardcoded to match the Wave-4 ModuleAccessPanel.
+          When the site-catalogue service ships in NickHR, swap the
+          literal array out for a service call.
+*@
+
+@using NickHR.WebApp.Identity
+@using NickHR.WebApp.Services
+@inject IIdentityProvisioningService Provisioning
+
+<MudPaper Elevation="0" Class="pa-3 mb-2"
+          Style="border: 1px solid var(--mud-palette-divider); border-radius: 8px;">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudCheckBox T="bool"
+                     Value="@_grantAccess"
+                     ValueChanged="@(v => OnGrantAccessChangedAsync(v))"
+                     Color="Color.Primary" Dense="true" />
+        <div>
+            <MudText Typo="Typo.body2" Style="font-weight: 600;">NickFinance</MudText>
+            <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">
+                Petty-cash, AP, AR, treasury, journals, audit. One grade per user; concentric — higher grades inherit lower.
+            </MudText>
+        </div>
+    </MudStack>
+
+    @if (_grantAccess)
+    {
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+        }
+        else
+        {
+            <MudGrid Spacing="2" Class="mt-2">
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_phoneE164"
+                                  @bind-Value:after="EmitState"
+                                  Label="Phone (E.164, e.g. +233244000111)"
+                                  HelperText="Optional — used by the WhatsApp approval notifier."
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Phone" />
+                </MudItem>
+
+                @if (!string.IsNullOrEmpty(_hardSodError))
+                {
+                    <MudItem xs="12">
+                        <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Dense="true">
+                            <MudText Typo="Typo.body2"><strong>SoD violation:</strong> @_hardSodError</MudText>
+                        </MudAlert>
+                    </MudItem>
+                }
+
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string"
+                               Value="@_opsGrade"
+                               ValueChanged="@(v => OnOpsGradeChangedAsync(v))"
+                               Label="Operations grade"
+                               Disabled="@(_auditRole != string.Empty)"
+                               HelperText="@(_auditRole != string.Empty ? "Audit role selected — operations dropdown disabled." : "Concentric — each grade inherits everything from the grade above.")"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                        <MudSelectItem T="string" Value="@string.Empty">— None —</MudSelectItem>
+                        @foreach (var g in RoleNames.OpsLadder)
+                        {
+                            <MudSelectItem T="string" Value="@g">@g (@RoleNames.PermissionCount(g) permissions)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string"
+                               Value="@_auditRole"
+                               ValueChanged="@(v => OnAuditRoleChangedAsync(v))"
+                               Label="Audit role (mutually exclusive)"
+                               Disabled="@(_opsGrade != string.Empty)"
+                               HelperText="@(_opsGrade != string.Empty ? "Operations grade selected — audit dropdown disabled." : "Auditors must not operate the system they audit.")"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                        <MudSelectItem T="string" Value="@string.Empty">— None —</MudSelectItem>
+                        @foreach (var a in RoleNames.AuditRing)
+                        {
+                            <MudSelectItem T="string" Value="@a">@a (@RoleNames.PermissionCount(a) permissions)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                @* Site picker — only when SiteCashier or SiteSupervisor selected. *@
+                @if (RoleNames.RequiresSite(SelectedRoleName))
+                {
+                    <MudItem xs="12" md="6">
+                        <MudSelect T="Guid?"
+                                   Value="@_siteId"
+                                   ValueChanged="@(v => OnSiteChangedAsync(v))"
+                                   Label="Site (required)"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                                   Error="@_siteValidationError"
+                                   ErrorText="Site is required for this grade.">
+                            @foreach (var s in Sites)
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)s.SiteId)">@s.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                }
+
+                @* ExternalAuditor extras — expiry + audit firm. *@
+                @if (SelectedRoleName == RoleNames.ExternalAuditor)
+                {
+                    <MudItem xs="12" md="6">
+                        <MudDatePicker @bind-Date="_expiresAtDate"
+                                       @bind-Date:after="EmitState"
+                                       Label="Expires (required)"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense"
+                                       MinDate="DateTime.Today.AddDays(1)"
+                                       Error="@_expiresValidationError"
+                                       ErrorText="Expiry date is required for ExternalAuditor." />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudTextField @bind-Value="_auditFirm"
+                                      @bind-Value:after="EmitState"
+                                      Label="Audit firm (required)"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense"
+                                      Error="@_firmValidationError"
+                                      ErrorText="Audit firm name is required for ExternalAuditor." />
+                    </MudItem>
+                }
+
+                @* Permission preview — collapsible details listing the inherited bundle. *@
+                @if (!string.IsNullOrEmpty(SelectedRoleName))
+                {
+                    <MudItem xs="12">
+                        <MudPaper Elevation="0" Class="pa-2"
+                                  Style="border: 1px dashed var(--mud-palette-divider); border-radius: 6px; background-color: rgba(0,0,0,0.01);">
+                            <MudText Typo="Typo.body2" Style="font-weight: 600;">
+                                @SelectedRoleName grants @RoleNames.PermissionCount(SelectedRoleName) permission@(RoleNames.PermissionCount(SelectedRoleName) == 1 ? "" : "s").
+                            </MudText>
+                            <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">
+                                @RoleNames.Descriptions[SelectedRoleName]
+                            </MudText>
+                        </MudPaper>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public string Email { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Identity uuid of the existing user. Pass <c>null</c> in EmployeeCreate
+    /// before the employee row has been saved — the section then renders in
+    /// "intent capture" mode and the parent form passes the real id into
+    /// <see cref="ApplyAsync"/> after the post-save provisioning step.
+    /// </summary>
+    [Parameter] public Guid? UserId { get; set; }
+
+    /// <summary>Tenant id; defaults to <c>1</c> (Nick TC-Scan).</summary>
+    [Parameter] public long TenantId { get; set; } = 1L;
+
+    /// <summary>Fired on every state change so the parent form can disable Save when invalid.</summary>
+    [Parameter] public EventCallback<NickFinanceAccessSectionState> OnStateChanged { get; set; }
+
+    private bool _grantAccess;
+    private bool _loading;
+    private string _phoneE164 = string.Empty;
+    private string? _hardSodError;
+    private string _opsGrade = string.Empty;
+    private string _auditRole = string.Empty;
+    private Guid? _siteId;
+    private DateTime? _expiresAtDate;
+    private string _auditFirm = string.Empty;
+
+    // Per-row validation flags (single-row model — there's only one grant intent).
+    private bool _siteValidationError;
+    private bool _expiresValidationError;
+    private bool _firmValidationError;
+
+    // Original snapshot — used by ApplyAsync to diff.
+    private bool _origGrantAccess;
+    private string _origPhone = string.Empty;
+    private List<RoleGrant> _origGrants = new();
+
+    private static readonly SiteOption[] Sites =
+    [
+        new(new Guid("11111111-1111-1111-1111-000000000001"), "Tema HQ"),
+        new(new Guid("11111111-1111-1111-1111-000000000002"), "Kotoka"),
+        new(new Guid("11111111-1111-1111-1111-000000000003"), "Takoradi"),
+        new(new Guid("11111111-1111-1111-1111-000000000004"), "Aflao"),
+        new(new Guid("11111111-1111-1111-1111-000000000005"), "Paga"),
+        new(new Guid("11111111-1111-1111-1111-000000000006"), "Elubo"),
+    ];
+
+    private sealed record SiteOption(Guid SiteId, string Name);
+
+    /// <summary>
+    /// Helper — the single grade name the admin currently has selected
+    /// (ops or audit, or empty string for none). Drives every conditional
+    /// in the markup.
+    /// </summary>
+    private string SelectedRoleName =>
+        !string.IsNullOrEmpty(_opsGrade) ? _opsGrade
+        : !string.IsNullOrEmpty(_auditRole) ? _auditRole
+        : string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    /// <summary>
+    /// Re-load existing grants for the current <see cref="UserId"/>. The
+    /// parent form may also call this after a post-save provisioning step
+    /// to refresh state.
+    /// </summary>
+    public async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            if (UserId is Guid uid)
+            {
+                _origGrants = (await Provisioning.ListRolesAsync(uid)).ToList();
+                _phoneE164 = (await Provisioning.GetPrimaryPhoneAsync(uid)) ?? string.Empty;
+                _origPhone = _phoneE164;
+
+                _grantAccess = _origGrants.Count > 0;
+                _origGrantAccess = _grantAccess;
+
+                ApplyOriginalGrantToFields();
+            }
+            else
+            {
+                ResetToEmpty();
+            }
+        }
+        finally
+        {
+            _loading = false;
+            await EmitState();
+        }
+    }
+
+    private void ResetToEmpty()
+    {
+        _origGrants = new();
+        _phoneE164 = string.Empty;
+        _origPhone = string.Empty;
+        _grantAccess = false;
+        _origGrantAccess = false;
+        _opsGrade = string.Empty;
+        _auditRole = string.Empty;
+        _siteId = null;
+        _expiresAtDate = null;
+        _auditFirm = string.Empty;
+    }
+
+    /// <summary>
+    /// In the v2 single-grade model, we only honour the FIRST catalogue
+    /// grade we find. Any extra rows are legacy clutter that the migration
+    /// script will wash out — they are NOT shown in the new UI. If the
+    /// user happens to hold both an ops grade and an audit grade
+    /// simultaneously (a 2026-04-29 era multi-grant), we surface the ops
+    /// grade and ignore the audit one for editing; the admin can clear
+    /// the section to revoke everything.
+    /// </summary>
+    private void ApplyOriginalGrantToFields()
+    {
+        _opsGrade = string.Empty;
+        _auditRole = string.Empty;
+        _siteId = null;
+        _expiresAtDate = null;
+        _auditFirm = string.Empty;
+
+        // Prefer ops over audit when both exist (rare, legacy multi-grant).
+        var ops = _origGrants.FirstOrDefault(g => RoleNames.IsOpsRole(g.RoleName));
+        if (ops is not null)
+        {
+            _opsGrade = ops.RoleName;
+            _siteId = ops.SiteId;
+            return;
+        }
+        var audit = _origGrants.FirstOrDefault(g => RoleNames.IsAuditRole(g.RoleName));
+        if (audit is not null)
+        {
+            _auditRole = audit.RoleName;
+            _expiresAtDate = audit.ExpiresAt?.LocalDateTime;
+            _auditFirm = audit.AuditFirm ?? string.Empty;
+        }
+        // Any legacy / unknown role rows are deliberately ignored here —
+        // they grant ZERO permissions and the migration script's punch-list
+        // points HR at them.
+    }
+
+    private async Task OnGrantAccessChangedAsync(bool granted)
+    {
+        _grantAccess = granted;
+        if (!granted)
+        {
+            _opsGrade = string.Empty;
+            _auditRole = string.Empty;
+            _siteId = null;
+            _expiresAtDate = null;
+            _auditFirm = string.Empty;
+        }
+        await EmitState();
+    }
+
+    private async Task OnOpsGradeChangedAsync(string grade)
+    {
+        _opsGrade = grade ?? string.Empty;
+        // Mutual exclusion: picking an ops grade clears any audit selection.
+        if (!string.IsNullOrEmpty(_opsGrade)) _auditRole = string.Empty;
+        // Site only meaningful for site-scoped ops grades; clear otherwise.
+        if (!RoleNames.RequiresSite(_opsGrade)) _siteId = null;
+        // ExternalAuditor extras only meaningful for that audit role; clear.
+        _expiresAtDate = null;
+        _auditFirm = string.Empty;
+        await EmitState();
+    }
+
+    private async Task OnAuditRoleChangedAsync(string role)
+    {
+        _auditRole = role ?? string.Empty;
+        // Mutual exclusion: picking an audit role clears any ops selection.
+        if (!string.IsNullOrEmpty(_auditRole)) _opsGrade = string.Empty;
+        _siteId = null;
+        // Reset ExternalAuditor extras when switching between audit roles.
+        if (_auditRole != RoleNames.ExternalAuditor)
+        {
+            _expiresAtDate = null;
+            _auditFirm = string.Empty;
+        }
+        await EmitState();
+    }
+
+    private async Task OnSiteChangedAsync(Guid? siteId)
+    {
+        _siteId = siteId;
+        await EmitState();
+    }
+
+    /// <summary>
+    /// Recomputes per-row validation, fires <see cref="OnStateChanged"/>
+    /// with the up-to-date state record. Called after every UI edit; safe
+    /// to call repeatedly.
+    /// </summary>
+    private async Task EmitState()
+    {
+        var grants = new List<RoleGrantIntent>();
+        var allValid = true;
+
+        // Reset error flags up front; we'll re-flag below.
+        _siteValidationError = false;
+        _expiresValidationError = false;
+        _firmValidationError = false;
+
+        var role = SelectedRoleName;
+        if (_grantAccess && !string.IsNullOrEmpty(role))
+        {
+            // Site-required check.
+            if (RoleNames.RequiresSite(role) && _siteId is null)
+            {
+                _siteValidationError = true;
+                allValid = false;
+            }
+
+            DateTimeOffset? expiresAt = null;
+            string? auditFirm = null;
+
+            if (role == RoleNames.ExternalAuditor)
+            {
+                if (_expiresAtDate is null)
+                {
+                    _expiresValidationError = true;
+                    allValid = false;
+                }
+                else
+                {
+                    expiresAt = new DateTimeOffset(_expiresAtDate.Value, TimeSpan.Zero);
+                }
+                if (string.IsNullOrWhiteSpace(_auditFirm))
+                {
+                    _firmValidationError = true;
+                    allValid = false;
+                }
+                else
+                {
+                    auditFirm = _auditFirm.Trim();
+                }
+            }
+
+            grants.Add(new RoleGrantIntent(role, _siteId, expiresAt, auditFirm));
+        }
+
+        // A non-empty hard-SoD error from a previous Apply attempt blocks save.
+        if (!string.IsNullOrEmpty(_hardSodError)) allValid = false;
+
+        // Section is also invalid if grant-access is on but no grade picked.
+        if (_grantAccess && string.IsNullOrEmpty(role)) allValid = false;
+
+        var phone = string.IsNullOrWhiteSpace(_phoneE164) ? null : _phoneE164.Trim();
+        var state = new NickFinanceAccessSectionState(_grantAccess, phone, grants, allValid);
+        if (OnStateChanged.HasDelegate)
+        {
+            await OnStateChanged.InvokeAsync(state);
+        }
+    }
+
+    /// <summary>
+    /// Diffs intended state vs original and persists the changes via
+    /// <see cref="IIdentityProvisioningService"/>. Single-grade model:
+    /// every existing grant is revoked first, then the newly-selected
+    /// grade is granted (if any). Call from the parent form's Save
+    /// handler AFTER the user row has been committed.
+    /// </summary>
+    /// <param name="userId">The freshly-committed user uuid.</param>
+    /// <param name="grantedByUserId">The acting admin's uuid; stamped onto user_roles.granted_by_user_id.</param>
+    /// <returns><see langword="true"/> if all changes applied cleanly.</returns>
+    public async Task<bool> ApplyAsync(Guid userId, Guid grantedByUserId, CancellationToken ct = default)
+    {
+        _hardSodError = null;
+        await EmitState();
+
+        // Phone first — phone changes are independent of role grants.
+        if (!string.Equals(_phoneE164, _origPhone, StringComparison.Ordinal))
+        {
+            await Provisioning.SetPrimaryPhoneAsync(
+                userId,
+                string.IsNullOrWhiteSpace(_phoneE164) ? null : _phoneE164.Trim(),
+                ct);
+        }
+
+        var role = SelectedRoleName;
+        var siteId = RoleNames.RequiresSite(role) ? _siteId : null;
+        var expiresAt = role == RoleNames.ExternalAuditor && _expiresAtDate is not null
+            ? new DateTimeOffset(_expiresAtDate.Value, TimeSpan.Zero)
+            : (DateTimeOffset?)null;
+        var auditFirm = role == RoleNames.ExternalAuditor && !string.IsNullOrWhiteSpace(_auditFirm)
+            ? _auditFirm.Trim()
+            : null;
+
+        // Determine if the intended grant is identical to the only existing
+        // grant. If so, GrantRoleAsync is idempotent — but the per-row
+        // expiry / firm refresh path does the right thing.
+        var alreadyHas = _grantAccess && !string.IsNullOrEmpty(role) && _origGrants.Any(g =>
+            g.RoleName == role
+            && g.SiteId == siteId);
+
+        // Revoke every prior grant that doesn't match what we're about to
+        // grant. The new grade replaces every old one (single-grade model).
+        foreach (var orig in _origGrants)
+        {
+            // Skip the about-to-be-refreshed grant — GrantRoleAsync below
+            // is idempotent on the (user, role, site) tuple and refreshes
+            // expiry / firm in place.
+            if (alreadyHas && orig.RoleName == role && orig.SiteId == siteId)
+            {
+                continue;
+            }
+            await Provisioning.RevokeRoleAsync(userId, orig.RoleName, orig.SiteId, ct);
+        }
+
+        // If the section is off OR no grade picked, we're done after revokes.
+        if (!_grantAccess || string.IsNullOrEmpty(role))
+        {
+            await ReloadFromCurrentAsync(userId, ct);
+            return true;
+        }
+
+        // Grant the single selected grade.
+        try
+        {
+            await Provisioning.GrantRoleAsync(
+                userId,
+                role,
+                siteId,
+                grantedByUserId,
+                expiresAt,
+                auditFirm,
+                ct);
+        }
+        catch (ArgumentException ex)
+        {
+            _hardSodError = ex.Message;
+            await EmitState();
+            return false;
+        }
+
+        await ReloadFromCurrentAsync(userId, ct);
+        return true;
+    }
+
+    private async Task ReloadFromCurrentAsync(Guid userId, CancellationToken ct)
+    {
+        _origGrants = (await Provisioning.ListRolesAsync(userId, ct)).ToList();
+        _origPhone = _phoneE164;
+        _origGrantAccess = _grantAccess;
+        ApplyOriginalGrantToFields();
+    }
+}

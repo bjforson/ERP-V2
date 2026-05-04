@@ -1,0 +1,136 @@
+@page "/assets/my"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+
+<PageTitle>NICKSCAN ERP — NickHR — My Assets</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">My Assets</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else if (!_assets.Any())
+        {
+            <div class="d-flex flex-column align-center pa-8">
+                <MudIcon Icon="@Icons.Material.Filled.Devices" Size="Size.Large" Color="Color.Secondary" Class="mb-2" />
+                <MudText Typo="Typo.h6" Color="Color.Secondary">No assets assigned to you</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Contact HR if you believe assets should appear here.</MudText>
+            </div>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+                You have @_assets.Count asset(s) currently assigned to you.
+            </MudText>
+            <MudTable Items="_assets" Dense="true" Striped="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Asset Tag</MudTh>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Category</MudTh>
+                    <MudTh>Serial #</MudTh>
+                    <MudTh>Assigned Date</MudTh>
+                    <MudTh>Condition</MudTh>
+                    <MudTh>Description</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.AssetTag</MudText>
+                    </MudTd>
+                    <MudTd>@context.Name</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.Category</MudChip>
+                    </MudTd>
+                    <MudTd>@(context.SerialNumber ?? "—")</MudTd>
+                    <MudTd>@(context.AssignedDate.HasValue ? context.AssignedDate.Value.ToString("dd/MM/yyyy") : "—")</MudTd>
+                    <MudTd>@context.Condition</MudTd>
+                    <MudTd>
+                        @if (!string.IsNullOrEmpty(context.Description))
+                        {
+                            <MudTooltip Text="@context.Description">
+                                <MudText Typo="Typo.body2" Style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                    @context.Description
+                                </MudText>
+                            </MudTooltip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                        }
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<Asset> _assets = new();
+    private bool _isLoading = true;
+    private int? _employeeId;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Self-Service", href: null, disabled: true),
+        new BreadcrumbItem("My Assets", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _employeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        if (_employeeId == null) { _isLoading = false; return; }
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _assets = await db.Assets
+                .Where(a => a.AssignedToEmployeeId == _employeeId.Value && a.Status == AssetStatus.Assigned)
+                .OrderBy(a => a.Category)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

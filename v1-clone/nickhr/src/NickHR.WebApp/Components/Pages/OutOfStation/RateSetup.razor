@@ -1,0 +1,236 @@
+@page "/out-of-station/rates"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+@using NickHR.Services.OutOfStation
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Out-of-Station Rate Setup</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Settings" Class="mr-2" />
+    Out-of-Station Rate Setup
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudStack Row="true" Class="mb-4" AlignItems="AlignItems.Center">
+    <MudToggleGroup T="string" @bind-Value="_filter" Exclusive="true" Color="Color.Primary">
+        <MudToggleItem Value="@("All")" Text="All" />
+        <MudToggleItem Value="@("Domestic")" Text="Domestic" />
+        <MudToggleItem Value="@("International")" Text="International" />
+    </MudToggleGroup>
+    <MudSpacer />
+    <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+               OnClick="SeedDefaultRates" Disabled="_seeding"
+               StartIcon="@Icons.Material.Filled.AutoAwesome">
+        @(_seeding ? "Seeding..." : "Seed Default Rates")
+    </MudButton>
+</MudStack>
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        <MudTable Items="FilteredRates" Dense="true" Hover="true" Loading="_loading">
+            <HeaderContent>
+                <MudTh>Grade</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh Style="text-align:right">Accommodation/night</MudTh>
+                <MudTh Style="text-align:right">Feeding/day</MudTh>
+                <MudTh Style="text-align:right">Road Transport</MudTh>
+                <MudTh Style="text-align:right">Air Transport</MudTh>
+                <MudTh Style="text-align:right">Misc/day</MudTh>
+                <MudTh>Effective From</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Grade">
+                    <MudText Typo="Typo.body2"><strong>@context.Grade?.Name</strong></MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Level @(context.Grade?.Level)</MudText>
+                </MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.DestinationType == OutOfStationDestType.International ? Color.Warning : Color.Primary)">
+                        @context.DestinationType
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Accommodation" Style="text-align:right">GH₵@context.AccommodationRate.ToString("N2")</MudTd>
+                <MudTd DataLabel="Feeding" Style="text-align:right">GH₵@context.FeedingRate.ToString("N2")</MudTd>
+                <MudTd DataLabel="Road" Style="text-align:right">GH₵@context.TransportRoadRate.ToString("N2")</MudTd>
+                <MudTd DataLabel="Air" Style="text-align:right">GH₵@context.TransportAirRate.ToString("N2")</MudTd>
+                <MudTd DataLabel="Misc" Style="text-align:right">GH₵@context.MiscellaneousRate.ToString("N2")</MudTd>
+                <MudTd DataLabel="Effective">@context.EffectiveFrom.ToString("dd MMM yyyy")</MudTd>
+                <MudTd DataLabel="Actions">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                   OnClick="@(() => OpenEditDialog(context))" Title="Edit Rate" />
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">
+                    No rates configured. Click <strong>Seed Default Rates</strong> to create initial rates.
+                </MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudCardContent>
+</MudCard>
+
+<!-- Edit Rate Dialog -->
+<MudDialog @bind-IsVisible="_editDialogOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true }">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Edit" Class="mr-2" />
+            Edit Rate — @(_editingRate?.Grade?.Name) (@_editingRate?.DestinationType)
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_editingRate != null)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-4">
+                All amounts in Ghana Cedis (GH₵). Transport rates are per trip (x2 for round trip).
+            </MudAlert>
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="decimal" @bind-Value="_editAccommodation"
+                                     Label="Accommodation Rate (per night)" Min="0" Format="N2"
+                                     Adornment="Adornment.Start" AdornmentText="GH₵" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="decimal" @bind-Value="_editFeeding"
+                                     Label="Feeding Rate (per day)" Min="0" Format="N2"
+                                     Adornment="Adornment.Start" AdornmentText="GH₵" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="decimal" @bind-Value="_editRoadTransport"
+                                     Label="Road Transport (per trip)" Min="0" Format="N2"
+                                     Adornment="Adornment.Start" AdornmentText="GH₵" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="decimal" @bind-Value="_editAirTransport"
+                                     Label="Air Transport (per trip)" Min="0" Format="N2"
+                                     Adornment="Adornment.Start" AdornmentText="GH₵" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="decimal" @bind-Value="_editMisc"
+                                     Label="Miscellaneous (per day)" Min="0" Format="N2"
+                                     Adornment="Adornment.Start" AdornmentText="GH₵" />
+                </MudItem>
+                <MudItem xs="12" md="6" Class="d-flex align-end">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Total daily cost estimate:<br />
+                        GH₵@((_editAccommodation + _editFeeding + _editMisc).ToString("N2"))/day<br />
+                        + transport round trip: GH₵@((_editRoadTransport * 2).ToString("N2")) (road) / GH₵@((_editAirTransport * 2).ToString("N2")) (air)
+                    </MudText>
+                </MudItem>
+            </MudGrid>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _editDialogOpen = false)">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveRate" Disabled="_saving">
+            @(_saving ? "Saving..." : "Save Rate")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<OutOfStationRate> _rates = new();
+    private bool _loading = true;
+    private bool _seeding;
+    private string _filter = "All";
+
+    // Edit dialog
+    private bool _editDialogOpen;
+    private bool _saving;
+    private OutOfStationRate? _editingRate;
+    private decimal _editAccommodation;
+    private decimal _editFeeding;
+    private decimal _editRoadTransport;
+    private decimal _editAirTransport;
+    private decimal _editMisc;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new("Home", "/"),
+        new("Out-of-Station Rate Setup", null, true)
+    };
+
+    private IEnumerable<OutOfStationRate> FilteredRates => _filter switch
+    {
+        "Domestic" => _rates.Where(r => r.DestinationType == OutOfStationDestType.Domestic),
+        "International" => _rates.Where(r => r.DestinationType == OutOfStationDestType.International),
+        _ => _rates
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRates();
+    }
+
+    private async Task LoadRates()
+    {
+        _loading = true;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<OutOfStationService>();
+        _rates = await svc.GetRatesAsync();
+        _loading = false;
+    }
+
+    private async Task SeedDefaultRates()
+    {
+        _seeding = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<OutOfStationService>();
+            await svc.SeedDefaultRatesAsync();
+            Snackbar.Add("Default rates seeded successfully.", Severity.Success);
+            await LoadRates();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally { _seeding = false; }
+    }
+
+    private void OpenEditDialog(OutOfStationRate rate)
+    {
+        _editingRate = rate;
+        _editAccommodation = rate.AccommodationRate;
+        _editFeeding = rate.FeedingRate;
+        _editRoadTransport = rate.TransportRoadRate;
+        _editAirTransport = rate.TransportAirRate;
+        _editMisc = rate.MiscellaneousRate;
+        _editDialogOpen = true;
+    }
+
+    private async Task SaveRate()
+    {
+        if (_editingRate == null) return;
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<OutOfStationService>();
+            await svc.CreateOrUpdateRateAsync(
+                _editingRate.GradeId,
+                _editingRate.DestinationType,
+                _editAccommodation, _editFeeding,
+                _editRoadTransport, _editAirTransport,
+                _editMisc);
+            Snackbar.Add("Rate updated successfully.", Severity.Success);
+            _editDialogOpen = false;
+            await LoadRates();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally { _saving = false; }
+    }
+}

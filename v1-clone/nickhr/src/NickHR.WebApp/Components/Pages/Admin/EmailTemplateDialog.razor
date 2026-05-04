@@ -1,0 +1,134 @@
+@rendermode InteractiveServer
+@using Ganss.Xss
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IHtmlSanitizer Sanitizer
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid>
+                <MudItem xs="12" sm="8">
+                    <MudTextField @bind-Value="_name" Label="Template Name" Required="true"
+                                  RequiredError="Name is required" Dense="true" Class="mb-3" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField Value="@Template.Code" Label="Code (read-only)" ReadOnly="true"
+                                  Dense="true" Class="mb-3" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_subject" Label="Subject" Required="true"
+                                  RequiredError="Subject is required" Dense="true" Class="mb-3" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-1">
+                        Body (HTML supported. Use merge fields like {{EmployeeName}}, {{CompanyName}}, etc.)
+                    </MudText>
+                    <MudTextField @bind-Value="_body" Label="Email Body" Required="true"
+                                  RequiredError="Body is required"
+                                  Lines="12" Variant="Variant.Outlined"
+                                  Class="mb-3"
+                                  Style="font-family: monospace; font-size: 0.85rem;" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudCheckBox T="bool" @bind-Value="_isActive" Label="Active" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+
+        <!-- Preview Section -->
+        @if (!string.IsNullOrWhiteSpace(_body))
+        {
+            <MudExpansionPanels Class="mt-3">
+                <MudExpansionPanel Text="Preview (renders HTML)">
+                    <MudPaper Elevation="0" Class="pa-3" Style="border: 1px solid var(--mud-palette-lines-default); border-radius: 4px;">
+                        <MudText Typo="Typo.subtitle2" Class="mb-1">Subject: @_subject</MudText>
+                        <MudDivider Class="mb-2" />
+                        @* TRUST BOUNDARY (Wave 2J): _body is the in-progress draft of
+                           the privileged HR author. We sanitize on Save (see Save() below) so
+                           any pasted XSS payload from clipboard / WYSIWYG noise gets stripped
+                           before persistence. The preview here is rendered as raw markup so the
+                           author sees their structure faithfully — this dialog is page-level
+                           gated to HRManager / SuperAdmin so the live render trust boundary is
+                           bounded by who can open the editor at all. *@
+                        @((MarkupString)_body)
+                    </MudPaper>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-2">@_errorMessage</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_isSaving">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="@_isSaving">
+            @if (_isSaving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+            Save Template
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public EmailTemplate Template { get; set; } = null!;
+
+    private MudForm? _form;
+    private bool _isValid;
+    private bool _isSaving;
+    private string _errorMessage = string.Empty;
+
+    private string _name = string.Empty;
+    private string _subject = string.Empty;
+    private string _body = string.Empty;
+    private bool _isActive;
+
+    protected override void OnInitialized()
+    {
+        _name = Template.Name;
+        _subject = Template.Subject;
+        _body = Template.Body;
+        _isActive = Template.IsActive;
+    }
+
+    private async Task Save()
+    {
+        if (_form != null) await _form.Validate();
+        if (!_isValid) return;
+        _isSaving = true;
+        _errorMessage = string.Empty;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.EmailTemplates.FindAsync(Template.Id);
+            if (entity == null) { _errorMessage = "Template not found."; return; }
+            // XSS HARDENING (Wave 2J): sanitize the body on save so any pasted
+            // <script>, javascript: URL, or on*-handler payload is stripped before
+            // it reaches the database. Preserves safe formatting (headings, <strong>,
+            // <em>, lists, etc.) the privileged HR author intentionally added.
+            entity.Name = _name;
+            entity.Subject = _subject;
+            entity.Body = Sanitizer.Sanitize(_body ?? string.Empty);
+            entity.IsActive = _isActive;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Email template saved.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

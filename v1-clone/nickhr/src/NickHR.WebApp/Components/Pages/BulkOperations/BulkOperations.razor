@@ -1,0 +1,460 @@
+@page "/admin/bulk-operations"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using System.Linq
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Bulk Operations</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.DynamicFeed" Class="mr-2" />Bulk Operations
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true">
+    <!-- Tab 1: Bulk Salary Update -->
+    <MudTabPanel Text="Bulk Salary Update" Icon="@Icons.Material.Filled.AttachMoney">
+        <MudCard Class="pa-4">
+            <MudCardContent>
+                <MudAlert Severity="Severity.Info" Class="mb-4">
+                    Upload a CSV file with columns: EmployeeCode, NewBasicSalary
+                </MudAlert>
+                <MudFileUpload T="IBrowserFile" Accept=".csv" MaximumFileCount="1" FilesChanged="HandleSalaryFile">
+                    <ActivatorContent>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.CloudUpload">
+                            Upload Salary CSV
+                        </MudButton>
+                    </ActivatorContent>
+                </MudFileUpload>
+                @if (_salaryPreview.Any())
+                {
+                    <MudTable Items="_salaryPreview" Dense="true" Class="mt-4">
+                        <HeaderContent>
+                            <MudTh>Employee Code</MudTh><MudTh>Name</MudTh><MudTh>Current Salary</MudTh><MudTh>New Salary</MudTh><MudTh>Change</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Code</MudTd>
+                            <MudTd>@context.Name</MudTd>
+                            <MudTd>GHS @context.Current.ToString("N2")</MudTd>
+                            <MudTd>GHS @context.New.ToString("N2")</MudTd>
+                            <MudTd><MudText Color="@(context.New > context.Current ? Color.Success : Color.Error)">@((context.New - context.Current).ToString("N2"))</MudText></MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" Class="mt-4" OnClick="ApplySalaryUpdates">
+                        Apply @_salaryPreview.Count Salary Updates
+                    </MudButton>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudTabPanel>
+
+    <!-- Tab 2: Bulk Department Transfer -->
+    <MudTabPanel Text="Bulk Department Transfer" Icon="@Icons.Material.Filled.SwapHoriz">
+        <MudCard Class="pa-4">
+            <MudCardContent>
+                <MudSelect T="int?" @bind-Value="_targetDeptId" Label="Target Department" Class="mb-4">
+                    @foreach (var d in _departments)
+                    {
+                        <MudSelectItem T="int?" Value="@d.Id">@d.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTable Items="_employees" Dense="true" Hover="true" MultiSelection="true" @bind-SelectedItems="_selectedEmployees">
+                    <HeaderContent>
+                        <MudTh>Code</MudTh><MudTh>Name</MudTh><MudTh>Current Department</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.EmployeeCode</MudTd>
+                        <MudTd>@context.FirstName @context.LastName</MudTd>
+                        <MudTd>@(context.Department?.Name ?? "N/A")</MudTd>
+                    </RowTemplate>
+                </MudTable>
+                <MudButton Variant="Variant.Filled" Color="Color.Warning" Class="mt-4"
+                           OnClick="ApplyDeptTransfer" Disabled="@(!_selectedEmployees.Any() || !_targetDeptId.HasValue)">
+                    Transfer @_selectedEmployees.Count Employees
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudTabPanel>
+
+    <!-- Tab 3: Bulk Status Change -->
+    <MudTabPanel Text="Bulk Status Change" Icon="@Icons.Material.Filled.ToggleOn">
+        <MudCard Class="pa-4">
+            <MudCardContent>
+                <MudSelect T="EmploymentStatus" @bind-Value="_targetStatus" Label="New Status" Class="mb-4">
+                    @foreach (var s in Enum.GetValues<EmploymentStatus>())
+                    {
+                        <MudSelectItem T="EmploymentStatus" Value="@s">@s</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTable Items="_employees" Dense="true" Hover="true" MultiSelection="true" @bind-SelectedItems="_statusEmployees">
+                    <HeaderContent>
+                        <MudTh>Code</MudTh><MudTh>Name</MudTh><MudTh>Current Status</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.EmployeeCode</MudTd>
+                        <MudTd>@context.FirstName @context.LastName</MudTd>
+                        <MudTd><MudChip T="string" Size="Size.Small">@context.EmploymentStatus</MudChip></MudTd>
+                    </RowTemplate>
+                </MudTable>
+                <MudButton Variant="Variant.Filled" Color="Color.Warning" Class="mt-4"
+                           OnClick="ApplyStatusChange" Disabled="@(!_statusEmployees.Any())">
+                    Update @_statusEmployees.Count Employees
+                </MudButton>
+            </MudCardContent>
+        </MudCard>
+    </MudTabPanel>
+
+    <!-- Tab 4: Bulk Grade Assignment -->
+    <MudTabPanel Text="Bulk Grade Assignment" Icon="@Icons.Material.Filled.WorkspacePremium">
+        <MudCard Class="pa-4">
+            <MudCardContent>
+                <!-- Target grade selector -->
+                <MudGrid Class="mb-4">
+                    <MudItem xs="12" md="4">
+                        <MudSelect T="int?" @bind-Value="_targetGradeId" @bind-Value:after="OnTargetGradeChanged"
+                                   Label="Target Grade" Variant="Variant.Outlined">
+                            @foreach (var g in _grades)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)g.Id)">@g.Name (GH₵@g.MinSalary.ToString("N0") – @g.MaxSalary.ToString("N0"))</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <!-- Filters -->
+                    <MudItem xs="12" md="3">
+                        <MudSelect T="int?" @bind-Value="_gradeFilterDeptId" @bind-Value:after="ApplyGradeFilters"
+                                   Label="Filter by Department" Variant="Variant.Outlined" Clearable="true">
+                            @foreach (var d in _departments)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)d.Id)">@d.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudSelect T="int?" @bind-Value="_gradeFilterCurrentGradeId" @bind-Value:after="ApplyGradeFilters"
+                                   Label="Filter by Current Grade" Variant="Variant.Outlined" Clearable="true">
+                            @foreach (var g in _grades)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)g.Id)">@g.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="2">
+                        <MudNumericField @bind-Value="_gradeFilterMinSalary" Label="Min Salary" Variant="Variant.Outlined"
+                                         Format="N0" Min="0" />
+                    </MudItem>
+                    <MudItem xs="12" md="2">
+                        <MudNumericField @bind-Value="_gradeFilterMaxSalary" Label="Max Salary" Variant="Variant.Outlined"
+                                         Format="N0" Min="0" />
+                    </MudItem>
+                    <MudItem xs="12" md="2" Class="d-flex align-end">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="ApplyGradeFilters" FullWidth="true">
+                            Apply Filters
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+
+                <!-- Action buttons -->
+                <div class="d-flex gap-3 mb-4 flex-wrap">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                               StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                               OnClick="PreviewAutoAssign">
+                        Auto-Assign by Salary
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Preview"
+                               OnClick="PreviewAssignSelected"
+                               Disabled="@(!_gradeSelectedEmployees.Any() || !_targetGradeId.HasValue)">
+                        Preview Assignment (@_gradeSelectedEmployees.Count selected)
+                    </MudButton>
+                </div>
+
+                <!-- Employee table -->
+                @if (_gradeFilteredEmployees.Any())
+                {
+                    <MudTable Items="_gradeFilteredEmployees" Dense="true" Hover="true"
+                              MultiSelection="true" @bind-SelectedItems="_gradeSelectedEmployees">
+                        <HeaderContent>
+                            <MudTh>Code</MudTh>
+                            <MudTh>Name</MudTh>
+                            <MudTh>Department</MudTh>
+                            <MudTh>Current Grade</MudTh>
+                            <MudTh>Basic Salary (GH₵)</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.EmployeeCode</MudTd>
+                            <MudTd>@context.FirstName @context.LastName</MudTd>
+                            <MudTd>@(context.Department?.Name ?? "N/A")</MudTd>
+                            <MudTd>@(context.Grade?.Name ?? "None")</MudTd>
+                            <MudTd>@context.BasicSalary.ToString("N2")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+                else if (_targetGradeId.HasValue)
+                {
+                    <MudAlert Severity="Severity.Info">All active employees are already on this grade, or no employees match the current filters.</MudAlert>
+                }
+
+                <!-- Preview section -->
+                @if (_gradePreviewRows.Any())
+                {
+                    <MudDivider Class="my-4" />
+                    <MudText Typo="Typo.h6" Class="mb-2">
+                        <MudIcon Icon="@Icons.Material.Filled.Preview" Class="mr-1" />
+                        Preview — @_gradePreviewRows.Count employee(s) will be affected
+                    </MudText>
+                    <MudTable Items="_gradePreviewRows" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Employee</MudTh>
+                            <MudTh>Current Grade</MudTh>
+                            <MudTh>New Grade</MudTh>
+                            <MudTh>Salary (GH₵)</MudTh>
+                            <MudTh>Note</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Name</MudTd>
+                            <MudTd>@context.CurrentGrade</MudTd>
+                            <MudTd><MudChip T="string" Color="Color.Primary" Size="Size.Small">@context.NewGrade</MudChip></MudTd>
+                            <MudTd>@context.Salary.ToString("N2")</MudTd>
+                            <MudTd><MudText Typo="Typo.caption" Color="Color.Secondary">@context.Note</MudText></MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <div class="d-flex gap-3 mt-4">
+                        <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.Check"
+                                   OnClick="ApplyGradeAssignment">
+                            Apply @_gradePreviewRows.Count Grade Assignments
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined" OnClick="ClearGradePreview">Cancel</MudButton>
+                    </div>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private List<Employee> _employees = new();
+    private List<Department> _departments = new();
+    private List<Grade> _grades = new();
+    private HashSet<Employee> _selectedEmployees = new();
+    private HashSet<Employee> _statusEmployees = new();
+    private int? _targetDeptId;
+    private EmploymentStatus _targetStatus = EmploymentStatus.Active;
+    private List<SalaryUpdateRow> _salaryPreview = new();
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Admin", null), new("Bulk Operations", null, true) };
+
+    // --- Tab 4: Bulk Grade Assignment ---
+    private int? _targetGradeId;
+    private int? _gradeFilterDeptId;
+    private int? _gradeFilterCurrentGradeId;
+    private decimal _gradeFilterMinSalary = 0;
+    private decimal _gradeFilterMaxSalary = 0;
+    private List<Employee> _gradeFilteredEmployees = new();
+    private HashSet<Employee> _gradeSelectedEmployees = new();
+    private List<GradePreviewRow> _gradePreviewRows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _employees = await db.Employees
+            .Where(e => e.EmploymentStatus == EmploymentStatus.Active)
+            .Include(e => e.Department)
+            .Include(e => e.Grade)
+            .OrderBy(e => e.FirstName)
+            .ToListAsync();
+        _departments = await db.Departments.Where(d => !d.IsDeleted).OrderBy(d => d.Name).ToListAsync();
+        _grades = await db.Grades.Where(g => g.IsActive).OrderBy(g => g.Level).ToListAsync();
+    }
+
+    private async Task HandleSalaryFile(IBrowserFile file)
+    {
+        using var reader = new StreamReader(file.OpenReadStream());
+        var content = await reader.ReadToEndAsync();
+        var lines = content.Split('\n').Skip(1).Where(l => !string.IsNullOrWhiteSpace(l));
+        _salaryPreview.Clear();
+        foreach (var line in lines)
+        {
+            var parts = line.Trim().Split(',');
+            if (parts.Length >= 2 && decimal.TryParse(parts[1].Trim(), out var newSalary))
+            {
+                var code = parts[0].Trim();
+                var emp = _employees.FirstOrDefault(e => e.EmployeeCode == code);
+                if (emp != null)
+                    _salaryPreview.Add(new SalaryUpdateRow { Code = code, Name = $"{emp.FirstName} {emp.LastName}", Current = emp.BasicSalary, New = newSalary, EmployeeId = emp.Id });
+            }
+        }
+        StateHasChanged();
+    }
+
+    private async Task ApplySalaryUpdates()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        foreach (var row in _salaryPreview)
+        {
+            var emp = await db.Employees.FindAsync(row.EmployeeId);
+            if (emp != null) emp.BasicSalary = row.New;
+        }
+        await db.SaveChangesAsync();
+        Snackbar.Add($"Updated {_salaryPreview.Count} salaries", Severity.Success);
+        _salaryPreview.Clear();
+    }
+
+    private async Task ApplyDeptTransfer()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        foreach (var emp in _selectedEmployees)
+        {
+            var e = await db.Employees.FindAsync(emp.Id);
+            if (e != null) e.DepartmentId = _targetDeptId;
+        }
+        await db.SaveChangesAsync();
+        Snackbar.Add($"Transferred {_selectedEmployees.Count} employees", Severity.Success);
+        _selectedEmployees.Clear();
+    }
+
+    private async Task ApplyStatusChange()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        foreach (var emp in _statusEmployees)
+        {
+            var e = await db.Employees.FindAsync(emp.Id);
+            if (e != null) e.EmploymentStatus = _targetStatus;
+        }
+        await db.SaveChangesAsync();
+        Snackbar.Add($"Updated status for {_statusEmployees.Count} employees", Severity.Success);
+        _statusEmployees.Clear();
+    }
+
+    // --- Tab 4 methods ---
+
+    private void OnTargetGradeChanged()
+    {
+        _gradePreviewRows.Clear();
+        _gradeSelectedEmployees.Clear();
+        ApplyGradeFilters();
+    }
+
+    private void ApplyGradeFilters()
+    {
+        _gradePreviewRows.Clear();
+        _gradeSelectedEmployees.Clear();
+
+        var filtered = _employees.AsEnumerable();
+
+        // Exclude employees already on the target grade
+        if (_targetGradeId.HasValue)
+            filtered = filtered.Where(e => e.GradeId != _targetGradeId.Value);
+
+        if (_gradeFilterDeptId.HasValue)
+            filtered = filtered.Where(e => e.DepartmentId == _gradeFilterDeptId.Value);
+
+        if (_gradeFilterCurrentGradeId.HasValue)
+            filtered = filtered.Where(e => e.GradeId == _gradeFilterCurrentGradeId.Value);
+
+        if (_gradeFilterMinSalary > 0)
+            filtered = filtered.Where(e => e.BasicSalary >= _gradeFilterMinSalary);
+
+        if (_gradeFilterMaxSalary > 0)
+            filtered = filtered.Where(e => e.BasicSalary <= _gradeFilterMaxSalary);
+
+        _gradeFilteredEmployees = filtered.OrderBy(e => e.FirstName).ToList();
+    }
+
+    private void PreviewAssignSelected()
+    {
+        if (!_targetGradeId.HasValue) return;
+        var targetGrade = _grades.FirstOrDefault(g => g.Id == _targetGradeId.Value);
+        if (targetGrade == null) return;
+
+        _gradePreviewRows = _gradeSelectedEmployees.Select(e => new GradePreviewRow
+        {
+            EmployeeId = e.Id,
+            Name = $"{e.FirstName} {e.LastName}",
+            CurrentGrade = e.Grade?.Name ?? "None",
+            NewGrade = targetGrade.Name,
+            NewGradeId = targetGrade.Id,
+            Salary = e.BasicSalary,
+            Note = string.Empty
+        }).ToList();
+    }
+
+    private void PreviewAutoAssign()
+    {
+        _gradePreviewRows.Clear();
+        var source = _gradeSelectedEmployees.Any() ? _gradeSelectedEmployees : (IEnumerable<Employee>)_gradeFilteredEmployees;
+
+        foreach (var emp in source)
+        {
+            var best = _grades.FirstOrDefault(g => emp.BasicSalary >= g.MinSalary && emp.BasicSalary <= g.MaxSalary);
+            if (best == null)
+                best = _grades.OrderBy(g => Math.Abs(emp.BasicSalary - g.MidSalary)).FirstOrDefault();
+
+            if (best == null || best.Id == emp.GradeId) continue;
+
+            _gradePreviewRows.Add(new GradePreviewRow
+            {
+                EmployeeId = emp.Id,
+                Name = $"{emp.FirstName} {emp.LastName}",
+                CurrentGrade = emp.Grade?.Name ?? "None",
+                NewGrade = best.Name,
+                NewGradeId = best.Id,
+                Salary = emp.BasicSalary,
+                Note = $"Salary falls in {best.Name} band (GH₵{best.MinSalary:N0}–{best.MaxSalary:N0})"
+            });
+        }
+
+        if (!_gradePreviewRows.Any())
+            Snackbar.Add("No grade changes needed — all selected employees are already on the best-matching grade.", Severity.Info);
+    }
+
+    private async Task ApplyGradeAssignment()
+    {
+        if (!_gradePreviewRows.Any()) return;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        foreach (var row in _gradePreviewRows)
+        {
+            var emp = await db.Employees.FindAsync(row.EmployeeId);
+            if (emp != null) emp.GradeId = row.NewGradeId;
+        }
+
+        await db.SaveChangesAsync();
+        Snackbar.Add($"Grade assigned to {_gradePreviewRows.Count} employee(s).", Severity.Success);
+
+        // Refresh in-memory list
+        using var scope2 = ServiceProvider.CreateScope();
+        var db2 = scope2.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _employees = await db2.Employees
+            .Where(e => e.EmploymentStatus == EmploymentStatus.Active)
+            .Include(e => e.Department)
+            .Include(e => e.Grade)
+            .OrderBy(e => e.FirstName)
+            .ToListAsync();
+
+        _gradePreviewRows.Clear();
+        _gradeSelectedEmployees.Clear();
+        ApplyGradeFilters();
+    }
+
+    private void ClearGradePreview()
+    {
+        _gradePreviewRows.Clear();
+    }
+
+    class SalaryUpdateRow { public string Code = ""; public string Name = ""; public decimal Current, New; public int EmployeeId; }
+    class GradePreviewRow { public int EmployeeId; public string Name = ""; public string CurrentGrade = ""; public string NewGrade = ""; public int NewGradeId; public decimal Salary; public string Note = ""; }
+}

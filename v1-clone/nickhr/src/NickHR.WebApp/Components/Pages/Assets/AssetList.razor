@@ -1,0 +1,521 @@
+@page "/assets"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+<PageTitle>NICKSCAN ERP — NickHR — Asset Management</PageTitle>
+
+<div class="d-flex align-center justify-space-between mb-2">
+    <MudText Typo="Typo.h5">Asset Management</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddDialog">
+        Add Asset
+    </MudButton>
+</div>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="4">
+                <MudSelect T="string" @bind-Value="_filterCategory" Label="Category" Variant="Variant.Outlined"
+                           Dense="true" Clearable="true" @bind-Value:after="ApplyFilter">
+                    @foreach (var cat in Enum.GetValues<AssetCategory>())
+                    {
+                        <MudSelectItem Value="@cat.ToString()">@cat</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="string" @bind-Value="_filterStatus" Label="Status" Variant="Variant.Outlined"
+                           Dense="true" Clearable="true" @bind-Value:after="ApplyFilter">
+                    @foreach (var st in Enum.GetValues<AssetStatus>())
+                    {
+                        <MudSelectItem Value="@st.ToString()">@st</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else
+        {
+            <MudTable Items="_filtered" Dense="true" Striped="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Asset Tag</MudTh>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Category</MudTh>
+                    <MudTh>Serial #</MudTh>
+                    <MudTh>Assigned To</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Condition</MudTh>
+                    <MudTh>Purchase Date</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.AssetTag</MudText>
+                    </MudTd>
+                    <MudTd>@context.Name</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="@GetCategoryColor(context.Category)">
+                            @context.Category
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>@(context.SerialNumber ?? "—")</MudTd>
+                    <MudTd>
+                        @if (context.AssignedToEmployee != null)
+                        {
+                            <MudText Typo="Typo.body2">@context.AssignedToEmployee.FirstName @context.AssignedToEmployee.LastName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AssignedToEmployee.EmployeeCode</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">@context.Status</MudChip>
+                    </MudTd>
+                    <MudTd>@context.Condition</MudTd>
+                    <MudTd>@(context.PurchaseDate.HasValue ? context.PurchaseDate.Value.ToString("dd/MM/yyyy") : "—")</MudTd>
+                    <MudTd>
+                        @if (context.Status == AssetStatus.Available)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                       OnClick="() => OpenAssignDialog(context)" Class="mr-1">Assign</MudButton>
+                        }
+                        else if (context.Status == AssetStatus.Assigned)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                       OnClick="() => OpenReturnDialog(context)" Class="mr-1">Return</MudButton>
+                        }
+                        <MudIconButton Icon="@Icons.Material.Filled.History" Size="Size.Small"
+                                       OnClick="() => ToggleHistory(context.Id)" />
+                    </MudTd>
+                </RowTemplate>
+                <ChildRowContent>
+                    @if (_expandedAssetId == context.Id)
+                    {
+                        <MudTr>
+                            <MudTd colspan="9">
+                                <MudPaper Elevation="0" Class="pa-3 mx-4" Style="background-color: var(--mud-palette-background-grey);">
+                                    <MudText Typo="Typo.subtitle2" Class="mb-2">Assignment History</MudText>
+                                    @if (!context.Assignments.Any())
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">No assignment history.</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudSimpleTable Dense="true">
+                                            <thead>
+                                                <tr>
+                                                    <th>Employee</th>
+                                                    <th>Assigned</th>
+                                                    <th>Returned</th>
+                                                    <th>Notes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var h in context.Assignments.OrderByDescending(a => a.AssignedDate))
+                                                {
+                                                    <tr>
+                                                        <td>@(h.Employee != null ? $"{h.Employee.FirstName} {h.Employee.LastName}" : "—")</td>
+                                                        <td>@h.AssignedDate.ToString("dd/MM/yyyy")</td>
+                                                        <td>@(h.ReturnedDate.HasValue ? h.ReturnedDate.Value.ToString("dd/MM/yyyy") : "Active")</td>
+                                                        <td>@(h.Notes ?? "—")</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </MudSimpleTable>
+                                    }
+                                </MudPaper>
+                            </MudTd>
+                        </MudTr>
+                    }
+                </ChildRowContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+<!-- Add Asset Dialog -->
+@if (_addDialogOpen)
+{
+    <MudDialog @bind-IsVisible="_addDialogOpen">
+        <TitleContent><MudText Typo="Typo.h6">Add Asset</MudText></TitleContent>
+        <DialogContent>
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_formTag" Label="Asset Tag *" Variant="Variant.Outlined" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_formName" Label="Name *" Variant="Variant.Outlined" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="AssetCategory" @bind-Value="_formCategory" Label="Category *" Variant="Variant.Outlined">
+                        @foreach (var c in Enum.GetValues<AssetCategory>())
+                        {
+                            <MudSelectItem Value="@c">@c</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_formSerial" Label="Serial Number" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_formDescription" Label="Description" Variant="Variant.Outlined" Lines="2" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_formPurchaseDate" Label="Purchase Date" Variant="Variant.Outlined" DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudNumericField T="decimal" @bind-Value="_formPrice" Label="Purchase Price (GHS)" Variant="Variant.Outlined" Min="0" Format="N2" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_formCondition" Label="Condition" Variant="Variant.Outlined"
+                                  Placeholder="e.g. New, Good, Fair" />
+                </MudItem>
+            </MudGrid>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _addDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsset"
+                       Disabled="_isSubmitting">Save</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Assign Dialog -->
+@if (_assignDialogOpen && _selectedAsset != null)
+{
+    <MudDialog @bind-IsVisible="_assignDialogOpen">
+        <TitleContent><MudText Typo="Typo.h6">Assign: @_selectedAsset.Name</MudText></TitleContent>
+        <DialogContent>
+            <MudSelect T="int?" @bind-Value="_assignEmployeeId" Label="Employee *" Variant="Variant.Outlined">
+                @foreach (var emp in _employees)
+                {
+                    <MudSelectItem Value="@((int?)emp.Id)">@emp.FirstName @emp.LastName (@emp.EmployeeCode)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField @bind-Value="_assignNotes" Label="Notes" Variant="Variant.Outlined" Class="mt-3" Lines="2" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _assignDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ConfirmAssign"
+                       Disabled="_assignEmployeeId == null || _isSubmitting">Assign</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<!-- Return Dialog -->
+@if (_returnDialogOpen && _selectedAsset != null)
+{
+    <MudDialog @bind-IsVisible="_returnDialogOpen">
+        <TitleContent><MudText Typo="Typo.h6">Return: @_selectedAsset.Name</MudText></TitleContent>
+        <DialogContent>
+            <MudTextField @bind-Value="_returnCondition" Label="Condition on Return" Variant="Variant.Outlined"
+                          Placeholder="e.g. Good, Fair, Damaged" />
+            <MudTextField @bind-Value="_returnNotes" Label="Return Notes" Variant="Variant.Outlined"
+                          Class="mt-3" Lines="2" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => _returnDialogOpen = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Warning" OnClick="ConfirmReturn"
+                       Disabled="_isSubmitting">Confirm Return</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<Asset> _all = new();
+    private List<Asset> _filtered = new();
+    private List<NickHR.Core.Entities.Core.Employee> _employees = new();
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private int? _currentEmployeeId;
+    private int? _expandedAssetId;
+    private string? _filterCategory;
+    private string? _filterStatus;
+
+    // Add form
+    private bool _addDialogOpen;
+    private string _formTag = string.Empty;
+    private string _formName = string.Empty;
+    private AssetCategory _formCategory = AssetCategory.Laptop;
+    private string? _formSerial;
+    private string? _formDescription;
+    private DateTime? _formPurchaseDate;
+    private decimal _formPrice;
+    private string _formCondition = "New";
+
+    // Assign form
+    private bool _assignDialogOpen;
+    private Asset? _selectedAsset;
+    private int? _assignEmployeeId;
+    private string _assignNotes = string.Empty;
+
+    // Return form
+    private bool _returnDialogOpen;
+    private string _returnCondition = "Good";
+    private string _returnNotes = string.Empty;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Assets", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentEmployeeId = await GetCurrentEmployeeIdAsync();
+        await LoadData();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _all = await db.Assets
+                .Include(a => a.AssignedToEmployee)
+                .Include(a => a.Assignments).ThenInclude(a => a.Employee)
+                .OrderBy(a => a.AssetTag)
+                .ToListAsync();
+
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName)
+                .ToListAsync();
+
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        _filtered = _all;
+        if (!string.IsNullOrEmpty(_filterCategory) && Enum.TryParse<AssetCategory>(_filterCategory, out var cat))
+            _filtered = _filtered.Where(a => a.Category == cat).ToList();
+        if (!string.IsNullOrEmpty(_filterStatus) && Enum.TryParse<AssetStatus>(_filterStatus, out var st))
+            _filtered = _filtered.Where(a => a.Status == st).ToList();
+    }
+
+    private void ToggleHistory(int id)
+    {
+        _expandedAssetId = _expandedAssetId == id ? null : id;
+    }
+
+    private void OpenAddDialog()
+    {
+        _formTag = string.Empty;
+        _formName = string.Empty;
+        _formCategory = AssetCategory.Laptop;
+        _formSerial = null;
+        _formDescription = null;
+        _formPurchaseDate = null;
+        _formPrice = 0;
+        _formCondition = "New";
+        _addDialogOpen = true;
+    }
+
+    private void OpenAssignDialog(Asset asset)
+    {
+        _selectedAsset = asset;
+        _assignEmployeeId = null;
+        _assignNotes = string.Empty;
+        _assignDialogOpen = true;
+    }
+
+    private void OpenReturnDialog(Asset asset)
+    {
+        _selectedAsset = asset;
+        _returnCondition = "Good";
+        _returnNotes = string.Empty;
+        _returnDialogOpen = true;
+    }
+
+    private async Task SaveAsset()
+    {
+        if (string.IsNullOrWhiteSpace(_formTag) || string.IsNullOrWhiteSpace(_formName))
+        {
+            Snackbar.Add("Asset Tag and Name are required.", Severity.Warning);
+            return;
+        }
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            db.Assets.Add(new Asset
+            {
+                AssetTag = _formTag,
+                Name = _formName,
+                Category = _formCategory,
+                SerialNumber = _formSerial,
+                Description = _formDescription,
+                PurchaseDate = _formPurchaseDate,
+                PurchasePrice = _formPrice,
+                Condition = _formCondition,
+                Status = AssetStatus.Available
+            });
+
+            await db.SaveChangesAsync();
+            _addDialogOpen = false;
+            Snackbar.Add("Asset added!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private async Task ConfirmAssign()
+    {
+        if (_selectedAsset == null || _assignEmployeeId == null) return;
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var asset = await db.Assets.FindAsync(_selectedAsset.Id);
+            if (asset == null) return;
+
+            asset.Status = AssetStatus.Assigned;
+            asset.AssignedToEmployeeId = _assignEmployeeId.Value;
+            asset.AssignedDate = DateTime.UtcNow;
+
+            db.AssetAssignments.Add(new AssetAssignment
+            {
+                AssetId = asset.Id,
+                EmployeeId = _assignEmployeeId.Value,
+                AssignedDate = DateTime.UtcNow,
+                AssignedById = _currentEmployeeId ?? _assignEmployeeId.Value,
+                Notes = _assignNotes
+            });
+
+            await db.SaveChangesAsync();
+            _assignDialogOpen = false;
+            Snackbar.Add("Asset assigned!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private async Task ConfirmReturn()
+    {
+        if (_selectedAsset == null) return;
+        _isSubmitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var asset = await db.Assets.FindAsync(_selectedAsset.Id);
+            if (asset == null) return;
+
+            asset.Status = AssetStatus.Available;
+            asset.Condition = _returnCondition;
+            asset.ReturnDate = DateTime.UtcNow;
+
+            // Close open assignment
+            var openAssignment = await db.AssetAssignments
+                .Where(a => a.AssetId == asset.Id && a.ReturnedDate == null)
+                .OrderByDescending(a => a.AssignedDate)
+                .FirstOrDefaultAsync();
+
+            if (openAssignment != null)
+            {
+                openAssignment.ReturnedDate = DateTime.UtcNow;
+                openAssignment.Condition = _returnCondition;
+                openAssignment.Notes = string.IsNullOrEmpty(_returnNotes) ? openAssignment.Notes : _returnNotes;
+            }
+
+            asset.AssignedToEmployeeId = null;
+
+            await db.SaveChangesAsync();
+            _returnDialogOpen = false;
+            Snackbar.Add("Asset returned!", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private Color GetCategoryColor(AssetCategory c) => c switch
+    {
+        AssetCategory.Laptop => Color.Primary,
+        AssetCategory.Phone => Color.Info,
+        AssetCategory.Vehicle => Color.Warning,
+        AssetCategory.IDCard => Color.Secondary,
+        _ => Color.Default
+    };
+
+    private Color GetStatusColor(AssetStatus s) => s switch
+    {
+        AssetStatus.Available => Color.Success,
+        AssetStatus.Assigned => Color.Info,
+        AssetStatus.InRepair => Color.Warning,
+        AssetStatus.Retired => Color.Error,
+        _ => Color.Default
+    };
+}

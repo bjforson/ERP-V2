@@ -1,0 +1,271 @@
+@page "/directory"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+
+@inject IDbContextFactory<NickHRDbContext> DbFactory
+@inject IDialogService DialogService
+
+<PageTitle>NICKSCAN ERP — NickHR — Company Directory</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.ContactPhone" Class="mr-2" />Company Directory
+</MudText>
+
+<!-- Search and Filters -->
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <MudGrid AlignItems="Center">
+        <MudItem xs="12" sm="5">
+            <MudTextField @bind-Value="_searchTerm"
+                          Placeholder="Search by name, department, designation..."
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true"
+                          OnKeyUp="OnSearchChanged"
+                          Variant="Variant.Outlined"
+                          Clearable="true"
+                          OnClearButtonClick="ClearSearch" />
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudSelect T="int?" Label="Department"
+                       Value="_selectedDepartmentId"
+                       ValueChanged="@((int? v) => { _selectedDepartmentId = v; ApplyFilters(); })"
+                       Variant="Variant.Outlined" Clearable="true">
+                @foreach (var dept in _departments)
+                {
+                    <MudSelectItem T="int?" Value="@((int?)dept.Id)">@dept.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudSelect T="int?" Label="Location"
+                       Value="_selectedLocationId"
+                       ValueChanged="@((int? v) => { _selectedLocationId = v; ApplyFilters(); })"
+                       Variant="Variant.Outlined" Clearable="true">
+                @foreach (var loc in _locations)
+                {
+                    <MudSelectItem T="int?" Value="@((int?)loc.Id)">@loc.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="1" Class="d-flex justify-end">
+            <MudText Typo="Typo.body2" Color="Color.Secondary">@_filteredEmployees.Count employees</MudText>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (!_filteredEmployees.Any())
+{
+    <MudAlert Severity="Severity.Info">No employees found matching your search.</MudAlert>
+}
+else
+{
+    <MudGrid>
+        @foreach (var employee in _pagedEmployees)
+        {
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudCard Elevation="2" Class="h-100" Style="cursor:pointer;"
+                         @onclick="() => ShowEmployeeDetailsAsync(employee)">
+                    <MudCardContent Class="d-flex flex-column align-center pa-4">
+                        <MudAvatar Color="Color.Primary" Style="width:64px;height:64px;font-size:1.6rem;">
+                            @(employee.FirstName.Length > 0 ? employee.FirstName[0] : '?')
+                        </MudAvatar>
+                        <MudText Typo="Typo.subtitle1" Class="mt-2 text-center">
+                            @employee.FirstName @employee.LastName
+                        </MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="text-center">
+                            @(employee.Designation?.Title ?? "—")
+                        </MudText>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="mt-1">
+                            @(employee.Department?.Name ?? "—")
+                        </MudChip>
+                    </MudCardContent>
+                    <MudDivider />
+                    <MudCardContent Class="pa-3">
+                        @if (!string.IsNullOrEmpty(employee.Location?.Name))
+                        {
+                            <MudText Typo="Typo.caption" Class="d-flex align-center mb-1">
+                                <MudIcon Icon="@Icons.Material.Filled.LocationOn" Size="Size.Small" Class="mr-1" />
+                                @employee.Location.Name
+                            </MudText>
+                        }
+                        @if (!string.IsNullOrEmpty(employee.WorkEmail))
+                        {
+                            <MudText Typo="Typo.caption" Class="d-flex align-center mb-1"
+                                     Style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                <MudIcon Icon="@Icons.Material.Filled.Email" Size="Size.Small" Class="mr-1" />
+                                @employee.WorkEmail
+                            </MudText>
+                        }
+                        @if (!string.IsNullOrEmpty(employee.PrimaryPhone))
+                        {
+                            <MudText Typo="Typo.caption" Class="d-flex align-center">
+                                <MudIcon Icon="@Icons.Material.Filled.Phone" Size="Size.Small" Class="mr-1" />
+                                @employee.PrimaryPhone
+                            </MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+
+    <!-- Pagination -->
+    @if (_totalPages > 1)
+    {
+        <MudPaper Elevation="0" Class="d-flex justify-center mt-4 pa-2">
+            <MudPagination Count="_totalPages" @bind-Selected="_currentPage"
+                           Color="Color.Primary" ShowFirstButton="true" ShowLastButton="true" />
+        </MudPaper>
+    }
+}
+
+<!-- Employee Details Dialog -->
+@if (_selectedEmployee != null)
+{
+    <MudDialog @bind-IsVisible="_showDetailsDialog">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Employee Details</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudGrid>
+                <MudItem xs="12" Class="d-flex flex-column align-center mb-3">
+                    <MudAvatar Color="Color.Primary" Style="width:80px;height:80px;font-size:2rem;">
+                        @(_selectedEmployee.FirstName.Length > 0 ? _selectedEmployee.FirstName[0] : '?')
+                    </MudAvatar>
+                    <MudText Typo="Typo.h6" Class="mt-2">@_selectedEmployee.FirstName @_selectedEmployee.LastName</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">@(_selectedEmployee.Designation?.Title ?? "—")</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Employee Code" Value="@_selectedEmployee.EmployeeCode" ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Department" Value="@(_selectedEmployee.Department?.Name ?? "—")" ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Location" Value="@(_selectedEmployee.Location?.Name ?? "—")" ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Grade" Value="@(_selectedEmployee.Grade?.Name ?? "—")" ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Work Email" Value="@(_selectedEmployee.WorkEmail ?? "—")" ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Phone" Value="@(_selectedEmployee.PrimaryPhone ?? "—")" ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Employment Type" Value="@_selectedEmployee.EmploymentType.ToString()" ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField Label="Reporting To"
+                                  Value="@(_selectedEmployee.ReportingManager != null ? $"{_selectedEmployee.ReportingManager.FirstName} {_selectedEmployee.ReportingManager.LastName}" : "—")"
+                                  ReadOnly="true" Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </DialogContent>
+        <DialogActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => _showDetailsDialog = false">Close</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private const int PageSize = 20;
+
+    private bool _loading = true;
+    private List<Employee> _allEmployees = new();
+    private List<Employee> _filteredEmployees = new();
+    private List<Department> _departments = new();
+    private List<Location> _locations = new();
+    private string _searchTerm = string.Empty;
+    private int? _selectedDepartmentId;
+    private int? _selectedLocationId;
+    private int _currentPage = 1;
+    private int _totalPages = 1;
+    private Employee? _selectedEmployee;
+    private bool _showDetailsDialog = false;
+
+    private List<Employee> _pagedEmployees =>
+        _filteredEmployees
+            .Skip((_currentPage - 1) * PageSize)
+            .Take(PageSize)
+            .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+
+        _allEmployees = await ctx.Employees
+            .Include(e => e.Department)
+            .Include(e => e.Designation)
+            .Include(e => e.Grade)
+            .Include(e => e.Location)
+            .Include(e => e.ReportingManager)
+            .Where(e => e.EmploymentStatus == EmploymentStatus.Active ||
+                        e.EmploymentStatus == EmploymentStatus.Confirmed ||
+                        e.EmploymentStatus == EmploymentStatus.OnProbation)
+            .OrderBy(e => e.LastName)
+            .ThenBy(e => e.FirstName)
+            .ToListAsync();
+
+        _departments = await ctx.Departments.OrderBy(d => d.Name).ToListAsync();
+        _locations = await ctx.Locations.OrderBy(l => l.Name).ToListAsync();
+
+        ApplyFilters();
+        _loading = false;
+    }
+
+    private void ApplyFilters()
+    {
+        _filteredEmployees = _allEmployees
+            .Where(e =>
+            {
+                var matchesSearch = string.IsNullOrWhiteSpace(_searchTerm) ||
+                    $"{e.FirstName} {e.LastName}".Contains(_searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    (e.Department?.Name?.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (e.Designation?.Title?.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (e.WorkEmail?.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase) ?? false);
+
+                var matchesDept = !_selectedDepartmentId.HasValue || e.DepartmentId == _selectedDepartmentId;
+                var matchesLoc = !_selectedLocationId.HasValue || e.LocationId == _selectedLocationId;
+
+                return matchesSearch && matchesDept && matchesLoc;
+            })
+            .ToList();
+
+        _totalPages = (int)Math.Ceiling(_filteredEmployees.Count / (double)PageSize);
+        if (_totalPages == 0) _totalPages = 1;
+        _currentPage = 1;
+    }
+
+    private void OnSearchChanged() => ApplyFilters();
+
+    private void ClearSearch()
+    {
+        _searchTerm = string.Empty;
+        ApplyFilters();
+    }
+
+    private Task ShowEmployeeDetailsAsync(Employee employee)
+    {
+        _selectedEmployee = employee;
+        _showDetailsDialog = true;
+        return Task.CompletedTask;
+    }
+}

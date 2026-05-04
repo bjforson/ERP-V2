@@ -1,0 +1,292 @@
+@page "/reports/leave"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Leave
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Leave Report</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Leave Report</MudText>
+
+<!-- Filters -->
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int" Label="Year" @bind-Value="_selectedYear" Dense="true">
+                    @for (int y = DateTime.Now.Year; y >= DateTime.Now.Year - 5; y--)
+                    {
+                        var year = y;
+                        <MudSelectItem T="int" Value="@year">@year</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" md="3">
+                <MudSelect T="int?" Label="Department" @bind-Value="_filterDeptId" Clearable="true" Dense="true">
+                    @foreach (var d in _departments)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)d.Id)">@d.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4" md="3">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadReport" StartIcon="@Icons.Material.Filled.Search">Generate</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" OnClick="ExportCsv" StartIcon="@Icons.Material.Filled.Download" Class="ml-2">Export CSV</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else
+{
+    <!-- Summary Cards -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Primary" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                        <MudIcon Icon="@Icons.Material.Filled.BeachAccess" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_totalDaysTaken.ToString("F0")</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Total Leave Days Taken</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Warning" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                        <MudIcon Icon="@Icons.Material.Filled.Star" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h5">@_mostCommonLeaveType</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Most Common Leave Type</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Success" Variant="Variant.Filled" Size="Size.Large" Class="mr-3">
+                        <MudIcon Icon="@Icons.Material.Filled.PersonOff" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_noLeaveCount</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Employees with No Leave</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Chart: Leave by Type -->
+    <MudCard Elevation="2" Class="mb-4">
+        <MudCardHeader>
+            <CardHeaderContent><MudText Typo="Typo.h6">Leave Days by Type</MudText></CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent>
+            @if (_leaveTypeChartSeries.Any() && _leaveTypeChartSeries[0].Data.Length > 0)
+            {
+                <MudChart ChartType="ChartType.Bar" ChartSeries="@_leaveTypeChartSeries" XAxisLabels="@_leaveTypeLabels"
+                          Width="100%" Height="280px" ChartOptions="@(new ChartOptions { YAxisTicks = 1 })" />
+            }
+            else
+            {
+                <MudText Color="Color.Secondary" Class="pa-4">No leave data for @_selectedYear.</MudText>
+            }
+        </MudCardContent>
+    </MudCard>
+
+    <!-- Employee Table -->
+    <MudCard Elevation="2">
+        <MudCardHeader>
+            <CardHeaderContent><MudText Typo="Typo.h6">Employee Leave Summary</MudText></CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@_empRows" Dense="true" Hover="true" Striped="true" T="EmpLeaveRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmpLeaveRow, object>(x => x.Name)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmpLeaveRow, object>(x => x.Department)">Department</MudTableSortLabel></MudTh>
+                    <MudTh>Annual (Taken / Entitled)</MudTh>
+                    <MudTh>Sick</MudTh>
+                    <MudTh>Maternity</MudTh>
+                    <MudTh>Other</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<EmpLeaveRow, object>(x => x.TotalDays)">Total Days</MudTableSortLabel></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">
+                        <MudText Style="@(context.HighUsage ? "color: var(--mud-palette-warning-dark); font-weight:600;" : "")">
+                            @context.Name
+                            @if (context.HighUsage) { <MudIcon Icon="@Icons.Material.Filled.Warning" Size="Size.Small" Color="Color.Warning" Class="ml-1" /> }
+                        </MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Department">@context.Department</MudTd>
+                    <MudTd DataLabel="Annual">
+                        <MudText Style="@(context.HighUsage ? "color: var(--mud-palette-warning-dark);" : "")">
+                            @context.AnnualTaken / @context.AnnualEntitled
+                        </MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Sick">@context.SickDays</MudTd>
+                    <MudTd DataLabel="Maternity">@context.MaternityDays</MudTd>
+                    <MudTd DataLabel="Other">@context.OtherDays</MudTd>
+                    <MudTd DataLabel="Total Days"><strong>@context.TotalDays</strong></MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No leave data found for the selected filters.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isLoading = true;
+    private int _selectedYear = DateTime.Now.Year;
+    private int? _filterDeptId;
+    private List<(int Id, string Name)> _departments = new();
+    private List<EmpLeaveRow> _empRows = new();
+    private decimal _totalDaysTaken;
+    private string _mostCommonLeaveType = "—";
+    private int _noLeaveCount;
+    private List<ChartSeries> _leaveTypeChartSeries = new();
+    private string[] _leaveTypeLabels = Array.Empty<string>();
+
+    protected override async Task OnInitializedAsync() => await LoadReport();
+
+    private async Task LoadReport()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _departments = (await db.Departments.Where(d => d.IsActive).OrderBy(d => d.Name)
+                .Select(d => new { d.Id, d.Name }).ToListAsync()).Select(d => (d.Id, d.Name)).ToList();
+
+            var activeStatuses = new[] { EmploymentStatus.Active, EmploymentStatus.Confirmed, EmploymentStatus.OnProbation };
+            var empQuery = db.Employees.Where(e => activeStatuses.Contains(e.EmploymentStatus));
+            if (_filterDeptId.HasValue)
+                empQuery = empQuery.Where(e => e.DepartmentId == _filterDeptId.Value);
+            var employees = await empQuery.Include(e => e.Department).ToListAsync();
+            var empIds = employees.Select(e => e.Id).ToHashSet();
+
+            // Approved leave requests for the year
+            var requests = await db.LeaveRequests
+                .Include(r => r.LeavePolicy)
+                .Where(r => empIds.Contains(r.EmployeeId)
+                    && r.Status == LeaveRequestStatus.Approved
+                    && r.StartDate.Year == _selectedYear)
+                .ToListAsync();
+
+            // Leave balances for annual
+            var balances = await db.LeaveBalances
+                .Include(b => b.LeavePolicy)
+                .Where(b => empIds.Contains(b.EmployeeId) && b.Year == _selectedYear)
+                .ToListAsync();
+
+            _totalDaysTaken = requests.Sum(r => r.NumberOfDays);
+
+            // Most common leave type
+            var typeCounts = requests.GroupBy(r => r.LeavePolicy?.LeaveType.ToString() ?? "Unknown")
+                .Select(g => (Type: g.Key, Count: g.Count()))
+                .OrderByDescending(x => x.Count).ToList();
+            _mostCommonLeaveType = typeCounts.FirstOrDefault().Type ?? "—";
+
+            // Chart: days by leave type
+            var typeGroups = requests.GroupBy(r => r.LeavePolicy?.LeaveType.ToString() ?? "Other")
+                .Select(g => (Type: g.Key, Days: (double)g.Sum(r => r.NumberOfDays)))
+                .OrderByDescending(x => x.Days).ToList();
+            _leaveTypeLabels = typeGroups.Select(t => t.Type).ToArray();
+            _leaveTypeChartSeries = new List<ChartSeries>
+            {
+                new ChartSeries { Name = "Days Taken", Data = typeGroups.Select(t => t.Days).ToArray() }
+            };
+
+            // Per-employee rows
+            var requestsByEmp = requests.GroupBy(r => r.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+            var balanceByEmp = balances.GroupBy(b => b.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+
+            _empRows = employees.Select(e =>
+            {
+                var empRequests = requestsByEmp.TryGetValue(e.Id, out var req) ? req : new();
+                var empBalances = balanceByEmp.TryGetValue(e.Id, out var bal) ? bal : new();
+
+                var annualBal = empBalances.FirstOrDefault(b => b.LeavePolicy?.LeaveType == LeaveType.Annual);
+                var annualTaken = (double)(annualBal?.Taken ?? empRequests
+                    .Where(r => r.LeavePolicy?.LeaveType == LeaveType.Annual).Sum(r => r.NumberOfDays));
+                var annualEntitled = (double)(annualBal?.Entitled ?? 0);
+                var sickDays = (double)empRequests.Where(r => r.LeavePolicy?.LeaveType == LeaveType.Sick).Sum(r => r.NumberOfDays);
+                var maternityDays = (double)empRequests.Where(r => r.LeavePolicy?.LeaveType == LeaveType.Maternity).Sum(r => r.NumberOfDays);
+                var otherDays = (double)empRequests.Where(r => r.LeavePolicy?.LeaveType != LeaveType.Annual
+                    && r.LeavePolicy?.LeaveType != LeaveType.Sick
+                    && r.LeavePolicy?.LeaveType != LeaveType.Maternity).Sum(r => r.NumberOfDays);
+                var total = annualTaken + sickDays + maternityDays + otherDays;
+                var highUsage = annualEntitled > 0 && annualTaken / annualEntitled > 0.8;
+
+                return new EmpLeaveRow
+                {
+                    Name = $"{e.FirstName} {e.LastName}",
+                    Department = e.Department?.Name ?? "—",
+                    AnnualTaken = annualTaken,
+                    AnnualEntitled = annualEntitled,
+                    SickDays = sickDays,
+                    MaternityDays = maternityDays,
+                    OtherDays = otherDays,
+                    TotalDays = total,
+                    HighUsage = highUsage
+                };
+            }).OrderByDescending(r => r.TotalDays).ToList();
+
+            _noLeaveCount = _empRows.Count(r => r.TotalDays == 0);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading leave report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ExportCsv()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Employee,Department,Annual Taken,Annual Entitled,Sick,Maternity,Other,Total");
+        foreach (var r in _empRows)
+            sb.AppendLine($"{r.Name},{r.Department},{r.AnnualTaken:F1},{r.AnnualEntitled:F1},{r.SickDays:F1},{r.MaternityDays:F1},{r.OtherDays:F1},{r.TotalDays:F1}");
+        Snackbar.Add("CSV export prepared. Wire up IJSRuntime for browser file download.", Severity.Info);
+    }
+
+    private class EmpLeaveRow
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Department { get; set; } = string.Empty;
+        public double AnnualTaken { get; set; }
+        public double AnnualEntitled { get; set; }
+        public double SickDays { get; set; }
+        public double MaternityDays { get; set; }
+        public double OtherDays { get; set; }
+        public double TotalDays { get; set; }
+        public bool HighUsage { get; set; }
+    }
+}

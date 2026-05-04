@@ -1,0 +1,247 @@
+@page "/exit/separations"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.HRStaff)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Exit
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Separations</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Separations</MudText>
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">
+                Separations
+                @if (!_isLoading)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@_separations.Count</MudChip>
+                }
+            </MudText>
+        </CardHeaderContent>
+        <CardHeaderActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.ExitToApp" Size="Size.Small"
+                       OnClick="OpenCreateDialog">
+                Initiate Separation
+            </MudButton>
+        </CardHeaderActions>
+    </MudCardHeader>
+    <MudCardContent Class="pa-0">
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-8">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudTable Items="@_separations" Dense="true" Hover="true" Striped="true" T="SeparationRow">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SeparationRow, object>(x => x.EmployeeName)">Employee</MudTableSortLabel></MudTh>
+                    <MudTh>Type</MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SeparationRow, object>(x => x.NoticeDate)">Notice Date</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<SeparationRow, object>(x => x.LastWorkingDate)">Last Working Date</MudTableSortLabel></MudTh>
+                    <MudTh>Notice Period</MudTh>
+                    <MudTh>Approved</MudTh>
+                    <MudTh Style="min-width:150px;">Clearance</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Employee">
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">@context.EmployeeName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Type">
+                        <MudChip T="string" Size="Size.Small" Color="@GetTypeColor(context.SeparationType)" Variant="Variant.Filled">
+                            @context.SeparationType
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Notice Date">@context.NoticeDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Last Working Date">@context.LastWorkingDate.ToString("dd MMM yyyy")</MudTd>
+                    <MudTd DataLabel="Notice Period">@context.NoticePeriodDays days</MudTd>
+                    <MudTd DataLabel="Approved">
+                        @if (context.IsApproved)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                        }
+                        else
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.HourglassEmpty" Color="Color.Warning" Size="Size.Small" />
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Clearance">
+                        <div class="d-flex align-center gap-2">
+                            <MudProgressLinear Value="@context.ClearancePercent"
+                                              Color="@(context.ClearancePercent >= 100 ? Color.Success : Color.Warning)"
+                                              Rounded="true" Size="Size.Medium" Class="flex-grow-1" />
+                            <MudText Typo="Typo.caption" Style="min-width:36px;">@((int)context.ClearancePercent)%</MudText>
+                        </div>
+                    </MudTd>
+                    <MudTd>
+                        @if (!context.IsApproved)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
+                                       OnClick="@(() => ApproveSeparation(context.Id))">
+                                Approve
+                            </MudButton>
+                        }
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                   Class="ml-1" OnClick="@(() => Navigation.NavigateTo("/exit/clearance"))">
+                            Clearance
+                        </MudButton>
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       Class="ml-1" OnClick="@(() => DeleteSeparation(context.Id))" />
+                    </MudTd>
+                </RowTemplate>
+                <ChildRowContent>
+                    <MudTr>
+                        <MudTd colspan="8" Class="pa-0">
+                            <MudCollapse Expanded="true">
+                                <MudCard Elevation="0" Class="mud-background-gray px-4 py-2">
+                                    <MudGrid Spacing="1">
+                                        @if (!string.IsNullOrWhiteSpace(context.Reason))
+                                        {
+                                            <MudItem xs="12">
+                                                <MudText Typo="Typo.body2"><strong>Reason:</strong> @context.Reason</MudText>
+                                            </MudItem>
+                                        }
+                                        <MudItem xs="4">
+                                            <MudText Typo="Typo.caption">Clearance: @context.ClearedCount / @context.TotalClearance items</MudText>
+                                        </MudItem>
+                                        <MudItem xs="4">
+                                            <MudText Typo="Typo.caption">Settlement: @(context.HasSettlement ? "Processed" : "Pending")</MudText>
+                                        </MudItem>
+                                    </MudGrid>
+                                </MudCard>
+                            </MudCollapse>
+                        </MudTd>
+                    </MudTr>
+                </ChildRowContent>
+                <NoRecordsContent>
+                    <MudText Class="pa-4 mud-text-secondary">No separations found.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private bool _isLoading = true;
+    private List<SeparationRow> _separations = new();
+
+    protected override async Task OnInitializedAsync() => await LoadSeparations();
+
+    private async Task LoadSeparations()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _separations = await db.Separations
+                .Include(s => s.Employee)
+                .Include(s => s.ClearanceItems)
+                .Include(s => s.FinalSettlement)
+                .Include(s => s.ApprovedBy)
+                .OrderByDescending(s => s.NoticeDate)
+                .Select(s => new SeparationRow
+                {
+                    Id = s.Id,
+                    EmployeeName = s.Employee.FirstName + " " + s.Employee.LastName,
+                    SeparationType = s.SeparationType,
+                    NoticeDate = s.NoticeDate,
+                    LastWorkingDate = s.LastWorkingDate,
+                    NoticePeriodDays = s.NoticePeriodDays,
+                    IsApproved = s.ApprovedAt.HasValue,
+                    Reason = s.Reason,
+                    TotalClearance = s.ClearanceItems.Count(),
+                    ClearedCount = s.ClearanceItems.Count(c => c.IsCleared),
+                    HasExitInterview = false,
+                    HasSettlement = s.FinalSettlement != null
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isLoading = false; }
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var dialog = await DialogService.ShowAsync<SeparationDialog>("Initiate Separation",
+            new DialogParameters(),
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (!(await dialog.Result)!.Canceled) await LoadSeparations();
+    }
+
+    private async Task ApproveSeparation(int id)
+    {
+        bool? confirmed = await DialogService.ShowMessageBox("Approve Separation",
+            "Approve this separation request?", yesText: "Approve", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Separations.FindAsync(id);
+            if (entity == null) return;
+            entity.ApprovedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Separation approved.", Severity.Success);
+            await LoadSeparations();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private async Task DeleteSeparation(int id)
+    {
+        bool? confirmed = await DialogService.ShowMessageBox("Delete Separation",
+            "Delete this separation record?", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Separations.FindAsync(id);
+            if (entity == null) return;
+            entity.IsDeleted = true;
+            await db.SaveChangesAsync();
+            Snackbar.Add("Separation deleted.", Severity.Success);
+            await LoadSeparations();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private Color GetTypeColor(SeparationType t) => t switch
+    {
+        SeparationType.Resignation => Color.Info,
+        SeparationType.Termination => Color.Error,
+        SeparationType.Retirement => Color.Success,
+        SeparationType.Redundancy => Color.Warning,
+        _ => Color.Default
+    };
+
+    private class SeparationRow
+    {
+        public int Id { get; set; }
+        public string EmployeeName { get; set; } = "";
+        public SeparationType SeparationType { get; set; }
+        public DateTime NoticeDate { get; set; }
+        public DateTime LastWorkingDate { get; set; }
+        public int NoticePeriodDays { get; set; }
+        public bool IsApproved { get; set; }
+        public string? Reason { get; set; }
+        public int TotalClearance { get; set; }
+        public int ClearedCount { get; set; }
+        public bool HasExitInterview { get; set; }
+        public bool HasSettlement { get; set; }
+        public double ClearancePercent => TotalClearance > 0 ? (double)ClearedCount / TotalClearance * 100 : 0;
+    }
+}

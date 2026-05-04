@@ -1,0 +1,222 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Recruitment
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.Edit : Icons.Material.Filled.Add)" Class="mr-2" />
+            @(IsEdit ? "Edit Offer Letter" : "Create Offer Letter")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudSelect T="int" @bind-Value="_model.ApplicationId"
+                               Label="Candidate (at Offer Stage) *"
+                               Variant="Variant.Outlined"
+                               Required="true"
+                               RequiredError="Please select an application"
+                               Disabled="@IsEdit">
+                        @foreach (var a in _applications)
+                        {
+                            <MudSelectItem T="int" Value="@a.Id">@a.CandidateName — @a.RequisitionTitle</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudNumericField @bind-Value="_model.OfferedSalary"
+                                     Label="Offered Salary (GH₵) *"
+                                     Variant="Variant.Outlined"
+                                     Format="N2"
+                                     Min="0"
+                                     Required="true"
+                                     RequiredError="Salary is required" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_model.StartDate"
+                                   Label="Start Date *"
+                                   Variant="Variant.Outlined"
+                                   Required="true"
+                                   RequiredError="Start date is required" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_model.ExpiryDate"
+                                   Label="Expiry Date *"
+                                   Variant="Variant.Outlined"
+                                   Required="true"
+                                   RequiredError="Expiry date is required" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Notes"
+                                  Label="Notes"
+                                  Variant="Variant.Outlined"
+                                  Lines="3"
+                                  MaxLength="1000" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Create Offer")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public int? OfferId { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private bool IsEdit => OfferId.HasValue;
+
+    private OfferFormModel _model = new();
+    private List<AppOption> _applications = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadApplications();
+        if (IsEdit) await LoadOffer();
+    }
+
+    private async Task LoadApplications()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _applications = await db.Applications
+                .Include(a => a.Candidate)
+                .Include(a => a.JobRequisition)
+                .Where(a => a.Stage == ApplicationStage.Offer || a.Stage == ApplicationStage.Interview)
+                .OrderBy(a => a.Candidate.LastName)
+                .Select(a => new AppOption
+                {
+                    Id = a.Id,
+                    CandidateName = a.Candidate.FirstName + " " + a.Candidate.LastName,
+                    RequisitionTitle = a.JobRequisition.Title
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading applications: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task LoadOffer()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.OfferLetters.FindAsync(OfferId!.Value);
+            if (entity == null) return;
+            _model = new OfferFormModel
+            {
+                ApplicationId = entity.ApplicationId,
+                OfferedSalary = entity.OfferedSalary,
+                StartDate = entity.StartDate,
+                ExpiryDate = entity.ExpiryDate,
+                Notes = entity.Notes
+            };
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading offer: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+        if (!_model.StartDate.HasValue || !_model.ExpiryDate.HasValue)
+        {
+            Snackbar.Add("Please fill in all required dates.", Severity.Warning);
+            return;
+        }
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (IsEdit)
+            {
+                var entity = await db.OfferLetters.FindAsync(OfferId!.Value);
+                if (entity == null) { Snackbar.Add("Offer not found.", Severity.Error); return; }
+                entity.OfferedSalary = _model.OfferedSalary;
+                entity.StartDate = _model.StartDate.Value;
+                entity.ExpiryDate = _model.ExpiryDate.Value;
+                entity.Notes = _model.Notes;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Offer updated.", Severity.Success);
+            }
+            else
+            {
+                var offer = new OfferLetter
+                {
+                    ApplicationId = _model.ApplicationId,
+                    OfferedSalary = _model.OfferedSalary,
+                    StartDate = _model.StartDate.Value,
+                    ExpiryDate = _model.ExpiryDate.Value,
+                    Notes = _model.Notes,
+                    Status = "Draft"
+                };
+                db.OfferLetters.Add(offer);
+
+                // Advance application to Offer stage
+                var app = await db.Applications.FindAsync(_model.ApplicationId);
+                if (app != null && app.Stage != ApplicationStage.Offer)
+                    app.Stage = ApplicationStage.Offer;
+
+                await db.SaveChangesAsync();
+                Snackbar.Add("Offer letter created.", Severity.Success);
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving offer: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class OfferFormModel
+    {
+        public int ApplicationId { get; set; }
+        public decimal OfferedSalary { get; set; }
+        public DateTime? StartDate { get; set; }
+        public DateTime? ExpiryDate { get; set; }
+        public string? Notes { get; set; }
+    }
+
+    private class AppOption
+    {
+        public int Id { get; set; }
+        public string CandidateName { get; set; } = string.Empty;
+        public string RequisitionTitle { get; set; } = string.Empty;
+    }
+}

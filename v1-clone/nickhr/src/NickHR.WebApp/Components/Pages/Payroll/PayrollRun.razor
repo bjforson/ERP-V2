@@ -1,0 +1,582 @@
+@page "/payroll/run"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHROrPayroll)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Services.Payroll
+@using NickHR.Services.Payroll.Models
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject NickHR.Services.Payroll.IPayrollProcessingService PayrollService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JSRuntime
+
+<PageTitle>NICKSCAN ERP — NickHR — Run Payroll</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Class="mr-2" />Run Payroll
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <!-- Step 1: Select Period -->
+    <MudItem xs="12">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        <MudIcon Icon="@Icons.Material.Filled.DateRange" Class="mr-1" />Step 1: Select Pay Period
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudGrid AlignItems="Center">
+                    <MudItem xs="12" sm="4" md="3">
+                        <MudSelect T="int" @bind-Value="_selectedMonth" Label="Month" Variant="Variant.Outlined" Dense="true">
+                            @for (int m = 1; m <= 12; m++)
+                            {
+                                var month = m;
+                                <MudSelectItem Value="@month">@(new DateTime(2000, month, 1).ToString("MMMM"))</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="3" md="2">
+                        <MudNumericField T="int" @bind-Value="_selectedYear" Label="Year" Variant="Variant.Outlined"
+                                         Min="2020" Max="2099" Dense="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="5" md="4">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Preview"
+                                   OnClick="LoadPayrollPeriodAsync"
+                                   Disabled="_loading">
+                            Load Period
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    @if (_loading)
+    {
+        <MudItem xs="12">
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        </MudItem>
+    }
+
+    @if (_existingRun != null && !_previewMode)
+    {
+        <!-- Existing payroll run found -->
+        <MudItem xs="12">
+            <MudAlert Severity="@(_existingRun.Status == PayrollStatus.Locked ? Severity.Success : Severity.Warning)"
+                      Icon="@Icons.Material.Filled.Info">
+                Payroll for @(new DateTime(_existingRun.PayPeriodYear, _existingRun.PayPeriodMonth, 1).ToString("MMMM yyyy"))
+                already exists with status: <strong>@_existingRun.Status</strong>
+                (Run on @_existingRun.RunDate.ToLocalTime().ToString("dd MMM yyyy HH:mm") by @_existingRun.ProcessedBy)
+            </MudAlert>
+        </MudItem>
+
+        <!-- Summary cards for existing run -->
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Employees</MudText>
+                <MudText Typo="Typo.h5" Color="Color.Primary">@_existingRun.PayrollItems.Count</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total Gross</MudText>
+                <MudText Typo="Typo.h6">GH₵ @_existingRun.TotalGrossPay.ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total SSNIT (Ee+Er)</MudText>
+                <MudText Typo="Typo.h6">GH₵ @((_existingRun.TotalSSNITEmployee + _existingRun.TotalSSNITEmployer).ToString("N2"))</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total PAYE</MudText>
+                <MudText Typo="Typo.h6">GH₵ @_existingRun.TotalPAYE.ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1" Style="background-color: #1565C0;">
+                <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.8)">Total Net Pay</MudText>
+                <MudText Typo="Typo.h6" Style="color:white">GH₵ @_existingRun.TotalNetPay.ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudPaper Elevation="2" Class="pa-2">
+                <MudTable Items="_existingRun.PayrollItems" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                          FixedHeader="true" Height="400px">
+                    <HeaderContent>
+                        <MudTh>Employee</MudTh>
+                        <MudTh>Code</MudTh>
+                        <MudTh>Department</MudTh>
+                        <MudTh>Basic</MudTh>
+                        <MudTh>Allowances</MudTh>
+                        <MudTh>Gross</MudTh>
+                        <MudTh>SSNIT (5.5%)</MudTh>
+                        <MudTh>PAYE</MudTh>
+                        <MudTh>Other Ded.</MudTh>
+                        <MudTh>Net Pay</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Employee">@context.Employee.FirstName @context.Employee.LastName</MudTd>
+                        <MudTd DataLabel="Code">@context.Employee.EmployeeCode</MudTd>
+                        <MudTd DataLabel="Department">@(context.Employee.Department?.Name ?? "-")</MudTd>
+                        <MudTd DataLabel="Basic">GH₵ @context.BasicSalary.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Allowances">GH₵ @context.TotalAllowances.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Gross">GH₵ @context.GrossPay.ToString("N2")</MudTd>
+                        <MudTd DataLabel="SSNIT">GH₵ @context.SSNITEmployee.ToString("N2")</MudTd>
+                        <MudTd DataLabel="PAYE">GH₵ @context.PAYE.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Other Ded.">GH₵ @((context.TotalDeductions - context.SSNITEmployee - context.PAYE).ToString("N2"))</MudTd>
+                        <MudTd DataLabel="Net Pay">
+                            <MudText Color="@(context.NetPay < 0 ? Color.Error : Color.Success)" Typo="Typo.body2" Style="font-weight:600">
+                                GH₵ @context.NetPay.ToString("N2")
+                            </MudText>
+                        </MudTd>
+                        <MudTd>
+                            @if (context.NetPay < 0 || (context.Employee.BankAccountNumber == null && context.Employee.MobileMoneyNumber == null))
+                            {
+                                <MudTooltip Text="@GetItemWarning(context)">
+                                    <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <FooterContent>
+                        <MudTd colspan="3"><strong>TOTALS</strong></MudTd>
+                        <MudTd><strong>GH₵ @_existingRun.PayrollItems.Sum(i => i.BasicSalary).ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_existingRun.PayrollItems.Sum(i => i.TotalAllowances).ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_existingRun.TotalGrossPay.ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_existingRun.TotalSSNITEmployee.ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_existingRun.TotalPAYE.ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @(_existingRun.TotalDeductions - _existingRun.TotalSSNITEmployee - _existingRun.TotalPAYE).ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_existingRun.TotalNetPay.ToString("N2")</strong></MudTd>
+                        <MudTd></MudTd>
+                    </FooterContent>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" Class="d-flex gap-2 flex-wrap">
+            @if (_existingRun.Status != PayrollStatus.Locked && _existingRun.Status != PayrollStatus.Reversed)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="ConfirmReprocessAsync"
+                           Disabled="_processing">
+                    Reprocess Payroll
+                </MudButton>
+            }
+            @if (_existingRun.Status == PayrollStatus.Completed)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Success"
+                           StartIcon="@Icons.Material.Filled.Lock"
+                           OnClick="ConfirmLockAsync"
+                           Disabled="_processing">
+                    Lock Payroll
+                </MudButton>
+            }
+        </MudItem>
+    }
+
+    @if (_previewMode && _completedRun != null)
+    {
+        <!-- Step 2/3: After running payroll -->
+        <MudItem xs="12">
+            <MudAlert Severity="Severity.Success" Icon="@Icons.Material.Filled.CheckCircle">
+                Payroll processed successfully for @_completedRun.PayrollItems.Count employees.
+            </MudAlert>
+        </MudItem>
+
+        <!-- Summary cards -->
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Employees</MudText>
+                <MudText Typo="Typo.h5" Color="Color.Primary">@_completedRun.PayrollItems.Count</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total Gross</MudText>
+                <MudText Typo="Typo.h6">GH₵ @_completedRun.TotalGrossPay.ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total SSNIT (Ee+Er)</MudText>
+                <MudText Typo="Typo.h6">GH₵ @((_completedRun.TotalSSNITEmployee + _completedRun.TotalSSNITEmployer).ToString("N2"))</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Total PAYE</MudText>
+                <MudText Typo="Typo.h6">GH₵ @_completedRun.TotalPAYE.ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="pa-3 text-center" Elevation="1" Style="background-color: #1565C0;">
+                <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.8)">Total Net Pay</MudText>
+                <MudText Typo="Typo.h6" Style="color:white">GH₵ @_completedRun.TotalNetPay.ToString("N2")</MudText>
+            </MudPaper>
+        </MudItem>
+
+        @if (_warningCount > 0)
+        {
+            <MudItem xs="12">
+                <MudAlert Severity="Severity.Warning">
+                    @_warningCount employee(s) have warnings (negative net pay or missing bank details). Review before locking.
+                </MudAlert>
+            </MudItem>
+        }
+
+        <MudItem xs="12">
+            <MudPaper Elevation="2" Class="pa-2">
+                <MudTable Items="_completedRun.PayrollItems" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                          FixedHeader="true" Height="400px">
+                    <HeaderContent>
+                        <MudTh>Employee</MudTh>
+                        <MudTh>Code</MudTh>
+                        <MudTh>Department</MudTh>
+                        <MudTh>Basic</MudTh>
+                        <MudTh>Allowances</MudTh>
+                        <MudTh>Gross</MudTh>
+                        <MudTh>SSNIT (5.5%)</MudTh>
+                        <MudTh>PAYE</MudTh>
+                        <MudTh>Other Ded.</MudTh>
+                        <MudTh>Net Pay</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Employee">@context.Employee.FirstName @context.Employee.LastName</MudTd>
+                        <MudTd DataLabel="Code">@context.Employee.EmployeeCode</MudTd>
+                        <MudTd DataLabel="Department">@(context.Employee.Department?.Name ?? "-")</MudTd>
+                        <MudTd DataLabel="Basic">GH₵ @context.BasicSalary.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Allowances">GH₵ @context.TotalAllowances.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Gross">GH₵ @context.GrossPay.ToString("N2")</MudTd>
+                        <MudTd DataLabel="SSNIT">GH₵ @context.SSNITEmployee.ToString("N2")</MudTd>
+                        <MudTd DataLabel="PAYE">GH₵ @context.PAYE.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Other Ded.">GH₵ @((context.TotalDeductions - context.SSNITEmployee - context.PAYE).ToString("N2"))</MudTd>
+                        <MudTd DataLabel="Net Pay">
+                            <MudText Color="@(context.NetPay < 0 ? Color.Error : Color.Success)" Typo="Typo.body2" Style="font-weight:600">
+                                GH₵ @context.NetPay.ToString("N2")
+                            </MudText>
+                        </MudTd>
+                        <MudTd>
+                            @if (context.NetPay < 0 || (context.Employee.BankAccountNumber == null && context.Employee.MobileMoneyNumber == null))
+                            {
+                                <MudTooltip Text="@GetItemWarning(context)">
+                                    <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <FooterContent>
+                        <MudTd colspan="3"><strong>TOTALS</strong></MudTd>
+                        <MudTd><strong>GH₵ @_completedRun.PayrollItems.Sum(i => i.BasicSalary).ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_completedRun.PayrollItems.Sum(i => i.TotalAllowances).ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_completedRun.TotalGrossPay.ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_completedRun.TotalSSNITEmployee.ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_completedRun.TotalPAYE.ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @(_completedRun.TotalDeductions - _completedRun.TotalSSNITEmployee - _completedRun.TotalPAYE).ToString("N2")</strong></MudTd>
+                        <MudTd><strong>GH₵ @_completedRun.TotalNetPay.ToString("N2")</strong></MudTd>
+                        <MudTd></MudTd>
+                    </FooterContent>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+
+        @if (_completedRun.Status == PayrollStatus.Completed)
+        {
+            <MudItem xs="12" Class="d-flex gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Success"
+                           StartIcon="@Icons.Material.Filled.Lock"
+                           OnClick="ConfirmLockAsync"
+                           Disabled="_processing">
+                    Lock Payroll
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="ConfirmReprocessAsync"
+                           Disabled="_processing">
+                    Reprocess
+                </MudButton>
+            </MudItem>
+        }
+        @if (_completedRun.Status == PayrollStatus.Locked)
+        {
+            <MudItem xs="12">
+                <MudAlert Severity="Severity.Success" Icon="@Icons.Material.Filled.Lock">
+                    Payroll is locked. No further changes can be made.
+                    Approved by @_completedRun.ApprovedBy on @_completedRun.ApprovedAt?.ToLocalTime().ToString("dd MMM yyyy HH:mm").
+                </MudAlert>
+            </MudItem>
+            <!-- Payment File Generation -->
+            <MudItem xs="12">
+                <MudCard Elevation="2">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">
+                                <MudIcon Icon="@Icons.Material.Filled.Payment" Class="mr-1" />Generate Payment Files
+                            </MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+                            Generate disbursement files for each payment method. Only employees with the relevant payment details are included.
+                        </MudText>
+                        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                                       StartIcon="@Icons.Material.Filled.PhoneAndroid"
+                                       OnClick="@(() => GeneratePaymentFileAsync(_completedRun, "MTN"))">
+                                MTN MoMo File
+                            </MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Error"
+                                       StartIcon="@Icons.Material.Filled.PhoneAndroid"
+                                       OnClick="@(() => GeneratePaymentFileAsync(_completedRun, "Vodafone"))">
+                                Vodafone Cash File
+                            </MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Secondary"
+                                       StartIcon="@Icons.Material.Filled.PhoneAndroid"
+                                       OnClick="@(() => GeneratePaymentFileAsync(_completedRun, "AirtelTigo"))">
+                                AirtelTigo File
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.AccountBalance"
+                                       OnClick="@(() => GeneratePaymentFileAsync(_completedRun, "Bank"))">
+                                Bank Transfer File
+                            </MudButton>
+                        </MudStack>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        }
+    }
+
+    @if (!_loading && _existingRun == null && !_previewMode && _periodLoaded)
+    {
+        <!-- Step 2: No existing run - show Run Payroll button -->
+        <MudItem xs="12">
+            <MudAlert Severity="Severity.Info">
+                No payroll found for @(new DateTime(_selectedYear, _selectedMonth, 1).ToString("MMMM yyyy")). Click below to process payroll.
+            </MudAlert>
+        </MudItem>
+        <MudItem xs="12">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                       StartIcon="@Icons.Material.Filled.PlayArrow"
+                       OnClick="ConfirmRunPayrollAsync"
+                       Disabled="_processing">
+                @if (_processing)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    <span>Processing...</span>
+                }
+                else
+                {
+                    <span>Run Payroll for @(new DateTime(_selectedYear, _selectedMonth, 1).ToString("MMMM yyyy"))</span>
+                }
+            </MudButton>
+        </MudItem>
+    }
+</MudGrid>
+
+@code {
+    private int _selectedMonth = DateTime.Now.Month;
+    private int _selectedYear = DateTime.Now.Year;
+    private bool _loading = false;
+    private bool _processing = false;
+    private bool _previewMode = false;
+    private bool _periodLoaded = false;
+    private int _warningCount = 0;
+
+    private NickHR.Core.Entities.Payroll.PayrollRun? _existingRun;
+    private NickHR.Core.Entities.Payroll.PayrollRun? _completedRun;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Payroll", href: "/payroll/history"),
+        new BreadcrumbItem("Run Payroll", href: null, disabled: true)
+    };
+
+    private async Task LoadPayrollPeriodAsync()
+    {
+        _loading = true;
+        _existingRun = null;
+        _completedRun = null;
+        _previewMode = false;
+        _periodLoaded = false;
+        StateHasChanged();
+
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _existingRun = await db.PayrollRuns
+                .Include(p => p.PayrollItems)
+                    .ThenInclude(i => i.Employee)
+                        .ThenInclude(e => e.Department)
+                .FirstOrDefaultAsync(p => p.PayPeriodMonth == _selectedMonth &&
+                                          p.PayPeriodYear == _selectedYear &&
+                                          !p.IsDeleted);
+            _periodLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading period: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ConfirmRunPayrollAsync()
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Confirm Payroll Run",
+            $"Run payroll for {new DateTime(_selectedYear, _selectedMonth, 1):MMMM yyyy}? This will calculate pay for all active employees.",
+            yesText: "Run Payroll",
+            cancelText: "Cancel");
+
+        if (result == true)
+            await RunPayrollAsync();
+    }
+
+    private async Task ConfirmReprocessAsync()
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Confirm Reprocess",
+            "Reprocessing will delete the existing payroll run for this period and recalculate. Are you sure?",
+            yesText: "Reprocess",
+            cancelText: "Cancel");
+
+        if (result == true)
+            await RunPayrollAsync();
+    }
+
+    private async Task RunPayrollAsync()
+    {
+        _processing = true;
+        StateHasChanged();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var userName = authState.User.Identity?.Name ?? "System";
+
+            var run = await PayrollService.RunPayrollAsync(_selectedMonth, _selectedYear, userName);
+            _completedRun = await PayrollService.GetPayrollRunAsync(run.Id);
+            _existingRun = null;
+            _previewMode = true;
+            _warningCount = _completedRun?.PayrollItems
+                .Count(i => i.NetPay < 0 || (i.Employee.BankAccountNumber == null && i.Employee.MobileMoneyNumber == null)) ?? 0;
+            Snackbar.Add("Payroll processed successfully!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Payroll failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _processing = false;
+        }
+    }
+
+    private async Task ConfirmLockAsync()
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Lock Payroll",
+            "Locking payroll will finalize it, update loan balances, and prevent further changes. This cannot be undone. Proceed?",
+            yesText: "Lock Payroll",
+            cancelText: "Cancel");
+
+        if (result == true)
+            await LockPayrollAsync();
+    }
+
+    private async Task LockPayrollAsync()
+    {
+        _processing = true;
+        try
+        {
+            var runId = (_completedRun ?? _existingRun)?.Id ?? 0;
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var userName = authState.User.Identity?.Name ?? "System";
+
+            await PayrollService.LockPayrollAsync(runId, userName);
+
+            // Reload the run
+            _completedRun = await PayrollService.GetPayrollRunAsync(runId);
+            _existingRun = null;
+            _previewMode = true;
+            Snackbar.Add("Payroll locked successfully!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lock failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _processing = false;
+        }
+    }
+
+    private static string GetItemWarning(PayrollItem item)
+    {
+        var warnings = new System.Text.StringBuilder();
+        if (item.NetPay < 0) warnings.Append("Negative net pay. ");
+        if (item.Employee.BankAccountNumber == null && item.Employee.MobileMoneyNumber == null)
+            warnings.Append("No bank account or mobile money configured.");
+        return warnings.ToString().Trim();
+    }
+
+    private async Task GeneratePaymentFileAsync(NickHR.Core.Entities.Payroll.PayrollRun run, string method)
+    {
+        var items = run.PayrollItems;
+        var period = new DateTime(run.PayPeriodYear, run.PayPeriodMonth, 1);
+
+        string csv;
+        string fileName;
+
+        if (method == "Bank")
+        {
+            var bankItems = items.Where(i => i.NetPay > 0 && !string.IsNullOrWhiteSpace(i.Employee.BankAccountNumber)).ToList();
+            if (!bankItems.Any()) { Snackbar.Add("No employees with bank account details.", Severity.Warning); return; }
+            csv = "AccountNumber,BankName,Amount,Reference,FullName\n";
+            foreach (var item in bankItems)
+            {
+                csv += $"{item.Employee.BankAccountNumber},{item.Employee.BankName ?? "N/A"},{item.NetPay:F2},{item.Employee.EmployeeCode},{item.Employee.FirstName} {item.Employee.LastName}\n";
+            }
+            fileName = $"Bank_Transfer_{period:MMM_yyyy}.csv";
+        }
+        else
+        {
+            var momoItems = items.Where(i => i.NetPay > 0 && !string.IsNullOrWhiteSpace(i.Employee.MobileMoneyNumber)).ToList();
+            if (!momoItems.Any()) { Snackbar.Add($"No employees with {method} mobile money numbers.", Severity.Warning); return; }
+            csv = "PhoneNumber,Amount,Reference,FullName\n";
+            foreach (var item in momoItems)
+            {
+                csv += $"{item.Employee.MobileMoneyNumber},{item.NetPay:F2},{item.Employee.EmployeeCode},{item.Employee.FirstName} {item.Employee.LastName}\n";
+            }
+            fileName = $"{method}_MoMo_{period:MMM_yyyy}.csv";
+        }
+
+        await JSRuntime.InvokeVoidAsync("downloadFile", fileName, "text/csv", csv);
+        Snackbar.Add($"{method} payment file generated ({items.Count} employees).", Severity.Success);
+    }
+}

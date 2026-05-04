@@ -1,0 +1,537 @@
+@*
+    Phase 2 of the role-overhaul wave (2026-04-30) — "Module access — NickFinance" panel.
+
+    Renders the canonical identity.users state for an employee (or any
+    HR-managed identity) and lets HR provision the row, set the WhatsApp
+    phone, and pick the user's NickFinance GRADE (single-select, ops or
+    audit). Used by:
+      • EmployeeDetail.razor (the per-employee profile page)
+      • Admin/Users.razor (system / non-employee users)
+
+    Phase 2 (2026-04-30) — replaced the 15-role multi-checkbox table with
+    a single-grade picker over the new 10-grade catalogue (8 ops + 2
+    audit). One grade per user — picking a new grade revokes any prior
+    grant before granting the new one. The two dropdowns (ops + audit)
+    are mutually exclusive: picking from one disables the other.
+
+    Convention notes:
+      • Styling matches the local NickHR pattern (MudBlazor only).
+      • Site dropdown values are the Postgres uuids from the NSCIM
+        site-catalogue migration. Until the SiteCatalogue service ships
+        in NickHR, the list is the literal mapping below.
+      • This panel is the "manage existing access" fast-path; the new
+        NickFinanceAccessSection (embedded in UserDialog / EmployeeCreate
+        / EmployeeEdit) is the primary path for granting access at
+        create / edit time. Both write the same identity.user_roles rows.
+*@
+@using NickERP.Platform.Identity
+@using NickHR.WebApp.Services
+@using FinanceRoleNames = NickHR.WebApp.Identity.RoleNames
+@inject IIdentityProvisioningService Provisioning
+@inject ISnackbar Snackbar
+
+<MudExpansionPanels Elevation="1" Class="mt-4">
+    <MudExpansionPanel Text="Module access — NickFinance">
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else
+        {
+            <MudGrid>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">
+                        Identity row in NICKSCAN ERP shared identity store
+                    </MudText>
+                    @if (_user is null)
+                    {
+                        <div class="d-flex align-center gap-3">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                                Not provisioned
+                            </MudChip>
+                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.PersonAdd"
+                                       Disabled="@(_busy || string.IsNullOrWhiteSpace(Email))"
+                                       OnClick="ProvisionAsync">
+                                Provision now
+                            </MudButton>
+                            @if (string.IsNullOrWhiteSpace(Email))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Error">
+                                    A work email is required before we can provision identity access.
+                                </MudText>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="d-flex align-center gap-3 flex-wrap">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">
+                                Provisioned
+                            </MudChip>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                uuid: @_user.InternalUserId
+                            </MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                Last login: @(_user.LastSeenAt is null ? "Never logged in" : _user.LastSeenAt.Value.ToString("dd MMM yyyy HH:mm"))
+                            </MudText>
+                            <MudLink Href="https://finance.nickscan.net/" Target="_blank" Underline="Underline.Hover">
+                                Open NickFinance as this user
+                                <MudIcon Icon="@Icons.Material.Filled.OpenInNew" Size="Size.Small" />
+                            </MudLink>
+                        </div>
+                    }
+                </MudItem>
+
+                @if (_user is not null)
+                {
+                    <MudItem xs="12">
+                        <MudDivider Class="my-2" />
+                        <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">
+                            Primary phone (WhatsApp approval notifier)
+                        </MudText>
+                        <div class="d-flex align-center gap-2">
+                            <MudTextField @bind-Value="_phoneInput" Label="E.164 phone (e.g. +233244123456)"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="@_busy" />
+                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.Save"
+                                       Disabled="@_busy" OnClick="SavePhoneAsync">
+                                Save
+                            </MudButton>
+                            @if (!string.IsNullOrEmpty(_currentPhone))
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                           StartIcon="@Icons.Material.Filled.Clear"
+                                           Disabled="@_busy" OnClick="ClearPhoneAsync">
+                                    Clear
+                                </MudButton>
+                            }
+                        </div>
+                    </MudItem>
+
+                    <MudItem xs="12">
+                        <MudDivider Class="my-2" />
+                        <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">
+                            NickFinance grade (concentric — higher inherits lower)
+                        </MudText>
+
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="string"
+                                           Value="@_opsGrade"
+                                           ValueChanged="@(v => OnOpsGradeChanged(v))"
+                                           Label="Operations grade"
+                                           Disabled="@(_busy || _auditRole != string.Empty)"
+                                           HelperText="@(_auditRole != string.Empty ? "Audit role selected — operations dropdown disabled." : "Pick one grade. Higher = more permissions.")"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                    <MudSelectItem T="string" Value="@string.Empty">— None —</MudSelectItem>
+                                    @foreach (var g in FinanceRoleNames.OpsLadder)
+                                    {
+                                        <MudSelectItem T="string" Value="@g">@g (@FinanceRoleNames.PermissionCount(g) permissions)</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="string"
+                                           Value="@_auditRole"
+                                           ValueChanged="@(v => OnAuditRoleChanged(v))"
+                                           Label="Audit role (mutually exclusive)"
+                                           Disabled="@(_busy || _opsGrade != string.Empty)"
+                                           HelperText="@(_opsGrade != string.Empty ? "Operations grade selected — audit dropdown disabled." : "Auditors must not operate the system they audit.")"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                    <MudSelectItem T="string" Value="@string.Empty">— None —</MudSelectItem>
+                                    @foreach (var a in FinanceRoleNames.AuditRing)
+                                    {
+                                        <MudSelectItem T="string" Value="@a">@a (@FinanceRoleNames.PermissionCount(a) permissions)</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </MudItem>
+
+                            @if (FinanceRoleNames.RequiresSite(SelectedRoleName))
+                            {
+                                <MudItem xs="12" md="6">
+                                    <MudSelect T="Guid?" Value="@_siteId"
+                                               ValueChanged="@(v => _siteId = v)"
+                                               Label="Site (required)" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                                               Disabled="@_busy">
+                                        @foreach (var s in Sites)
+                                        {
+                                            <MudSelectItem T="Guid?" Value="@((Guid?)s.SiteId)">@s.Name</MudSelectItem>
+                                        }
+                                    </MudSelect>
+                                </MudItem>
+                            }
+
+                            @if (SelectedRoleName == FinanceRoleNames.ExternalAuditor)
+                            {
+                                <MudItem xs="12" md="6">
+                                    <MudDatePicker @bind-Date="_expiresAtDate"
+                                                   Label="Expires (required)"
+                                                   Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                   MinDate="DateTime.Today.AddDays(1)"
+                                                   Disabled="@_busy" />
+                                </MudItem>
+                                <MudItem xs="12" md="6">
+                                    <MudTextField @bind-Value="_auditFirm"
+                                                  Label="Audit firm (required)"
+                                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                  Disabled="@_busy" />
+                                </MudItem>
+                            }
+
+                            @if (!string.IsNullOrEmpty(SelectedRoleName))
+                            {
+                                <MudItem xs="12">
+                                    <MudPaper Elevation="0" Class="pa-2"
+                                              Style="border: 1px dashed var(--mud-palette-divider); border-radius: 6px; background-color: rgba(0,0,0,0.01);">
+                                        <MudText Typo="Typo.body2" Style="font-weight: 600;">
+                                            @SelectedRoleName grants @FinanceRoleNames.PermissionCount(SelectedRoleName) permissions.
+                                        </MudText>
+                                        <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">
+                                            @FinanceRoleNames.Descriptions[SelectedRoleName]
+                                        </MudText>
+                                    </MudPaper>
+                                </MudItem>
+                            }
+
+                            <MudItem xs="12">
+                                <div class="d-flex gap-2">
+                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                               StartIcon="@Icons.Material.Filled.Save"
+                                               Disabled="@(_busy || !IsApplyValid)"
+                                               OnClick="ApplyGradeAsync">
+                                        Apply grade
+                                    </MudButton>
+                                    @if (_currentGrade is not null)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                                   StartIcon="@Icons.Material.Filled.Clear"
+                                                   Disabled="@_busy" OnClick="ClearGradeAsync">
+                                            Revoke all access
+                                        </MudButton>
+                                    }
+                                </div>
+
+                                @if (_currentGrade is not null)
+                                {
+                                    <MudText Typo="Typo.caption" Class="mt-2" Style="color: var(--mud-palette-text-secondary);">
+                                        Current grade: <strong>@_currentGrade</strong>
+                                        @if (_currentSiteId is not null)
+                                        {
+                                            <text> — site @SiteName(_currentSiteId)</text>
+                                        }
+                                        @if (_currentExpiresAt is not null)
+                                        {
+                                            <text> — expires @_currentExpiresAt.Value.ToString("dd MMM yyyy")</text>
+                                        }
+                                    </MudText>
+                                }
+                            </MudItem>
+                        </MudGrid>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    </MudExpansionPanel>
+</MudExpansionPanels>
+
+@code {
+    /// <summary>Email for the HR-side entity (employee work email or admin user email).</summary>
+    [Parameter] public string? Email { get; set; }
+
+    /// <summary>Display name pre-filled into the identity row when provisioning.</summary>
+    [Parameter] public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>The NickHR admin / staff member doing the grant — stamped on user_roles.granted_by_user_id.</summary>
+    [Parameter] public Guid GrantedByUserId { get; set; }
+
+    /// <summary>Tenant id; defaults to <c>1</c> (Nick TC-Scan).</summary>
+    [Parameter] public long TenantId { get; set; } = 1L;
+
+    private bool _loading = true;
+    private bool _busy;
+    private User? _user;
+    private string? _currentPhone;
+    private string _phoneInput = string.Empty;
+
+    // The current grade rendered in the UI summary line, sourced from the
+    // user's existing grant (if any).
+    private string? _currentGrade;
+    private Guid? _currentSiteId;
+    private DateTimeOffset? _currentExpiresAt;
+    private List<RoleGrant> _origGrants = new();
+
+    // Editor state — pre-populated from the current grant on load.
+    private string _opsGrade = string.Empty;
+    private string _auditRole = string.Empty;
+    private Guid? _siteId;
+    private DateTime? _expiresAtDate;
+    private string _auditFirm = string.Empty;
+
+    /// <summary>
+    /// Fixed site catalogue. Postgres uuids match the rows seeded by the
+    /// NSCIM site-catalogue migration.
+    /// </summary>
+    private static readonly SiteOption[] Sites =
+    [
+        new(new Guid("11111111-1111-1111-1111-000000000001"), "Tema HQ"),
+        new(new Guid("11111111-1111-1111-1111-000000000002"), "Kotoka"),
+        new(new Guid("11111111-1111-1111-1111-000000000003"), "Takoradi"),
+        new(new Guid("11111111-1111-1111-1111-000000000004"), "Aflao"),
+        new(new Guid("11111111-1111-1111-1111-000000000005"), "Paga"),
+        new(new Guid("11111111-1111-1111-1111-000000000006"), "Elubo"),
+    ];
+
+    private sealed record SiteOption(Guid SiteId, string Name);
+
+    private string SelectedRoleName =>
+        !string.IsNullOrEmpty(_opsGrade) ? _opsGrade
+        : !string.IsNullOrEmpty(_auditRole) ? _auditRole
+        : string.Empty;
+
+    private bool IsApplyValid
+    {
+        get
+        {
+            var role = SelectedRoleName;
+            if (string.IsNullOrEmpty(role)) return false;
+            if (FinanceRoleNames.RequiresSite(role) && _siteId is null) return false;
+            if (role == FinanceRoleNames.ExternalAuditor)
+            {
+                if (_expiresAtDate is null) return false;
+                if (_expiresAtDate <= DateTime.Today) return false;
+                if (string.IsNullOrWhiteSpace(_auditFirm)) return false;
+            }
+            return true;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    public async Task ReloadAsync()
+    {
+        await LoadAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Email))
+            {
+                var id = await Provisioning.GetUserIdByEmailAsync(Email, TenantId);
+                if (id is not null)
+                {
+                    _user = await Provisioning.GetUserAsync(id.Value);
+                    _currentPhone = await Provisioning.GetPrimaryPhoneAsync(id.Value);
+                    _phoneInput = _currentPhone ?? string.Empty;
+                    _origGrants = (await Provisioning.ListRolesAsync(id.Value)).ToList();
+                    ApplyOriginalGrantToFields();
+                    return;
+                }
+            }
+            _user = null;
+            _currentPhone = null;
+            _phoneInput = string.Empty;
+            _origGrants = new();
+            ApplyOriginalGrantToFields();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    /// <summary>
+    /// In the v2 single-grade model, surface the FIRST catalogue grade
+    /// the user holds. Legacy / unknown grants are deliberately ignored
+    /// — they grant ZERO permissions anyway.
+    /// </summary>
+    private void ApplyOriginalGrantToFields()
+    {
+        _opsGrade = string.Empty;
+        _auditRole = string.Empty;
+        _siteId = null;
+        _expiresAtDate = null;
+        _auditFirm = string.Empty;
+        _currentGrade = null;
+        _currentSiteId = null;
+        _currentExpiresAt = null;
+
+        var ops = _origGrants.FirstOrDefault(g => FinanceRoleNames.IsOpsRole(g.RoleName));
+        if (ops is not null)
+        {
+            _opsGrade = ops.RoleName;
+            _siteId = ops.SiteId;
+            _currentGrade = ops.RoleName;
+            _currentSiteId = ops.SiteId;
+            _currentExpiresAt = ops.ExpiresAt;
+            return;
+        }
+        var audit = _origGrants.FirstOrDefault(g => FinanceRoleNames.IsAuditRole(g.RoleName));
+        if (audit is not null)
+        {
+            _auditRole = audit.RoleName;
+            _expiresAtDate = audit.ExpiresAt?.LocalDateTime;
+            _auditFirm = audit.AuditFirm ?? string.Empty;
+            _currentGrade = audit.RoleName;
+            _currentSiteId = audit.SiteId;
+            _currentExpiresAt = audit.ExpiresAt;
+        }
+    }
+
+    private void OnOpsGradeChanged(string grade)
+    {
+        _opsGrade = grade ?? string.Empty;
+        if (!string.IsNullOrEmpty(_opsGrade)) _auditRole = string.Empty;
+        if (!FinanceRoleNames.RequiresSite(_opsGrade)) _siteId = null;
+        _expiresAtDate = null;
+        _auditFirm = string.Empty;
+    }
+
+    private void OnAuditRoleChanged(string role)
+    {
+        _auditRole = role ?? string.Empty;
+        if (!string.IsNullOrEmpty(_auditRole)) _opsGrade = string.Empty;
+        _siteId = null;
+        if (_auditRole != FinanceRoleNames.ExternalAuditor)
+        {
+            _expiresAtDate = null;
+            _auditFirm = string.Empty;
+        }
+    }
+
+    private async Task ProvisionAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Email)) return;
+        _busy = true;
+        try
+        {
+            await Provisioning.ProvisionEmployeeAsync(Email, DisplayName, TenantId);
+            Snackbar.Add($"Identity provisioned for {Email}.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Provisioning failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SavePhoneAsync()
+    {
+        if (_user is null) return;
+        _busy = true;
+        try
+        {
+            await Provisioning.SetPrimaryPhoneAsync(_user.InternalUserId, _phoneInput);
+            _currentPhone = string.IsNullOrWhiteSpace(_phoneInput) ? null : _phoneInput.Trim();
+            Snackbar.Add(string.IsNullOrEmpty(_currentPhone) ? "Phone cleared." : $"Phone saved: {_currentPhone}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ClearPhoneAsync()
+    {
+        if (_user is null) return;
+        _busy = true;
+        try
+        {
+            await Provisioning.SetPrimaryPhoneAsync(_user.InternalUserId, null);
+            _currentPhone = null;
+            _phoneInput = string.Empty;
+            Snackbar.Add("Phone cleared.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Clear failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ApplyGradeAsync()
+    {
+        if (_user is null) return;
+        if (!IsApplyValid) return;
+        _busy = true;
+        try
+        {
+            var role = SelectedRoleName;
+            var siteId = FinanceRoleNames.RequiresSite(role) ? _siteId : null;
+            var expiresAt = role == FinanceRoleNames.ExternalAuditor && _expiresAtDate is not null
+                ? new DateTimeOffset(_expiresAtDate.Value, TimeSpan.Zero)
+                : (DateTimeOffset?)null;
+            var auditFirm = role == FinanceRoleNames.ExternalAuditor && !string.IsNullOrWhiteSpace(_auditFirm)
+                ? _auditFirm.Trim()
+                : null;
+
+            // Revoke any prior grants that aren't the new (role, site) tuple.
+            foreach (var orig in _origGrants)
+            {
+                if (orig.RoleName == role && orig.SiteId == siteId) continue;
+                await Provisioning.RevokeRoleAsync(_user.InternalUserId, orig.RoleName, orig.SiteId);
+            }
+
+            // Grant the new one (idempotent if it already matches).
+            await Provisioning.GrantRoleAsync(
+                _user.InternalUserId, role, siteId,
+                GrantedByUserId, expiresAt, auditFirm);
+
+            Snackbar.Add($"Applied grade: {role}.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Apply failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ClearGradeAsync()
+    {
+        if (_user is null) return;
+        _busy = true;
+        try
+        {
+            foreach (var orig in _origGrants)
+            {
+                await Provisioning.RevokeRoleAsync(_user.InternalUserId, orig.RoleName, orig.SiteId);
+            }
+            Snackbar.Add("Revoked all NickFinance access for this user.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Revoke failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string SiteName(Guid? siteId) =>
+        Sites.FirstOrDefault(s => s.SiteId == siteId)?.Name ?? "—";
+}

@@ -1,0 +1,180 @@
+@page "/succession"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Services.Succession
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Succession Planning</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.Stairs" Class="mr-2" />Succession Planning
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudGrid>
+    <!-- Summary -->
+    <MudItem xs="12" sm="3">
+        <MudCard Elevation="2"><MudCardContent Class="text-center">
+            <MudText Typo="Typo.h3" Color="Color.Error">@_plans.Count(p => p.Priority == "Critical")</MudText>
+            <MudText>Critical Positions</MudText>
+        </MudCardContent></MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="3">
+        <MudCard Elevation="2"><MudCardContent Class="text-center">
+            <MudText Typo="Typo.h3">@_plans.Count</MudText>
+            <MudText>Total Plans</MudText>
+        </MudCardContent></MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="3">
+        <MudCard Elevation="2"><MudCardContent Class="text-center">
+            <MudText Typo="Typo.h3" Color="Color.Success">@_plans.SelectMany(p => p.Candidates).Count(c => c.ReadinessLevel == "ReadyNow")</MudText>
+            <MudText>Ready Now</MudText>
+        </MudCardContent></MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="3">
+        <MudCard Elevation="2"><MudCardContent Class="text-center">
+            <MudText Typo="Typo.h3" Color="Color.Warning">@_plans.Count(p => !p.Candidates.Any())</MudText>
+            <MudText>No Successors</MudText>
+        </MudCardContent></MudCard>
+    </MudItem>
+
+    <!-- Plans -->
+    <MudItem xs="12">
+        <MudCard Elevation="2">
+            <MudCardHeader>
+                <CardHeaderContent><MudText Typo="Typo.h6">Succession Plans</MudText></CardHeaderContent>
+                <CardHeaderActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="@(() => _showCreate = true)">New Plan</MudButton>
+                </CardHeaderActions>
+            </MudCardHeader>
+            <MudCardContent>
+                @foreach (var plan in _plans)
+                {
+                    <MudExpansionPanel Class="mb-2">
+                        <TitleContent>
+                            <MudStack Row="true" AlignItems="AlignItems.Center">
+                                <MudChip T="string" Size="Size.Small"
+                                    Color="@(plan.Priority == "Critical" ? Color.Error : plan.Priority == "High" ? Color.Warning : Color.Default)">
+                                    @plan.Priority
+                                </MudChip>
+                                <MudText><strong>@plan.Designation?.Title</strong></MudText>
+                                <MudText Typo="Typo.body2" Class="ml-2">
+                                    Incumbent: @(plan.IncumbentEmployee != null ? $"{plan.IncumbentEmployee.FirstName} {plan.IncumbentEmployee.LastName}" : "Vacant")
+                                </MudText>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                    @plan.Candidates.Count successor(s)
+                                </MudChip>
+                            </MudStack>
+                        </TitleContent>
+                        <ChildContent>
+                            @if (plan.Candidates.Any())
+                            {
+                                <MudTable Items="plan.Candidates" Dense="true">
+                                    <HeaderContent>
+                                        <MudTh>Candidate</MudTh><MudTh>Readiness</MudTh><MudTh>Development Needs</MudTh>
+                                    </HeaderContent>
+                                    <RowTemplate>
+                                        <MudTd>@context.CandidateEmployee?.FirstName @context.CandidateEmployee?.LastName</MudTd>
+                                        <MudTd>
+                                            <MudChip T="string" Size="Size.Small"
+                                                Color="@(context.ReadinessLevel == "ReadyNow" ? Color.Success : context.ReadinessLevel == "1to2Years" ? Color.Warning : Color.Default)">
+                                                @context.ReadinessLevel
+                                            </MudChip>
+                                        </MudTd>
+                                        <MudTd>@context.DevelopmentNeeds</MudTd>
+                                    </RowTemplate>
+                                </MudTable>
+                            }
+                            else
+                            {
+                                <MudAlert Severity="Severity.Warning">No successors identified yet.</MudAlert>
+                            }
+                            @if (!string.IsNullOrEmpty(plan.Notes))
+                            {
+                                <MudText Class="mt-2">@plan.Notes</MudText>
+                            }
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@if (_showCreate)
+{
+    <MudDialog @bind-Visible="_showCreate">
+        <TitleContent>New Succession Plan</TitleContent>
+        <DialogContent>
+            <MudSelect T="int?" @bind-Value="_newDesignationId" Label="Position" Required="true">
+                @foreach (var d in _designations)
+                {
+                    <MudSelectItem T="int?" Value="@d.Id">@d.Title</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="int?" @bind-Value="_newIncumbentId" Label="Incumbent" Class="mt-3">
+                <MudSelectItem T="int?" Value="@((int?)null)">Vacant</MudSelectItem>
+                @foreach (var e in _employees)
+                {
+                    <MudSelectItem T="int?" Value="@e.Id">@e.FirstName @e.LastName</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" @bind-Value="_newPriority" Label="Priority" Class="mt-3">
+                <MudSelectItem T="string" Value="@("Critical")">Critical</MudSelectItem>
+                <MudSelectItem T="string" Value="@("High")">High</MudSelectItem>
+                <MudSelectItem T="string" Value="@("Medium")">Medium</MudSelectItem>
+                <MudSelectItem T="string" Value="@("Low")">Low</MudSelectItem>
+            </MudSelect>
+            <MudTextField @bind-Value="_newNotes" Label="Notes" Lines="2" Class="mt-3" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _showCreate = false)">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreatePlan">Create</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    private List<SuccessionPlan> _plans = new();
+    private List<Designation> _designations = new();
+    private List<Employee> _employees = new();
+    private bool _loading = true, _showCreate;
+    private int? _newDesignationId, _newIncumbentId;
+    private string _newPriority = "Medium", _newNotes = "";
+    private List<BreadcrumbItem> _breadcrumbs = new() { new("Home", "/"), new("Succession", null, true) };
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<SuccessionService>();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        _plans = await svc.GetAllPlansAsync();
+        _designations = await db.Designations.Where(d => d.IsActive).OrderBy(d => d.Title).ToListAsync();
+        _employees = await db.Employees.Where(e => e.EmploymentStatus == EmploymentStatus.Active).OrderBy(e => e.FirstName).ToListAsync();
+        _loading = false;
+    }
+
+    private async Task CreatePlan()
+    {
+        if (!_newDesignationId.HasValue) return;
+        using var scope = ServiceProvider.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<SuccessionService>();
+        await svc.CreatePlanAsync(new SuccessionPlan
+        {
+            DesignationId = _newDesignationId.Value, IncumbentEmployeeId = _newIncumbentId,
+            Priority = _newPriority, Notes = _newNotes
+        });
+        Snackbar.Add("Plan created", Severity.Success);
+        _showCreate = false;
+        _plans = await svc.GetAllPlansAsync();
+    }
+}

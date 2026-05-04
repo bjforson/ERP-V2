@@ -1,0 +1,175 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudGrid>
+            <MudItem xs="12" sm="8">
+                <MudTextField @bind-Value="_model.Name" Label="Name *" Variant="Variant.Outlined"
+                              Required="true" RequiredError="Name is required" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="_model.Code" Label="Code *" Variant="Variant.Outlined"
+                              Required="true" RequiredError="Code is required"
+                              HelperText="e.g. HOUSE_ALLOW" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="SalaryComponentType" @bind-Value="_model.ComponentType" Label="Component Type *"
+                           Variant="Variant.Outlined">
+                    @foreach (SalaryComponentType t in Enum.GetValues(typeof(SalaryComponentType)))
+                    {
+                        <MudSelectItem Value="@t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal?" @bind-Value="_model.DefaultAmount" Label="Default Amount (GH₵)"
+                                 Variant="Variant.Outlined" Min="0" Format="N2" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal?" @bind-Value="_model.DefaultPercentage" Label="Default %"
+                                 Variant="Variant.Outlined" Min="0" Max="100" Format="N4"
+                                 HelperText="As a percentage e.g. 5.5 for 5.5%" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudCheckBox @bind-Value="_model.IsFixed" Label="Fixed?" Color="Color.Primary" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudCheckBox @bind-Value="_model.IsTaxable" Label="Taxable?" Color="Color.Warning" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudCheckBox @bind-Value="_model.IsStatutory" Label="Statutory?" Color="Color.Info" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudCheckBox @bind-Value="_model.IsActive" Label="Active?" Color="Color.Success" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_model.Description" Label="Description" Variant="Variant.Outlined"
+                              Lines="2" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync"
+                   Disabled="_saving">
+            @if (_saving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter] public SalaryComponent? Component { get; set; }
+
+    private SalaryComponentFormModel _model = new();
+    private bool _saving = false;
+
+    protected override void OnInitialized()
+    {
+        if (Component != null)
+        {
+            _model = new SalaryComponentFormModel
+            {
+                Name = Component.Name,
+                Code = Component.Code,
+                ComponentType = Component.ComponentType,
+                IsFixed = Component.IsFixed,
+                IsTaxable = Component.IsTaxable,
+                IsStatutory = Component.IsStatutory,
+                DefaultAmount = Component.DefaultAmount,
+                DefaultPercentage = Component.DefaultPercentage,
+                Description = Component.Description,
+                IsActive = Component.IsActive
+            };
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_model.Name) || string.IsNullOrWhiteSpace(_model.Code))
+        {
+            Snackbar.Add("Name and Code are required.", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (Component == null)
+            {
+                var entity = new SalaryComponent
+                {
+                    Name = _model.Name.Trim(),
+                    Code = _model.Code.Trim().ToUpperInvariant(),
+                    ComponentType = _model.ComponentType,
+                    IsFixed = _model.IsFixed,
+                    IsTaxable = _model.IsTaxable,
+                    IsStatutory = _model.IsStatutory,
+                    DefaultAmount = _model.DefaultAmount,
+                    DefaultPercentage = _model.DefaultPercentage,
+                    Description = _model.Description?.Trim(),
+                    IsActive = _model.IsActive
+                };
+                db.SalaryComponents.Add(entity);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Component created!", Severity.Success);
+            }
+            else
+            {
+                var entity = await db.SalaryComponents.FindAsync(Component.Id);
+                if (entity != null)
+                {
+                    entity.Name = _model.Name.Trim();
+                    entity.Code = _model.Code.Trim().ToUpperInvariant();
+                    entity.ComponentType = _model.ComponentType;
+                    entity.IsFixed = _model.IsFixed;
+                    entity.IsTaxable = _model.IsTaxable;
+                    entity.IsStatutory = _model.IsStatutory;
+                    entity.DefaultAmount = _model.DefaultAmount;
+                    entity.DefaultPercentage = _model.DefaultPercentage;
+                    entity.Description = _model.Description?.Trim();
+                    entity.IsActive = _model.IsActive;
+                    await db.SaveChangesAsync();
+                    Snackbar.Add("Component updated!", Severity.Success);
+                }
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class SalaryComponentFormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
+        public SalaryComponentType ComponentType { get; set; } = SalaryComponentType.Earning;
+        public bool IsFixed { get; set; }
+        public bool IsTaxable { get; set; } = true;
+        public bool IsStatutory { get; set; }
+        public decimal? DefaultAmount { get; set; }
+        public decimal? DefaultPercentage { get; set; }
+        public string? Description { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

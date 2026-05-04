@@ -1,0 +1,175 @@
+@page "/transfer/history"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+
+<PageTitle>NICKSCAN ERP — NickHR — Transfer History</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Transfer / Promotion History</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<MudCard Elevation="2">
+    <MudCardContent>
+        <MudGrid Class="mb-3">
+            <MudItem xs="12" sm="4">
+                <MudSelect T="string" @bind-Value="_filterType" Label="Type" Variant="Variant.Outlined"
+                           Dense="true" Clearable="true" @bind-Value:after="ApplyFilter">
+                    <MudSelectItem Value="@("Transfer")">Transfer</MudSelectItem>
+                    <MudSelectItem Value="@("Promotion")">Promotion</MudSelectItem>
+                    <MudSelectItem Value="@("Demotion")">Demotion</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudDatePicker @bind-Date="_fromDate" Label="From Date" Variant="Variant.Outlined"
+                               DateFormat="dd/MM/yyyy" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudDatePicker @bind-Date="_toDate" Label="To Date" Variant="Variant.Outlined"
+                               DateFormat="dd/MM/yyyy" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" Class="d-flex justify-end">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="LoadData">
+                    Apply Filter
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else if (!_filtered.Any())
+        {
+            <div class="d-flex flex-column align-center pa-6">
+                <MudText Typo="Typo.body1" Color="Color.Secondary">No transfer records found.</MudText>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="_filtered" Dense="true" Striped="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Type</MudTh>
+                    <MudTh>Effective Date</MudTh>
+                    <MudTh>From Dept</MudTh>
+                    <MudTh>To Dept</MudTh>
+                    <MudTh>From Desig</MudTh>
+                    <MudTh>To Desig</MudTh>
+                    <MudTh>Old Salary</MudTh>
+                    <MudTh>New Salary</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Reason</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudText Typo="Typo.body2" Style="font-weight:600;">
+                            @(context.Employee != null ? $"{context.Employee.FirstName} {context.Employee.LastName}" : "—")
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Employee?.EmployeeCode</MudText>
+                    </MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="@GetTypeColor(context.Type)">@context.Type</MudChip>
+                    </MudTd>
+                    <MudTd>@context.EffectiveDate.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd>@(context.FromDepartment?.Name ?? "—")</MudTd>
+                    <MudTd>@(context.ToDepartment?.Name ?? "—")</MudTd>
+                    <MudTd>@(context.FromDesignation?.Title ?? "—")</MudTd>
+                    <MudTd>@(context.ToDesignation?.Title ?? "—")</MudTd>
+                    <MudTd>GHS @context.OldBasicSalary.ToString("N2")</MudTd>
+                    <MudTd>GHS @context.NewBasicSalary.ToString("N2")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">@context.Status</MudChip>
+                    </MudTd>
+                    <MudTd>
+                        <MudTooltip Text="@context.Reason">
+                            <MudText Typo="Typo.body2" Style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                @context.Reason
+                            </MudText>
+                        </MudTooltip>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<TransferPromotion> _all = new();
+    private List<TransferPromotion> _filtered = new();
+    private bool _isLoading = true;
+    private string? _filterType;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Transfers", href: "/transfer/approvals"),
+        new BreadcrumbItem("History", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _all = await db.TransferPromotions
+                .Include(t => t.Employee)
+                .Include(t => t.FromDepartment)
+                .Include(t => t.ToDepartment)
+                .Include(t => t.FromDesignation)
+                .Include(t => t.ToDesignation)
+                .OrderByDescending(t => t.EffectiveDate)
+                .ToListAsync();
+
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        _filtered = _all;
+
+        if (!string.IsNullOrEmpty(_filterType) && Enum.TryParse<TransferType>(_filterType, out var type))
+            _filtered = _filtered.Where(t => t.Type == type).ToList();
+
+        if (_fromDate.HasValue)
+            _filtered = _filtered.Where(t => t.EffectiveDate >= _fromDate.Value).ToList();
+
+        if (_toDate.HasValue)
+            _filtered = _filtered.Where(t => t.EffectiveDate <= _toDate.Value).ToList();
+    }
+
+    private Color GetTypeColor(TransferType t) => t switch
+    {
+        TransferType.Promotion => Color.Success,
+        TransferType.Demotion => Color.Error,
+        _ => Color.Info
+    };
+
+    private Color GetStatusColor(ApprovalStatus s) => s switch
+    {
+        ApprovalStatus.Approved => Color.Success,
+        ApprovalStatus.Rejected => Color.Error,
+        ApprovalStatus.Returned => Color.Warning,
+        _ => Color.Warning
+    };
+}

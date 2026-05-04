@@ -1,0 +1,337 @@
+@page "/reports/headcount"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Enums
+@using NickHR.Core.Constants
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Headcount Report</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Headcount Report</MudText>
+
+<!-- Filter Bar -->
+<MudCard Elevation="2" Class="mb-4">
+    <MudCardContent>
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="int?" Label="Department" @bind-Value="_filterDepartmentId" Clearable="true" Dense="true">
+                    @foreach (var d in _departments)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)d.Id)">@d.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="int?" Label="Location" @bind-Value="_filterLocationId" Clearable="true" Dense="true">
+                    @foreach (var l in _locations)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)l.Id)">@l.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="EmploymentType?" Label="Employment Type" @bind-Value="_filterEmploymentType" Clearable="true" Dense="true">
+                    @foreach (EmploymentType et in Enum.GetValues(typeof(EmploymentType)))
+                    {
+                        <MudSelectItem T="EmploymentType?" Value="@((EmploymentType?)et)">@et</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="EmploymentStatus?" Label="Employment Status" @bind-Value="_filterStatus" Clearable="true" Dense="true">
+                    @foreach (EmploymentStatus es in Enum.GetValues(typeof(EmploymentStatus)))
+                    {
+                        <MudSelectItem T="EmploymentStatus?" Value="@((EmploymentStatus?)es)">@es</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" Class="d-flex gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyFilters" StartIcon="@Icons.Material.Filled.FilterAlt">Apply Filters</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ResetFilters">Reset</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" OnClick="ExportCsv" StartIcon="@Icons.Material.Filled.Download" Class="ml-auto">Export to CSV</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudCardContent>
+</MudCard>
+
+@if (_isLoading)
+{
+    <div class="d-flex justify-center pa-8">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    </div>
+}
+else
+{
+    <!-- Summary Cards -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Primary" Variant="Variant.Filled" Size="Size.Large" Class="mr-4">
+                        <MudIcon Icon="@Icons.Material.Filled.People" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_totalActive</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Total Active</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Info" Variant="Variant.Filled" Size="Size.Large" Class="mr-4">
+                        <MudIcon Icon="@Icons.Material.Filled.Male" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_maleCount M / @_femaleCount F</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Male / Female</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Success" Variant="Variant.Filled" Size="Size.Large" Class="mr-4">
+                        <MudIcon Icon="@Icons.Material.Filled.Schedule" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_avgTenureYears.ToString("F1") yrs</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Avg Tenure</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2">
+                <MudCardContent Class="d-flex align-center">
+                    <MudAvatar Color="Color.Warning" Variant="Variant.Filled" Size="Size.Large" Class="mr-4">
+                        <MudIcon Icon="@Icons.Material.Filled.CorporateFare" />
+                    </MudAvatar>
+                    <div>
+                        <MudText Typo="Typo.h4">@_deptRows.Count</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Departments</MudText>
+                    </div>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Charts -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" md="4">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent><MudText Typo="Typo.h6">Gender Distribution</MudText></CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent Class="d-flex justify-center">
+                    @if (_totalActive > 0)
+                    {
+                        <MudChart ChartType="ChartType.Pie" InputData="@_genderChartData" InputLabels="@_genderChartLabels" Width="220px" Height="220px" />
+                    }
+                    else { <MudText Color="Color.Secondary" Class="pa-4">No data available</MudText> }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <CardHeaderContent><MudText Typo="Typo.h6">Headcount by Department</MudText></CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    @if (_deptRows.Any())
+                    {
+                        <MudChart ChartType="ChartType.Bar" ChartSeries="@_deptChartSeries" XAxisLabels="@_deptChartLabels"
+                                  Width="100%" Height="280px" ChartOptions="@(new ChartOptions { YAxisTicks = 1 })" />
+                    }
+                    else { <MudText Color="Color.Secondary" Class="pa-4">No data available</MudText> }
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Department Breakdown Table -->
+    <MudCard Elevation="2">
+        <MudCardHeader>
+            <CardHeaderContent><MudText Typo="Typo.h6">Department Breakdown</MudText></CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent Class="pa-0">
+            <MudTable Items="@_deptRows" Dense="true" Hover="true" Striped="true" T="DeptRow" Footer="true">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DeptRow, object>(x => x.DeptName)">Department</MudTableSortLabel></MudTh>
+                    <MudTh><MudTableSortLabel SortBy="new Func<DeptRow, object>(x => x.Total)">Total</MudTableSortLabel></MudTh>
+                    <MudTh>Male</MudTh>
+                    <MudTh>Female</MudTh>
+                    <MudTh>Full-Time</MudTh>
+                    <MudTh>Part-Time</MudTh>
+                    <MudTh>Contract</MudTh>
+                    <MudTh>Avg Salary (GH₵)</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Department"><strong>@context.DeptName</strong></MudTd>
+                    <MudTd DataLabel="Total"><MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.Total</MudChip></MudTd>
+                    <MudTd DataLabel="Male">@context.Male</MudTd>
+                    <MudTd DataLabel="Female">@context.Female</MudTd>
+                    <MudTd DataLabel="Full-Time">@context.FullTime</MudTd>
+                    <MudTd DataLabel="Part-Time">@context.PartTime</MudTd>
+                    <MudTd DataLabel="Contract">@context.Contract</MudTd>
+                    <MudTd DataLabel="Avg Salary">@context.AvgSalary.ToString("N2")</MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd><strong>TOTAL</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.Total)</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.Male)</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.Female)</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.FullTime)</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.PartTime)</strong></MudTd>
+                    <MudTd><strong>@_deptRows.Sum(r => r.Contract)</strong></MudTd>
+                    <MudTd><strong>@(_deptRows.Any() ? _deptRows.Average(r => r.AvgSalary).ToString("N2") : "0.00")</strong></MudTd>
+                </FooterContent>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body1" Align="Align.Center" Class="pa-8">No records match your filters.</MudText>
+                </NoRecordsContent>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    private bool _isLoading = true;
+    private int? _filterDepartmentId;
+    private int? _filterLocationId;
+    private EmploymentType? _filterEmploymentType;
+    private EmploymentStatus? _filterStatus;
+
+    private List<(int Id, string Name)> _departments = new();
+    private List<(int Id, string Name)> _locations = new();
+    private List<DeptRow> _deptRows = new();
+
+    private int _totalActive;
+    private int _maleCount;
+    private int _femaleCount;
+    private double _avgTenureYears;
+
+    private double[] _genderChartData = Array.Empty<double>();
+    private string[] _genderChartLabels = Array.Empty<string>();
+    private List<ChartSeries> _deptChartSeries = new();
+    private string[] _deptChartLabels = Array.Empty<string>();
+
+    protected override async Task OnInitializedAsync() => await LoadReport();
+
+    private async Task LoadReport()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _departments = (await db.Departments.Where(d => d.IsActive).OrderBy(d => d.Name)
+                .Select(d => new { d.Id, d.Name }).ToListAsync()).Select(d => (d.Id, d.Name)).ToList();
+            _locations = (await db.Locations.OrderBy(l => l.Name)
+                .Select(l => new { l.Id, l.Name }).ToListAsync()).Select(l => (l.Id, l.Name)).ToList();
+
+            var activeStatuses = new[] { EmploymentStatus.Active, EmploymentStatus.Confirmed, EmploymentStatus.OnProbation };
+
+            var query = db.Employees.Include(e => e.Department)
+                .Where(e => activeStatuses.Contains(e.EmploymentStatus));
+
+            if (_filterDepartmentId.HasValue)
+                query = query.Where(e => e.DepartmentId == _filterDepartmentId.Value);
+            if (_filterLocationId.HasValue)
+                query = query.Where(e => e.LocationId == _filterLocationId.Value);
+            if (_filterEmploymentType.HasValue)
+                query = query.Where(e => e.EmploymentType == _filterEmploymentType.Value);
+            if (_filterStatus.HasValue)
+                query = query.Where(e => e.EmploymentStatus == _filterStatus.Value);
+
+            var employees = await query.ToListAsync();
+
+            _totalActive = employees.Count;
+            _maleCount = employees.Count(e => e.Gender == Gender.Male);
+            _femaleCount = employees.Count(e => e.Gender == Gender.Female);
+
+            var now = DateTime.Today;
+            var tenures = employees.Where(e => e.HireDate.HasValue).Select(e => (now - e.HireDate!.Value).TotalDays / 365.25).ToList();
+            _avgTenureYears = tenures.Any() ? tenures.Average() : 0;
+
+            if (_totalActive > 0)
+            {
+                var other = _totalActive - _maleCount - _femaleCount;
+                _genderChartData = new double[] { _maleCount, _femaleCount, other };
+                _genderChartLabels = new[] { $"Male ({_maleCount})", $"Female ({_femaleCount})", $"Other ({other})" };
+            }
+
+            _deptRows = employees
+                .GroupBy(e => e.Department?.Name ?? "Unassigned")
+                .Select(g => new DeptRow
+                {
+                    DeptName = g.Key,
+                    Total = g.Count(),
+                    Male = g.Count(e => e.Gender == Gender.Male),
+                    Female = g.Count(e => e.Gender == Gender.Female),
+                    FullTime = g.Count(e => e.EmploymentType == EmploymentType.FullTime),
+                    PartTime = g.Count(e => e.EmploymentType == EmploymentType.PartTime),
+                    Contract = g.Count(e => e.EmploymentType == EmploymentType.Contract),
+                    AvgSalary = g.Any() ? (double)g.Average(e => e.BasicSalary) : 0
+                })
+                .OrderByDescending(r => r.Total)
+                .ToList();
+
+            var top10 = _deptRows.Take(10).ToList();
+            _deptChartLabels = top10.Select(r => r.DeptName.Length > 12 ? r.DeptName[..12] + "…" : r.DeptName).ToArray();
+            _deptChartSeries = new List<ChartSeries>
+            {
+                new ChartSeries { Name = "Headcount", Data = top10.Select(r => (double)r.Total).ToArray() }
+            };
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading report: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ApplyFilters() => await LoadReport();
+
+    private async Task ResetFilters()
+    {
+        _filterDepartmentId = null;
+        _filterLocationId = null;
+        _filterEmploymentType = null;
+        _filterStatus = null;
+        await LoadReport();
+    }
+
+    private void ExportCsv()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Department,Total,Male,Female,Full-Time,Part-Time,Contract,Avg Salary (GH₵)");
+        foreach (var r in _deptRows)
+            sb.AppendLine($"{r.DeptName},{r.Total},{r.Male},{r.Female},{r.FullTime},{r.PartTime},{r.Contract},{r.AvgSalary:F2}");
+        Snackbar.Add("CSV export prepared. Wire up IJSRuntime for browser file download.", Severity.Info);
+    }
+
+    private class DeptRow
+    {
+        public string DeptName { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public int Male { get; set; }
+        public int Female { get; set; }
+        public int FullTime { get; set; }
+        public int PartTime { get; set; }
+        public int Contract { get; set; }
+        public double AvgSalary { get; set; }
+    }
+}

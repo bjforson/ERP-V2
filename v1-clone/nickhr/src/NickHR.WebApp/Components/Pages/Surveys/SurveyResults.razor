@@ -1,0 +1,289 @@
+@page "/surveys/results/{Id:int}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = RoleSets.SeniorHR)]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Enums
+@using System.Text.Json
+@using NickHR.Core.Constants
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — Survey Results</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.BarChart" Class="mr-2" />Survey Results
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else if (_survey == null)
+{
+    <MudAlert Severity="Severity.Error">Survey not found.</MudAlert>
+}
+else
+{
+    <!-- Header -->
+    <MudCard Elevation="2" Class="mb-4">
+        <MudCardContent>
+            <MudGrid>
+                <MudItem xs="12" sm="8">
+                    <MudText Typo="Typo.h5">@_survey.Title</MudText>
+                    @if (!string.IsNullOrWhiteSpace(_survey.Description))
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@_survey.Description</MudText>
+                    }
+                    <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(_survey.Status)" Class="mt-1">@_survey.Status</MudChip>
+                    @if (_survey.IsAnonymous)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default" Icon="@Icons.Material.Filled.VisibilityOff" Class="ml-1 mt-1">Anonymous</MudChip>
+                    }
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudStack Spacing="1" AlignItems="AlignItems.End">
+                        <MudText Typo="Typo.h4" Color="Color.Primary">@_totalResponses</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Total Responses</MudText>
+                        @if (_totalEmployees > 0)
+                        {
+                            <MudText Typo="Typo.body2">
+                                Completion: <strong>@((_totalResponses * 100 / _totalEmployees).ToString("N0"))%</strong>
+                                (@_totalResponses / @_totalEmployees employees)
+                            </MudText>
+                            <MudProgressLinear Value="@(_totalResponses * 100.0 / _totalEmployees)"
+                                              Color="Color.Primary" Rounded="true" />
+                        }
+                    </MudStack>
+                </MudItem>
+            </MudGrid>
+        </MudCardContent>
+    </MudCard>
+
+    <!-- Results per question -->
+    @foreach (var result in _questionResults)
+    {
+        <MudCard Elevation="1" Class="mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.subtitle1">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="mr-2">@GetTypeName(result.QuestionType)</MudChip>
+                        @result.QuestionText
+                    </MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@result.AnswerCount response(s)</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @switch (result.QuestionType)
+                {
+                    case SurveyQuestionType.Rating:
+                        <MudGrid AlignItems="AlignItems.Center">
+                            <MudItem xs="12" sm="4" Class="text-center">
+                                <MudText Typo="Typo.h3" Color="Color.Primary">@result.AverageRating.ToString("F1")</MudText>
+                                <MudRating SelectedValue="@((int)Math.Round(result.AverageRating))" MaxValue="5" ReadOnly="true" />
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Average Rating</MudText>
+                            </MudItem>
+                            <MudItem xs="12" sm="8">
+                                @for (int star = 5; star >= 1; star--)
+                                {
+                                    var count = result.RatingDistribution.GetValueOrDefault(star, 0);
+                                    var pct = result.AnswerCount > 0 ? count * 100.0 / result.AnswerCount : 0;
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                                        <MudText Typo="Typo.caption" Style="width:40px">@star ★</MudText>
+                                        <MudProgressLinear Value="@pct" Color="Color.Warning" Size="Size.Medium"
+                                                          Rounded="true" Style="flex:1" />
+                                        <MudText Typo="Typo.caption" Style="width:30px">@count</MudText>
+                                    </MudStack>
+                                }
+                            </MudItem>
+                        </MudGrid>
+                        break;
+
+                    case SurveyQuestionType.Text:
+                        <MudList T="string" Dense="true">
+                            @foreach (var answer in result.TextAnswers.Take(20))
+                            {
+                                <MudListItem T="string" Icon="@Icons.Material.Filled.ChatBubbleOutline">
+                                    <MudText Typo="Typo.body2">@answer</MudText>
+                                </MudListItem>
+                            }
+                            @if (result.TextAnswers.Count > 20)
+                            {
+                                <MudListItem T="string">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        ...and @(result.TextAnswers.Count - 20) more responses
+                                    </MudText>
+                                </MudListItem>
+                            }
+                        </MudList>
+                        break;
+
+                    case SurveyQuestionType.MultipleChoice:
+                        @foreach (var opt in result.OptionCounts)
+                        {
+                            var pct = result.AnswerCount > 0 ? opt.Value * 100.0 / result.AnswerCount : 0;
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                                <MudText Typo="Typo.body2" Style="min-width:140px;max-width:200px">@opt.Key</MudText>
+                                <MudProgressLinear Value="@pct" Color="Color.Primary" Size="Size.Medium"
+                                                  Rounded="true" Style="flex:1" />
+                                <MudText Typo="Typo.caption" Style="width:50px">@opt.Value (@pct.ToString("N0")%)</MudText>
+                            </MudStack>
+                        }
+                        break;
+
+                    case SurveyQuestionType.YesNo:
+                        var yesCount = result.OptionCounts.GetValueOrDefault("Yes", 0);
+                        var noCount = result.OptionCounts.GetValueOrDefault("No", 0);
+                        var yesTotal = result.AnswerCount > 0 ? yesCount * 100.0 / result.AnswerCount : 0;
+                        var noTotal = result.AnswerCount > 0 ? noCount * 100.0 / result.AnswerCount : 0;
+                        <MudGrid>
+                            <MudItem xs="12" sm="6">
+                                <MudStack AlignItems="AlignItems.Center" Spacing="1">
+                                    <MudText Typo="Typo.h4" Color="Color.Success">@yesCount</MudText>
+                                    <MudProgressLinear Value="@yesTotal" Color="Color.Success" Size="Size.Large" Rounded="true" />
+                                    <MudText Typo="Typo.body2" Color="Color.Success">Yes (@yesTotal.ToString("N0")%)</MudText>
+                                </MudStack>
+                            </MudItem>
+                            <MudItem xs="12" sm="6">
+                                <MudStack AlignItems="AlignItems.Center" Spacing="1">
+                                    <MudText Typo="Typo.h4" Color="Color.Error">@noCount</MudText>
+                                    <MudProgressLinear Value="@noTotal" Color="Color.Error" Size="Size.Large" Rounded="true" />
+                                    <MudText Typo="Typo.body2" Color="Color.Error">No (@noTotal.ToString("N0")%)</MudText>
+                                </MudStack>
+                            </MudItem>
+                        </MudGrid>
+                        break;
+                }
+            </MudCardContent>
+        </MudCard>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool _loading = true;
+    private Survey? _survey;
+    private int _totalResponses = 0;
+    private int _totalEmployees = 0;
+    private List<QuestionResult> _questionResults = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Surveys", href: "/surveys"),
+        new BreadcrumbItem("Results", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadResultsAsync();
+    }
+
+    private async Task LoadResultsAsync()
+    {
+        _loading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            _survey = await db.Surveys
+                .Include(s => s.Questions.OrderBy(q => q.OrderIndex))
+                .Include(s => s.Responses)
+                    .ThenInclude(r => r.Answers)
+                .FirstOrDefaultAsync(s => s.Id == Id && !s.IsDeleted);
+
+            if (_survey == null) return;
+
+            _totalResponses = _survey.Responses.Count;
+            _totalEmployees = await db.Employees.CountAsync(e => e.EmploymentStatus != EmploymentStatus.Terminated && e.EmploymentStatus != EmploymentStatus.Resigned && !e.IsDeleted);
+
+            _questionResults = new();
+            foreach (var question in _survey.Questions)
+            {
+                var allAnswers = _survey.Responses
+                    .SelectMany(r => r.Answers)
+                    .Where(a => a.SurveyQuestionId == question.Id)
+                    .ToList();
+
+                var result = new QuestionResult
+                {
+                    QuestionText = question.QuestionText,
+                    QuestionType = question.QuestionType,
+                    AnswerCount = allAnswers.Count
+                };
+
+                switch (question.QuestionType)
+                {
+                    case SurveyQuestionType.Rating:
+                        result.RatingDistribution = allAnswers
+                            .Where(a => a.Rating.HasValue)
+                            .GroupBy(a => a.Rating!.Value)
+                            .ToDictionary(g => g.Key, g => g.Count());
+                        result.AverageRating = allAnswers.Any(a => a.Rating.HasValue)
+                            ? allAnswers.Where(a => a.Rating.HasValue).Average(a => (double)a.Rating!.Value)
+                            : 0;
+                        break;
+
+                    case SurveyQuestionType.Text:
+                        result.TextAnswers = allAnswers
+                            .Where(a => !string.IsNullOrWhiteSpace(a.AnswerText))
+                            .Select(a => a.AnswerText!)
+                            .ToList();
+                        break;
+
+                    case SurveyQuestionType.MultipleChoice:
+                    case SurveyQuestionType.YesNo:
+                        result.OptionCounts = allAnswers
+                            .Where(a => !string.IsNullOrWhiteSpace(a.AnswerText))
+                            .GroupBy(a => a.AnswerText!)
+                            .ToDictionary(g => g.Key, g => g.Count());
+                        break;
+                }
+
+                _questionResults.Add(result);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading results: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static Color GetStatusColor(SurveyStatus status) => status switch
+    {
+        SurveyStatus.Draft => Color.Default,
+        SurveyStatus.Active => Color.Success,
+        SurveyStatus.Closed => Color.Dark,
+        _ => Color.Default
+    };
+
+    private static string GetTypeName(SurveyQuestionType type) => type switch
+    {
+        SurveyQuestionType.Rating => "Rating",
+        SurveyQuestionType.Text => "Text",
+        SurveyQuestionType.MultipleChoice => "Multiple Choice",
+        SurveyQuestionType.YesNo => "Yes/No",
+        _ => type.ToString()
+    };
+
+    private class QuestionResult
+    {
+        public string QuestionText { get; set; } = string.Empty;
+        public SurveyQuestionType QuestionType { get; set; }
+        public int AnswerCount { get; set; }
+        public double AverageRating { get; set; }
+        public Dictionary<int, int> RatingDistribution { get; set; } = new();
+        public List<string> TextAnswers { get; set; } = new();
+        public Dictionary<string, int> OptionCounts { get; set; } = new();
+    }
+}

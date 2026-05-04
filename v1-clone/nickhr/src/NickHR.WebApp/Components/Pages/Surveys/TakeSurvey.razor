@@ -1,0 +1,266 @@
+@page "/surveys/take/{Id:int}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Enums
+
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>NICKSCAN ERP — NickHR — Take Survey</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">
+    <MudIcon Icon="@Icons.Material.Filled.HowToVote" Class="mr-2" />Take Survey
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+}
+else if (_submitted)
+{
+    <MudCard Elevation="2" Class="text-center pa-6">
+        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Large" Color="Color.Success" />
+        <MudText Typo="Typo.h5" Class="mt-3">Thank You!</MudText>
+        <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-2">
+            Your response has been recorded.
+            @if (_survey?.IsAnonymous == true)
+            {
+                <span>Your identity was not stored.</span>
+            }
+        </MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/surveys" Class="mt-4">
+            Back to Surveys
+        </MudButton>
+    </MudCard>
+}
+else if (_alreadyTaken)
+{
+    <MudAlert Severity="Severity.Info" Icon="@Icons.Material.Filled.Info">
+        You have already completed this survey.
+        <MudButton Variant="Variant.Text" Color="Color.Primary" Href="/surveys">Back to Surveys</MudButton>
+    </MudAlert>
+}
+else if (_survey == null)
+{
+    <MudAlert Severity="Severity.Error">Survey not found or not available.</MudAlert>
+}
+else
+{
+    <MudCard Elevation="2" Class="mb-4">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h5">@_survey.Title</MudText>
+                @if (!string.IsNullOrWhiteSpace(_survey.Description))
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">@_survey.Description</MudText>
+                }
+                @if (_survey.IsAnonymous)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Icon="@Icons.Material.Filled.VisibilityOff" Class="mt-1">
+                        Anonymous Survey
+                    </MudChip>
+                }
+            </CardHeaderContent>
+        </MudCardHeader>
+    </MudCard>
+
+    @for (int i = 0; i < _questions.Count; i++)
+    {
+        var q = _questions[i];
+        var qi = i;
+        <MudCard Elevation="1" Class="mb-4">
+            <MudCardContent>
+                <MudText Typo="Typo.subtitle1" Class="mb-3">
+                    <span style="color:var(--mud-palette-primary)">@(qi + 1).</span> @q.Question.QuestionText
+                    <span style="color:red"> *</span>
+                </MudText>
+
+                @switch (q.Question.QuestionType)
+                {
+                    case SurveyQuestionType.Rating:
+                        <MudStack AlignItems="AlignItems.Start" Spacing="1">
+                            <MudRating @bind-SelectedValue="q.RatingValue" MaxValue="5" Size="Size.Large" />
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @(q.RatingValue == 0 ? "Not rated" : $"{q.RatingValue}/5")
+                            </MudText>
+                        </MudStack>
+                        break;
+
+                    case SurveyQuestionType.Text:
+                        <MudTextField @bind-Value="q.TextValue" Label="Your answer"
+                                      Variant="Variant.Outlined" Lines="3" MaxLength="2000" />
+                        break;
+
+                    case SurveyQuestionType.MultipleChoice:
+                        <MudRadioGroup T="string" @bind-Value="q.TextValue">
+                            @foreach (var option in q.Options)
+                            {
+                                <MudRadio T="string" Value="@option" Color="Color.Primary">@option</MudRadio>
+                            }
+                        </MudRadioGroup>
+                        break;
+
+                    case SurveyQuestionType.YesNo:
+                        <MudRadioGroup T="string" @bind-Value="q.TextValue">
+                            <MudRadio T="string" Value="@("Yes")" Color="Color.Success">Yes</MudRadio>
+                            <MudRadio T="string" Value="@("No")" Color="Color.Error">No</MudRadio>
+                        </MudRadioGroup>
+                        break;
+                }
+            </MudCardContent>
+        </MudCard>
+    }
+
+    <MudStack Row="true" Spacing="2">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Send"
+                   OnClick="SubmitAsync"
+                   Disabled="_submitting">
+            @if (_submitting) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" /> }
+            Submit Survey
+        </MudButton>
+        <MudButton Variant="Variant.Text" Href="/surveys">Cancel</MudButton>
+    </MudStack>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool _loading = true;
+    private bool _submitting = false;
+    private bool _submitted = false;
+    private bool _alreadyTaken = false;
+    private int _currentEmployeeId = 0;
+    private Survey? _survey;
+    private List<AnswerModel> _questions = new();
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Surveys", href: "/surveys"),
+        new BreadcrumbItem("Take Survey", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userName = authState.User.Identity?.Name;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == userName && !e.IsDeleted);
+        _currentEmployeeId = emp?.Id ?? 0;
+
+        await LoadSurveyAsync(db);
+    }
+
+    private async Task LoadSurveyAsync(NickHRDbContext db)
+    {
+        _loading = true;
+        try
+        {
+            var now = DateTime.UtcNow;
+            _survey = await db.Surveys
+                .Include(s => s.Questions.OrderBy(q => q.OrderIndex))
+                .FirstOrDefaultAsync(s => s.Id == Id && !s.IsDeleted && s.Status == SurveyStatus.Active
+                                         && s.StartDate <= now && s.EndDate >= now);
+
+            if (_survey != null && _currentEmployeeId > 0 && !_survey.IsAnonymous)
+            {
+                _alreadyTaken = await db.SurveyResponses
+                    .AnyAsync(r => !r.IsDeleted && r.SurveyId == Id && r.EmployeeId == _currentEmployeeId);
+            }
+
+            if (_survey != null && !_alreadyTaken)
+            {
+                _questions = _survey.Questions.Select(q => new AnswerModel
+                {
+                    Question = q,
+                    Options = q.Options != null
+                        ? System.Text.Json.JsonSerializer.Deserialize<List<string>>(q.Options) ?? new()
+                        : new()
+                }).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading survey: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        // Validate all questions answered
+        foreach (var q in _questions)
+        {
+            var isAnswered = q.Question.QuestionType == SurveyQuestionType.Rating
+                ? q.RatingValue > 0
+                : !string.IsNullOrWhiteSpace(q.TextValue);
+
+            if (!isAnswered)
+            {
+                Snackbar.Add($"Please answer question {_questions.IndexOf(q) + 1}.", Severity.Warning);
+                return;
+            }
+        }
+
+        _submitting = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var response = new SurveyResponse
+            {
+                SurveyId = Id,
+                EmployeeId = _survey!.IsAnonymous ? null : _currentEmployeeId,
+                SubmittedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            foreach (var q in _questions)
+            {
+                response.Answers.Add(new SurveyAnswer
+                {
+                    SurveyQuestionId = q.Question.Id,
+                    AnswerText = q.Question.QuestionType != SurveyQuestionType.Rating ? q.TextValue : null,
+                    Rating = q.Question.QuestionType == SurveyQuestionType.Rating ? q.RatingValue : null,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            db.SurveyResponses.Add(response);
+            await db.SaveChangesAsync();
+
+            _submitted = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error submitting survey: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private class AnswerModel
+    {
+        public SurveyQuestion Question { get; set; } = null!;
+        public int RatingValue { get; set; } = 0;
+        public string? TextValue { get; set; }
+        public List<string> Options { get; set; } = new();
+    }
+}

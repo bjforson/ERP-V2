@@ -1,0 +1,295 @@
+@page "/my-payslips"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.Payroll
+@using NickHR.Core.Enums
+@using NickHR.Services.Payroll
+@using NickHR.Services.Payroll.Models
+
+@inject IDbContextFactory<NickHRDbContext> DbFactory
+@inject IPayrollProcessingService PayrollService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject IServiceProvider ServiceProvider
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — My Payslips</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.Receipt" Class="mr-2" />My Payslips
+</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_employeeId == 0)
+{
+    <MudAlert Severity="Severity.Warning">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+else if (!_payrollItems.Any())
+{
+    <MudAlert Severity="Severity.Info">No payslips available yet.</MudAlert>
+}
+else
+{
+    <MudTable Items="_payrollItems" Dense="false" Hover="true" Breakpoint="Breakpoint.Sm"
+              Filter="new Func<PayrollItemViewModel, bool>(FilterFunc)">
+        <ToolBarContent>
+            <MudText Typo="Typo.h6">Pay History</MudText>
+            <MudSpacer />
+            <MudTextField @bind-Value="_searchTerm" Placeholder="Search..." Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium"
+                          Class="mt-0" />
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh><MudTableSortLabel SortBy="new Func<PayrollItemViewModel, object>(x => x.Year * 100 + x.Month)">Pay Period</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortBy="new Func<PayrollItemViewModel, object>(x => x.Item.GrossPay)">Gross Pay</MudTableSortLabel></MudTh>
+            <MudTh>SSNIT</MudTh>
+            <MudTh>PAYE</MudTh>
+            <MudTh><MudTableSortLabel SortBy="new Func<PayrollItemViewModel, object>(x => x.Item.NetPay)">Net Pay</MudTableSortLabel></MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Pay Period">
+                <MudText Typo="Typo.subtitle2">@(new DateTime(context.Year, context.Month, 1).ToString("MMMM yyyy"))</MudText>
+            </MudTd>
+            <MudTd DataLabel="Gross Pay">GH₵ @context.Item.GrossPay.ToString("N2")</MudTd>
+            <MudTd DataLabel="SSNIT">GH₵ @context.Item.SSNITEmployee.ToString("N2")</MudTd>
+            <MudTd DataLabel="PAYE">GH₵ @context.Item.PAYE.ToString("N2")</MudTd>
+            <MudTd DataLabel="Net Pay">
+                <MudText Typo="Typo.subtitle2" Color="Color.Success">GH₵ @context.Item.NetPay.ToString("N2")</MudText>
+            </MudTd>
+            <MudTd DataLabel="Status">
+                <MudChip T="string" Size="Size.Small"
+                         Color="@GetStatusColor(context.RunStatus)">
+                    @context.RunStatus
+                </MudChip>
+            </MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.ExpandMore"
+                               Title="View Details"
+                               OnClick="() => ToggleDetails(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.PictureAsPdf"
+                               Title="Download PDF" Color="Color.Error"
+                               OnClick="() => DownloadPayslipAsync(context)"
+                               Disabled="context.Downloading" />
+            </MudTd>
+        </RowTemplate>
+        <ChildRowContent>
+            @if (context.ShowDetails)
+            {
+                <MudTr>
+                    <MudTd colspan="7">
+                        <MudCard Outlined="true" Class="ma-2">
+                            <MudCardContent>
+                                <MudGrid>
+                                    <MudItem xs="12" sm="6">
+                                        <MudText Typo="Typo.subtitle2" Color="Color.Success" Class="mb-2">EARNINGS</MudText>
+                                        <MudSimpleTable Dense="true">
+                                            <tbody>
+                                                <tr>
+                                                    <td>Basic Salary</td>
+                                                    <td align="right">GH₵ @context.Item.BasicSalary.ToString("N2")</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Allowances</td>
+                                                    <td align="right">GH₵ @context.Item.TotalAllowances.ToString("N2")</td>
+                                                </tr>
+                                                @if (context.Item.OvertimePay > 0)
+                                                {
+                                                    <tr>
+                                                        <td>Overtime</td>
+                                                        <td align="right">GH₵ @context.Item.OvertimePay.ToString("N2")</td>
+                                                    </tr>
+                                                }
+                                                @foreach (var detail in context.Earnings)
+                                                {
+                                                    <tr>
+                                                        <td>@detail.ComponentName</td>
+                                                        <td align="right">GH₵ @detail.Amount.ToString("N2")</td>
+                                                    </tr>
+                                                }
+                                                <tr style="font-weight:bold;border-top:1px solid #ccc">
+                                                    <td>Gross Pay</td>
+                                                    <td align="right">GH₵ @context.Item.GrossPay.ToString("N2")</td>
+                                                </tr>
+                                            </tbody>
+                                        </MudSimpleTable>
+                                    </MudItem>
+                                    <MudItem xs="12" sm="6">
+                                        <MudText Typo="Typo.subtitle2" Color="Color.Error" Class="mb-2">DEDUCTIONS</MudText>
+                                        <MudSimpleTable Dense="true">
+                                            <tbody>
+                                                <tr>
+                                                    <td>SSNIT (5.5%)</td>
+                                                    <td align="right">GH₵ @context.Item.SSNITEmployee.ToString("N2")</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>PAYE Tax</td>
+                                                    <td align="right">GH₵ @context.Item.PAYE.ToString("N2")</td>
+                                                </tr>
+                                                @foreach (var detail in context.Deductions)
+                                                {
+                                                    <tr>
+                                                        <td>@detail.ComponentName</td>
+                                                        <td align="right">GH₵ @detail.Amount.ToString("N2")</td>
+                                                    </tr>
+                                                }
+                                                <tr style="font-weight:bold;border-top:1px solid #ccc">
+                                                    <td>Total Deductions</td>
+                                                    <td align="right">GH₵ @context.Item.TotalDeductions.ToString("N2")</td>
+                                                </tr>
+                                            </tbody>
+                                        </MudSimpleTable>
+                                    </MudItem>
+                                    <MudItem xs="12">
+                                        <MudPaper Class="pa-3 mt-2" Style="background-color: #1565C0; color: white;">
+                                            <MudGrid>
+                                                <MudItem xs="6">
+                                                    <MudText Typo="Typo.h6" Style="color:white;">NET PAY</MudText>
+                                                </MudItem>
+                                                <MudItem xs="6" Class="d-flex justify-end">
+                                                    <MudText Typo="Typo.h6" Style="color:white;">GH₵ @context.Item.NetPay.ToString("N2")</MudText>
+                                                </MudItem>
+                                            </MudGrid>
+                                        </MudPaper>
+                                    </MudItem>
+                                </MudGrid>
+                            </MudCardContent>
+                        </MudCard>
+                    </MudTd>
+                </MudTr>
+            }
+        </ChildRowContent>
+        <NoRecordsContent>
+            <MudText>No payslips found for the current search.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+}
+
+@code {
+    private bool _loading = true;
+    private List<PayrollItemViewModel> _payrollItems = new();
+    private string _searchTerm = string.Empty;
+    private int _employeeId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPayslipsAsync();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadPayslipsAsync()
+    {
+        _loading = true;
+        var empId = await GetCurrentEmployeeIdAsync();
+        if (empId == null) { _employeeId = 0; _loading = false; return; }
+        _employeeId = empId.Value;
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+
+        var items = await ctx.PayrollItems
+            .Include(i => i.PayrollRun)
+            .Include(i => i.PayrollItemDetails)
+            .Where(i => i.EmployeeId == _employeeId)
+            .OrderByDescending(i => i.PayrollRun.PayPeriodYear)
+            .ThenByDescending(i => i.PayrollRun.PayPeriodMonth)
+            .ToListAsync();
+
+        _payrollItems = items.Select(i => new PayrollItemViewModel
+        {
+            Item = i,
+            Month = i.PayrollRun.PayPeriodMonth,
+            Year = i.PayrollRun.PayPeriodYear,
+            RunStatus = i.PayrollRun.Status,
+            Earnings = i.PayrollItemDetails.Where(d => d.ComponentType == "Earning").ToList(),
+            Deductions = i.PayrollItemDetails.Where(d => d.ComponentType == "Deduction").ToList()
+        }).ToList();
+
+        _loading = false;
+    }
+
+    private void ToggleDetails(PayrollItemViewModel vm) => vm.ShowDetails = !vm.ShowDetails;
+
+    private bool FilterFunc(PayrollItemViewModel vm)
+    {
+        if (string.IsNullOrWhiteSpace(_searchTerm)) return true;
+        var period = new DateTime(vm.Year, vm.Month, 1).ToString("MMMM yyyy");
+        return period.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task DownloadPayslipAsync(PayrollItemViewModel vm)
+    {
+        vm.Downloading = true;
+        try
+        {
+            var result = await PayrollService.GetPayslipAsync(vm.Item.PayrollRunId, _employeeId);
+            if (result == null)
+            {
+                Snackbar.Add("Payslip data not found.", Severity.Warning);
+                return;
+            }
+
+            var pdfBytes = PayslipPdfGenerator.Generate(result, vm.Month, vm.Year);
+            var fileName = $"Payslip_{vm.Month:D2}_{vm.Year}.pdf";
+            var base64 = Convert.ToBase64String(pdfBytes);
+            await JS.InvokeVoidAsync("downloadFileFromBase64", base64, fileName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to generate PDF: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            vm.Downloading = false;
+        }
+    }
+
+    private static Color GetStatusColor(PayrollStatus status) => status switch
+    {
+        PayrollStatus.Locked => Color.Success,
+        PayrollStatus.Completed => Color.Info,
+        PayrollStatus.Draft => Color.Warning,
+        PayrollStatus.Reversed => Color.Error,
+        _ => Color.Default
+    };
+
+    private class PayrollItemViewModel
+    {
+        public PayrollItem Item { get; set; } = null!;
+        public int Month { get; set; }
+        public int Year { get; set; }
+        public PayrollStatus RunStatus { get; set; }
+        public List<PayrollItemDetail> Earnings { get; set; } = new();
+        public List<PayrollItemDetail> Deductions { get; set; } = new();
+        public bool ShowDetails { get; set; }
+        public bool Downloading { get; set; }
+    }
+}

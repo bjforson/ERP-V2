@@ -1,0 +1,542 @@
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Identity
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Interfaces
+@using NickHR.Services.Common
+@using NickHR.Services.SystemAccess
+@using NickHR.WebApp.Components.Shared
+@using NickHR.WebApp.Services
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject AuthStateProvider AuthStateProvider
+@inject IIdentityProvisioningService Provisioning
+
+<MudDialog>
+    <DialogContent>
+        @if (_isLoading)
+        {
+            <div class="d-flex justify-center pa-4">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            <MudForm @ref="_form" @bind-IsValid="_isValid">
+                <MudTextField @bind-Value="_email" Label="Email" Required="true"
+                              RequiredError="Email is required"
+                              InputType="InputType.Email"
+                              Disabled="@(_isEdit)"
+                              Class="mb-3" />
+                <MudTextField @bind-Value="_firstName" Label="First Name" Required="true"
+                              RequiredError="First name is required" Class="mb-3" />
+                <MudTextField @bind-Value="_lastName" Label="Last Name" Required="true"
+                              RequiredError="Last name is required" Class="mb-3" />
+                <MudSelect T="string" Label="Role" @bind-Value="_selectedRole" Required="true"
+                           RequiredError="Role is required" Class="mb-3">
+                    @foreach (var r in _roles)
+                    {
+                        <MudSelectItem T="string" Value="@r">@r</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudAutocomplete T="int?" Label="Link to Employee (optional)" @bind-Value="_employeeId"
+                                 SearchFunc="SearchEmployees" ToStringFunc="@(id => _employees.FirstOrDefault(e => e.Id == id).Name ?? "")"
+                                 Clearable="true" Class="mb-3" Variant="Variant.Text"
+                                 AdornmentIcon="@Icons.Material.Filled.Search" Adornment="Adornment.Start"
+                                 Dense="true" MaxItems="20" DebounceInterval="300"
+                                 Placeholder="Type to search by name or code..." />
+                @if (!_isEdit)
+                {
+                    <MudCheckBox T="bool" @bind-Value="_sendInvitationEmail" Label="Send invitation email with login details" Color="Color.Primary" Class="mb-2" />
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                        <MudText Typo="Typo.caption">A secure temporary password will be auto-generated. The user will be required to change it on first login.</MudText>
+                    </MudAlert>
+                }
+                @if (_isEdit)
+                {
+                    <MudCheckBox T="bool" @bind-Value="_isActive" Label="Active" />
+                }
+
+                @* External System Access *@
+                <MudDivider Class="my-4" />
+                <MudText Typo="Typo.subtitle2" Class="mb-2">
+                    <MudIcon Icon="@Icons.Material.Filled.Security" Size="Size.Small" Class="mr-1" />
+                    External System Access
+                </MudText>
+                <MudText Typo="Typo.caption" Class="mb-3" Style="color: var(--mud-palette-text-secondary);">
+                    Grant this user access to additional Nick TC-Scan systems. Credentials are shared across systems.
+                </MudText>
+
+                @* NSCIS access *@
+                <MudPaper Elevation="0" Class="pa-3 mb-2" Style="border: 1px solid var(--mud-palette-divider); border-radius: 8px;">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                        <MudCheckBox T="bool" @bind-Value="_grantNscisAccess" Color="Color.Primary" Dense="true" />
+                        <div>
+                            <MudText Typo="Typo.body2" Style="font-weight: 600;">NSCIS</MudText>
+                            <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">
+                                NickScan Central Imaging System — container scanning & image analysis
+                            </MudText>
+                        </div>
+                    </MudStack>
+
+                    @if (_grantNscisAccess)
+                    {
+                        @if (_nscisRoles.Count == 0)
+                        {
+                            <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                                NSCIS roles could not be loaded. Ensure the NSCIS API is running and NICKSCAN_SERVICE_API_KEY is configured.
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudSelect T="int?" Label="NSCIS Role" @bind-Value="_selectedNscisRoleId"
+                                       Dense="true" Class="mt-2" Variant="Variant.Outlined">
+                                @foreach (var r in _nscisRoles)
+                                {
+                                    <MudSelectItem T="int?" Value="@((int?)r.Id)">@r.DisplayName</MudSelectItem>
+                                }
+                            </MudSelect>
+                        }
+                    }
+                </MudPaper>
+
+                @* W3B Phase 2 (2026-04-29) — NickFinance access section. Mirrors
+                   the NSCIS block above. The 15-role catalog is multi-select; SoD
+                   warnings + ExternalAuditor expiry / firm fields render inline.
+                   ApplyAsync is called from Save() AFTER the user row commits. *@
+                <NickFinanceAccessSection @ref="_nickFinanceAccessSection"
+                                          Email="@_email"
+                                          DisplayName="@($"{_firstName} {_lastName}".Trim())"
+                                          UserId="@_identityUserId"
+                                          OnStateChanged="OnNickFinanceStateChanged" />
+            </MudForm>
+
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-2">@_errorMessage</MudAlert>
+            }
+            @if (_nickFinanceState is not null && !_nickFinanceState.IsValid)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">
+                    NickFinance access section has invalid grants — pick a site for every site-required role and
+                    fill ExpiresAt + audit firm for ExternalAuditor.
+                </MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_isSaving">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save"
+                   Disabled="@(_isSaving || _isLoading || (_nickFinanceState is not null && !_nickFinanceState.IsValid))">
+            @if (_isSaving) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+            @(_isEdit ? "Save Changes" : "Create User")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string? UserId { get; set; }
+
+    private MudForm? _form;
+    private bool _isValid;
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private bool _isEdit => !string.IsNullOrEmpty(UserId);
+    private string _errorMessage = string.Empty;
+
+    private string _email = string.Empty;
+    private string _firstName = string.Empty;
+    private string _lastName = string.Empty;
+    private string _selectedRole = string.Empty;
+    private int? _employeeId;
+    private bool _isActive = true;
+    private bool _sendInvitationEmail = true;
+
+    private List<string> _roles = new();
+    private List<(int Id, string Name)> _employees = new();
+
+    // External system access
+    private bool _grantNscisAccess;
+    private int? _selectedNscisRoleId;
+    private List<NscisRole> _nscisRoles = new();
+    private bool _originalNscisAccessGranted; // Track initial state to detect changes
+    private int? _originalNscisRoleId;
+
+    // W3B Phase 2 — NickFinance access section.
+    private NickFinanceAccessSection? _nickFinanceAccessSection;
+    private NickFinanceAccessSectionState? _nickFinanceState;
+    /// <summary>
+    /// The identity.users.internal_user_id for the user being edited (null
+    /// in create mode until after the row commits). The section uses this
+    /// to pre-populate existing grants on edit; on create it is filled in
+    /// post-commit and ApplyAsync runs at that point.
+    /// </summary>
+    private Guid? _identityUserId;
+
+    private Task OnNickFinanceStateChanged(NickFinanceAccessSectionState state)
+    {
+        _nickFinanceState = state;
+        return Task.CompletedTask;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+            _roles = db.Roles.Where(r => r.Name != null).Select(r => r.Name!).OrderBy(n => n).ToList();
+            _employees = (await db.Employees.OrderBy(e => e.LastName)
+                .Select(e => new { e.Id, Name = e.FirstName + " " + e.LastName + " (" + e.EmployeeCode + ")" })
+                .ToListAsync()).Select(e => (e.Id, e.Name)).ToList();
+
+            if (_isEdit)
+            {
+                var user = await userManager.FindByIdAsync(UserId!);
+                if (user != null)
+                {
+                    _email = user.Email ?? string.Empty;
+                    _firstName = user.FirstName;
+                    _lastName = user.LastName;
+                    _employeeId = user.EmployeeId;
+                    _isActive = user.IsActive;
+                    var roles = await userManager.GetRolesAsync(user);
+                    _selectedRole = roles.FirstOrDefault() ?? string.Empty;
+
+                    // W3B Phase 2: resolve the canonical identity.users id for
+                    // this email so the NickFinance section can pre-populate
+                    // existing grants. Returns null if the user hasn't been
+                    // provisioned into identity.users yet — section then
+                    // renders in "intent capture" mode and ApplyAsync runs
+                    // after the post-save provisioning step.
+                    if (!string.IsNullOrWhiteSpace(_email))
+                    {
+                        _identityUserId = await Provisioning.GetUserIdByEmailAsync(_email, tenantId: 1L);
+                    }
+                }
+
+                // Load existing external system access
+                var sysAccessSvc = scope.ServiceProvider.GetRequiredService<ISystemAccessService>();
+                var accessRecords = await sysAccessSvc.GetUserAccessAsync(UserId!);
+                var nscisAccess = accessRecords.FirstOrDefault(a =>
+                    a.SystemName == SystemAccessService.SystemNameNscis && a.IsActive);
+                if (nscisAccess != null)
+                {
+                    _grantNscisAccess = true;
+                    _selectedNscisRoleId = nscisAccess.RoleId;
+                    _originalNscisAccessGranted = true;
+                    _originalNscisRoleId = nscisAccess.RoleId;
+                }
+            }
+
+            // Load NSCIS roles for dropdown
+            try
+            {
+                var sysAccessSvc = scope.ServiceProvider.GetRequiredService<ISystemAccessService>();
+                _nscisRoles = await sysAccessSvc.GetNscisRolesAsync();
+            }
+            catch
+            {
+                // Silently fail — UI will show a warning if the list is empty
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string GenerateTemporaryPassword()
+    {
+        const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+        const string lower = "abcdefghjkmnpqrstuvwxyz";
+        const string digits = "23456789";
+        const string special = "!@#$%";
+        var rng = new Random();
+
+        // Ensure at least one of each required type
+        var chars = new List<char>
+        {
+            upper[rng.Next(upper.Length)],
+            upper[rng.Next(upper.Length)],
+            lower[rng.Next(lower.Length)],
+            lower[rng.Next(lower.Length)],
+            lower[rng.Next(lower.Length)],
+            digits[rng.Next(digits.Length)],
+            digits[rng.Next(digits.Length)],
+            special[rng.Next(special.Length)]
+        };
+
+        // Shuffle
+        for (int i = chars.Count - 1; i > 0; i--)
+        {
+            int j = rng.Next(i + 1);
+            (chars[i], chars[j]) = (chars[j], chars[i]);
+        }
+
+        return "NHR-" + new string(chars.ToArray());
+    }
+
+    private async Task Save()
+    {
+        if (_form != null) await _form.Validate();
+        if (!_isValid) return;
+
+        _isSaving = true;
+        _errorMessage = string.Empty;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var sysAccessSvc = scope.ServiceProvider.GetRequiredService<ISystemAccessService>();
+            string? savedUserId = null;
+
+            if (_isEdit)
+            {
+                var user = await userManager.FindByIdAsync(UserId!);
+                if (user == null) { _errorMessage = "User not found."; return; }
+                user.FirstName = _firstName;
+                user.LastName = _lastName;
+                user.EmployeeId = _employeeId;
+                user.IsActive = _isActive;
+                var updateResult = await userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded) { _errorMessage = string.Join("; ", updateResult.Errors.Select(e => e.Description)); return; }
+
+                // Update role
+                var currentRoles = await userManager.GetRolesAsync(user);
+                await userManager.RemoveFromRolesAsync(user, currentRoles);
+                if (!string.IsNullOrEmpty(_selectedRole))
+                    await userManager.AddToRoleAsync(user, _selectedRole);
+
+                savedUserId = user.Id;
+                Snackbar.Add("User updated successfully.", Severity.Success);
+            }
+            else
+            {
+                // Auto-generate temporary password
+                var tempPassword = GenerateTemporaryPassword();
+
+                var user = new ApplicationUser
+                {
+                    UserName = _email,
+                    Email = _email,
+                    FirstName = _firstName,
+                    LastName = _lastName,
+                    EmployeeId = _employeeId,
+                    IsActive = true,
+                    EmailConfirmed = true,
+                    MustChangePassword = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+                var createResult = await userManager.CreateAsync(user, tempPassword);
+                if (!createResult.Succeeded) { _errorMessage = string.Join("; ", createResult.Errors.Select(e => e.Description)); return; }
+                if (!string.IsNullOrEmpty(_selectedRole))
+                    await userManager.AddToRoleAsync(user, _selectedRole);
+
+                // Send invitation email
+                if (_sendInvitationEmail)
+                {
+                    try
+                    {
+                        var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+                        var loginUrl = Navigation.BaseUri.TrimEnd('/') + "/login";
+                        var mergeFields = new Dictionary<string, string>
+                        {
+                            { "EmployeeName", $"{_firstName} {_lastName}" },
+                            { "Email", _email },
+                            { "TempPassword", tempPassword },
+                            { "LoginUrl", loginUrl },
+                            { "CompanyName", "NickHR" }
+                        };
+                        await emailService.SendTemplatedAsync(_email, "USER_INVITATION", mergeFields);
+                        Snackbar.Add($"User created. Invitation email sent to {_email}.", Severity.Success);
+                    }
+                    catch (Exception emailEx)
+                    {
+                        Snackbar.Add($"User created but email failed: {emailEx.Message}", Severity.Warning);
+                    }
+                }
+                else
+                {
+                    Snackbar.Add("User created successfully.", Severity.Success);
+                }
+
+                // Always show the temp password so admin can share manually if needed
+                Snackbar.Add($"Temporary password: {tempPassword}", Severity.Info,
+                    config => { config.VisibleStateDuration = 30000; config.ShowCloseIcon = true; });
+
+                savedUserId = user.Id;
+            }
+
+            // Apply external system access changes (NSCIS)
+            if (!string.IsNullOrEmpty(savedUserId))
+            {
+                await ApplySystemAccessChangesAsync(sysAccessSvc, savedUserId);
+            }
+
+            // W3B Phase 2: apply NickFinance access changes. Runs AFTER the
+            // user row commits so we can pass the section a real identity
+            // uuid. On create flows the user has no identity row yet — we
+            // upsert one via ProvisionEmployeeAsync (idempotent) and use
+            // the returned id.
+            if (_nickFinanceAccessSection is not null)
+            {
+                try
+                {
+                    Guid identityUserId;
+                    if (_identityUserId is Guid existingId)
+                    {
+                        identityUserId = existingId;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(_email))
+                    {
+                        identityUserId = await Provisioning.ProvisionEmployeeAsync(
+                            _email,
+                            $"{_firstName} {_lastName}".Trim(),
+                            tenantId: 1L);
+                        _identityUserId = identityUserId;
+                    }
+                    else
+                    {
+                        identityUserId = Guid.Empty;
+                    }
+
+                    if (identityUserId != Guid.Empty)
+                    {
+                        var grantedBy = await ResolveGrantedByUserIdAsync();
+                        var ok = await _nickFinanceAccessSection.ApplyAsync(identityUserId, grantedBy);
+                        if (!ok)
+                        {
+                            // The section already surfaces the SoD error inline; do not close.
+                            Snackbar.Add("NickFinance access save was blocked by an SoD violation.", Severity.Error);
+                            _isSaving = false;
+                            return;
+                        }
+                    }
+                }
+                catch (Exception nfx)
+                {
+                    Snackbar.Add($"NickFinance access save failed: {nfx.Message}", Severity.Warning);
+                }
+            }
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    /// <summary>
+    /// Resolve the cookie-authenticated admin's identity.users id (auto-
+    /// provisioning a row if needed) so role grants stamp granted_by_user_id
+    /// with a real FK target.
+    /// </summary>
+    private async Task<Guid> ResolveGrantedByUserIdAsync()
+    {
+        try
+        {
+            var state = await AuthStateProvider.GetAuthenticationStateAsync();
+            var email = state.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                       ?? state.User.FindFirst("email")?.Value
+                       ?? state.User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(email)) return Guid.Empty;
+
+            var existing = await Provisioning.GetUserIdByEmailAsync(email, tenantId: 1L);
+            if (existing is not null) return existing.Value;
+
+            using var scope = ServiceProvider.CreateScope();
+            var userManager = scope.ServiceProvider.GetService<UserManager<ApplicationUser>>();
+            var displayName = email;
+            if (userManager is not null)
+            {
+                var u = await userManager.FindByEmailAsync(email);
+                if (u is not null) displayName = $"{u.FirstName} {u.LastName}".Trim();
+            }
+            return await Provisioning.ProvisionEmployeeAsync(email, displayName, tenantId: 1L);
+        }
+        catch
+        {
+            return Guid.Empty;
+        }
+    }
+
+    private async Task ApplySystemAccessChangesAsync(ISystemAccessService sysAccessSvc, string userId)
+    {
+        // Only call the service if something actually changed
+        var nscisChanged = _grantNscisAccess != _originalNscisAccessGranted
+                         || (_grantNscisAccess && _selectedNscisRoleId != _originalNscisRoleId);
+
+        if (!nscisChanged) return;
+
+        if (_grantNscisAccess)
+        {
+            if (_selectedNscisRoleId == null)
+            {
+                Snackbar.Add("NSCIS access checked but no role selected — skipped.", Severity.Warning);
+                return;
+            }
+
+            var result = await sysAccessSvc.GrantAccessAsync(
+                userId, SystemAccessService.SystemNameNscis, _selectedNscisRoleId.Value, actor: "Admin");
+
+            if (result.Success)
+            {
+                Snackbar.Add("NSCIS access granted.", Severity.Success);
+                if (!string.IsNullOrEmpty(result.TemporaryPassword))
+                {
+                    Snackbar.Add($"NSCIS temp password: {result.TemporaryPassword}", Severity.Info,
+                        cfg => { cfg.VisibleStateDuration = 30000; cfg.ShowCloseIcon = true; });
+                }
+            }
+            else
+            {
+                Snackbar.Add($"NSCIS provisioning failed: {result.ErrorMessage}", Severity.Error);
+            }
+        }
+        else if (_originalNscisAccessGranted)
+        {
+            var result = await sysAccessSvc.RevokeAccessAsync(
+                userId, SystemAccessService.SystemNameNscis, actor: "Admin");
+
+            if (result.Success)
+            {
+                Snackbar.Add("NSCIS access revoked.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"NSCIS revocation failed: {result.ErrorMessage}", Severity.Error);
+            }
+        }
+    }
+
+    private Task<IEnumerable<int?>> SearchEmployees(string value, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Task.FromResult(_employees.Select(e => (int?)e.Id));
+
+        var results = _employees
+            .Where(e => e.Name.Contains(value, StringComparison.OrdinalIgnoreCase))
+            .Select(e => (int?)e.Id);
+
+        return Task.FromResult(results);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

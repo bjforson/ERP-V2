@@ -1,0 +1,138 @@
+@page "/expenses/submit"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using NickHR.Core.Enums
+@using NickHR.Core.Interfaces
+@inject IExpenseClaimService ExpenseService
+@inject ICurrentUserService CurrentUser
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>NICKSCAN ERP — NickHR — Submit Expense Claim</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">
+    <MudIcon Icon="@Icons.Material.Filled.Receipt" Class="mr-2" />
+    Submit Expense Claim
+</MudText>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+@if (_employeeId == null)
+{
+    <MudAlert Severity="Severity.Warning">Your account is not linked to an employee record. Contact HR.</MudAlert>
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12" md="7">
+            <MudCard Elevation="2">
+                <MudCardContent>
+                    <MudForm @ref="_form" @bind-IsValid="_isValid">
+                        <MudGrid Spacing="3">
+                            <MudItem xs="12" sm="6">
+                                <MudSelect T="ExpenseCategory" @bind-Value="_category" Label="Category" Variant="Variant.Outlined"
+                                           Required="true" RequiredError="Category is required.">
+                                    @foreach (ExpenseCategory cat in Enum.GetValues(typeof(ExpenseCategory)))
+                                    {
+                                        <MudSelectItem Value="@cat">@cat</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" sm="6">
+                                <MudNumericField T="decimal" @bind-Value="_amount" Label="Amount (GH₵)"
+                                                 Variant="Variant.Outlined" Min="0.01m" Format="N2"
+                                                 Required="true" RequiredError="Amount is required." />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField @bind-Value="_description" Label="Description" Variant="Variant.Outlined"
+                                              Lines="3" Required="true" RequiredError="Description is required."
+                                              MaxLength="500" Counter="500" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField @bind-Value="_receiptPath" Label="Receipt Path / Reference (optional)"
+                                              Variant="Variant.Outlined" Placeholder="e.g. uploads/receipts/receipt001.pdf" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField @bind-Value="_notes" Label="Additional Notes (optional)"
+                                              Variant="Variant.Outlined" Lines="2" MaxLength="500" />
+                            </MudItem>
+                        </MudGrid>
+                    </MudForm>
+                </MudCardContent>
+                <MudCardActions Class="pa-4 pt-0 d-flex justify-end gap-2">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Default" Href="/expenses/my">Cancel</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Send"
+                               OnClick="SubmitAsync" Disabled="_isSubmitting">
+                        @if (_isSubmitting)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                        }
+                        Submit Claim
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" md="5">
+            <MudCard Elevation="1">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">
+                        <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Class="mr-1" />
+                        Submission Tips
+                    </MudText>
+                    <MudList T="string" Dense="true">
+                        <MudListItem Icon="@Icons.Material.Filled.CheckCircle">Include a valid receipt reference for faster approval.</MudListItem>
+                        <MudListItem Icon="@Icons.Material.Filled.CheckCircle">Describe the business purpose clearly.</MudListItem>
+                        <MudListItem Icon="@Icons.Material.Filled.CheckCircle">Claims are reviewed by HR within 3 working days.</MudListItem>
+                        <MudListItem Icon="@Icons.Material.Filled.CheckCircle">Payment will be made via bank transfer upon approval.</MudListItem>
+                    </MudList>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private MudForm? _form;
+    private bool _isValid;
+    private bool _isSubmitting;
+    private int? _employeeId;
+
+    private ExpenseCategory _category = ExpenseCategory.Other;
+    private decimal _amount;
+    private string _description = string.Empty;
+    private string? _receiptPath;
+    private string? _notes;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Expense Claims", href: "/expenses/my"),
+        new BreadcrumbItem("Submit Claim", href: null, disabled: true)
+    };
+
+    protected override void OnInitialized()
+    {
+        _employeeId = CurrentUser.EmployeeId;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (_form != null) await _form.Validate();
+        if (!_isValid || _employeeId == null) return;
+
+        _isSubmitting = true;
+        try
+        {
+            await ExpenseService.SubmitAsync(_employeeId.Value, _category, _description, _amount, _receiptPath, _notes);
+            Snackbar.Add("Expense claim submitted successfully!", Severity.Success);
+            Navigation.NavigateTo("/expenses/my");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

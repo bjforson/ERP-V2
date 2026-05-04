@@ -1,0 +1,251 @@
+@page "/medical/my-claims"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Medical
+@using NickHR.Core.Enums
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>NICKSCAN ERP — NickHR — My Medical Claims</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-2">
+    <MudText Typo="Typo.h5">My Medical Claims</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+               Href="/medical/claim">
+        Submit Claim
+    </MudButton>
+</div>
+<MudBreadcrumbs Items="_breadcrumbs" Class="mb-4 pa-0" />
+
+<!-- Year Selector & Balance Summary -->
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="4">
+        <MudSelect T="int" Value="_selectedYear" Label="Year" Variant="Variant.Outlined"
+                   ValueChanged="@((int v) => { _selectedYear = v; _ = OnYearChanged(v); })">
+            @for (int y = DateTime.Today.Year; y >= DateTime.Today.Year - 3; y--)
+            {
+                <MudSelectItem Value="y">@y</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="12" sm="8">
+        <MudCard Elevation="1">
+            <MudCardContent Class="py-2">
+                <MudGrid Spacing="1">
+                    <MudItem xs="4">
+                        <MudText Typo="Typo.overline" Color="Color.Secondary">Annual Limit</MudText>
+                        <MudText Typo="Typo.h6">GH₵ @_annualLimit.ToString("N2")</MudText>
+                    </MudItem>
+                    <MudItem xs="4">
+                        <MudText Typo="Typo.overline" Color="Color.Secondary">Used</MudText>
+                        <MudText Typo="Typo.h6" Color="Color.Warning">GH₵ @_usedAmount.ToString("N2")</MudText>
+                    </MudItem>
+                    <MudItem xs="4">
+                        <MudText Typo="Typo.overline" Color="Color.Secondary">Remaining</MudText>
+                        <MudText Typo="Typo.h6" Color="@(_remainingAmount > 0 ? Color.Success : Color.Error)">
+                            GH₵ @_remainingAmount.ToString("N2")
+                        </MudText>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudProgressLinear Color="@GetProgressColor()" Value="@GetUsagePercent()"
+                                           Rounded="true" Size="Size.Small" />
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+<!-- Claims Table -->
+<MudCard Elevation="2">
+    <MudCardContent>
+        @if (_isLoading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (!_claims.Any())
+        {
+            <div class="d-flex flex-column align-center pa-8">
+                <MudIcon Icon="@Icons.Material.Filled.LocalHospital" Size="Size.Large" Color="Color.Secondary" Class="mb-3" />
+                <MudText Typo="Typo.body1" Color="Color.Secondary">No claims found for @_selectedYear.</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/medical/claim" Class="mt-3">Submit a Claim</MudButton>
+            </div>
+        }
+        else
+        {
+            <MudTable Items="_claims" Dense="true" Striped="true" Hover="true" @bind-RowsPerPage="_rowsPerPage">
+                <HeaderContent>
+                    <MudTh><MudTableSortLabel SortBy="new Func<MedicalClaim, object>(x => x.ClaimDate)">Date</MudTableSortLabel></MudTh>
+                    <MudTh>Category</MudTh>
+                    <MudTh>Provider</MudTh>
+                    <MudTh>Claimed (GH₵)</MudTh>
+                    <MudTh>Approved (GH₵)</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Payment</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.ClaimDate.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="GetCategoryColor(context.Category)">
+                            @context.Category.ToString()
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>@(context.ProviderName ?? "—")</MudTd>
+                    <MudTd>@context.ClaimAmount.ToString("N2")</MudTd>
+                    <MudTd>
+                        @if (context.Status == MedicalClaimStatus.Submitted || context.Status == MedicalClaimStatus.UnderReview)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">Pending</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2">@context.ApprovedAmount.ToString("N2")</MudText>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        <MudChip T="string" Size="Size.Small" Color="GetStatusColor(context.Status)"
+                                 Icon="@GetStatusIcon(context.Status)">
+                            @GetStatusLabel(context.Status)
+                        </MudChip>
+                    </MudTd>
+                    <MudTd>
+                        @if (context.PaymentMethod.HasValue)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="@(context.Status == MedicalClaimStatus.Paid ? Color.Success : Color.Default)">
+                                @context.PaymentMethod.ToString()
+                            </MudChip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager />
+                </PagerContent>
+            </MudTable>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    private List<MedicalClaim> _claims = new();
+    private bool _isLoading = true;
+    private int _selectedYear = DateTime.Today.Year;
+    private int _rowsPerPage = 10;
+    private decimal _annualLimit = 2000m;
+    private decimal _usedAmount = 0m;
+    private decimal _remainingAmount = 2000m;
+
+    private List<BreadcrumbItem> _breadcrumbs = new()
+    {
+        new BreadcrumbItem("Medical", href: null, disabled: true),
+        new BreadcrumbItem("My Claims", href: null, disabled: true)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task OnYearChanged(int year)
+    {
+        _selectedYear = year;
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            var activeBenefit = await db.MedicalBenefits.Where(b => b.IsActive).FirstOrDefaultAsync();
+            if (activeBenefit != null)
+                _annualLimit = activeBenefit.AnnualLimit;
+
+            var yearStart = new DateTime(_selectedYear, 1, 1);
+            var yearEnd = new DateTime(_selectedYear, 12, 31, 23, 59, 59);
+
+            _claims = await db.MedicalClaims
+                .Where(c => c.ClaimDate >= yearStart && c.ClaimDate <= yearEnd)
+                .OrderByDescending(c => c.ClaimDate)
+                .ToListAsync();
+
+            _usedAmount = _claims
+                .Where(c => c.Status == MedicalClaimStatus.Approved ||
+                            c.Status == MedicalClaimStatus.PartiallyApproved ||
+                            c.Status == MedicalClaimStatus.Paid)
+                .Sum(c => c.ApprovedAmount);
+
+            _remainingAmount = Math.Max(0, _annualLimit - _usedAmount);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading claims: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private Color GetStatusColor(MedicalClaimStatus status) => status switch
+    {
+        MedicalClaimStatus.Submitted => Color.Info,
+        MedicalClaimStatus.UnderReview => Color.Warning,
+        MedicalClaimStatus.Approved => Color.Success,
+        MedicalClaimStatus.PartiallyApproved => Color.Warning,
+        MedicalClaimStatus.Rejected => Color.Error,
+        MedicalClaimStatus.Paid => Color.Success,
+        _ => Color.Default
+    };
+
+    private string GetStatusIcon(MedicalClaimStatus status) => status switch
+    {
+        MedicalClaimStatus.Submitted => Icons.Material.Filled.Send,
+        MedicalClaimStatus.UnderReview => Icons.Material.Filled.Search,
+        MedicalClaimStatus.Approved => Icons.Material.Filled.CheckCircle,
+        MedicalClaimStatus.PartiallyApproved => Icons.Material.Filled.CheckCircleOutline,
+        MedicalClaimStatus.Rejected => Icons.Material.Filled.Cancel,
+        MedicalClaimStatus.Paid => Icons.Material.Filled.Paid,
+        _ => Icons.Material.Filled.Circle
+    };
+
+    private string GetStatusLabel(MedicalClaimStatus status) => status switch
+    {
+        MedicalClaimStatus.PartiallyApproved => "Partial",
+        MedicalClaimStatus.UnderReview => "Under Review",
+        _ => status.ToString()
+    };
+
+    private Color GetCategoryColor(MedicalClaimCategory cat) => cat switch
+    {
+        MedicalClaimCategory.Surgery => Color.Error,
+        MedicalClaimCategory.Hospitalization => Color.Error,
+        MedicalClaimCategory.Consultation => Color.Info,
+        MedicalClaimCategory.Medication => Color.Primary,
+        MedicalClaimCategory.Dental => Color.Warning,
+        MedicalClaimCategory.Optical => Color.Secondary,
+        _ => Color.Default
+    };
+
+    private double GetUsagePercent()
+    {
+        if (_annualLimit == 0) return 0;
+        return (double)(_usedAmount / _annualLimit * 100);
+    }
+
+    private Color GetProgressColor()
+    {
+        var pct = GetUsagePercent();
+        if (pct < 50) return Color.Success;
+        if (pct < 80) return Color.Warning;
+        return Color.Error;
+    }
+}

@@ -1,0 +1,176 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Exit
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.AccountBalanceWallet" Class="mr-2" />
+            Process Final Settlement
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrWhiteSpace(_employeeName))
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-3">Employee: @_employeeName</MudText>
+        }
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" Value="_leaveEncashment" Label="Leave Encashment (GH₵)"
+                                 Variant="Variant.Outlined" Format="N2" Min="0m"
+                                 ValueChanged="@((decimal v) => { _leaveEncashment = v; RecalcTotal(); })" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" Value="_proRatedBonus" Label="Pro-rated Bonus (GH₵)"
+                                 Variant="Variant.Outlined" Format="N2" Min="0m"
+                                 ValueChanged="@((decimal v) => { _proRatedBonus = v; RecalcTotal(); })" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" Value="_gratuity" Label="Gratuity (GH₵)"
+                                 Variant="Variant.Outlined" Format="N2" Min="0m"
+                                 ValueChanged="@((decimal v) => { _gratuity = v; RecalcTotal(); })" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" Value="_loanRecovery" Label="Loan Recovery (GH₵) — Deduction"
+                                 Variant="Variant.Outlined" Format="N2" Min="0m"
+                                 ValueChanged="@((decimal v) => { _loanRecovery = v; RecalcTotal(); })" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal" Value="_otherDeductions" Label="Other Deductions (GH₵)"
+                                 Variant="Variant.Outlined" Format="N2" Min="0m"
+                                 ValueChanged="@((decimal v) => { _otherDeductions = v; RecalcTotal(); })" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudCard Elevation="3" Style="background: var(--mud-palette-success-lighten);">
+                    <MudCardContent Class="py-2">
+                        <MudText Typo="Typo.body2">Total Settlement</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Success">
+                            GH₵ @_totalSettlement.ToString("N2")
+                        </MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_paymentReference" Label="Payment Reference"
+                              Variant="Variant.Outlined" MaxLength="100"
+                              Placeholder="e.g. Bank transfer ref, cheque number" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_notes" Label="Notes" Variant="Variant.Outlined"
+                              Lines="3" MaxLength="1000" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Success" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Process Settlement
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int SeparationId { get; set; }
+
+    private bool _isSaving;
+    private string? _employeeName;
+
+    private decimal _leaveEncashment;
+    private decimal _proRatedBonus;
+    private decimal _gratuity;
+    private decimal _loanRecovery;
+    private decimal _otherDeductions;
+    private decimal _totalSettlement;
+    private string? _paymentReference;
+    private string? _notes;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var sep = await db.Separations.Include(s => s.Employee).Include(s => s.FinalSettlement)
+                .FirstOrDefaultAsync(s => s.Id == SeparationId);
+            if (sep != null)
+            {
+                _employeeName = sep.Employee.FirstName + " " + sep.Employee.LastName;
+                if (sep.FinalSettlement != null)
+                {
+                    _leaveEncashment = sep.FinalSettlement.LeaveEncashment;
+                    _proRatedBonus = sep.FinalSettlement.ProRatedBonus;
+                    _gratuity = sep.FinalSettlement.GratuityAmount;
+                    _loanRecovery = sep.FinalSettlement.LoanRecovery;
+                    _otherDeductions = sep.FinalSettlement.OtherDeductions;
+                    _paymentReference = sep.FinalSettlement.PaymentReference;
+                    _notes = sep.FinalSettlement.Notes;
+                }
+            }
+            RecalcTotal();
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+    }
+
+    private void RecalcTotal()
+    {
+        _totalSettlement = _leaveEncashment + _proRatedBonus + _gratuity - _loanRecovery - _otherDeductions;
+        StateHasChanged();
+    }
+
+    private async Task Submit()
+    {
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var sep = await db.Separations.Include(s => s.FinalSettlement)
+                .FirstOrDefaultAsync(s => s.Id == SeparationId);
+            if (sep == null) { Snackbar.Add("Separation not found.", Severity.Error); return; }
+
+            if (sep.FinalSettlement != null)
+            {
+                sep.FinalSettlement.LeaveEncashment = _leaveEncashment;
+                sep.FinalSettlement.ProRatedBonus = _proRatedBonus;
+                sep.FinalSettlement.GratuityAmount = _gratuity;
+                sep.FinalSettlement.LoanRecovery = _loanRecovery;
+                sep.FinalSettlement.OtherDeductions = _otherDeductions;
+                sep.FinalSettlement.TotalSettlement = _totalSettlement;
+                sep.FinalSettlement.PaymentReference = _paymentReference;
+                sep.FinalSettlement.Notes = _notes;
+                sep.FinalSettlement.ProcessedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                var settlement = new FinalSettlement
+                {
+                    SeparationId = SeparationId,
+                    LeaveEncashment = _leaveEncashment,
+                    ProRatedBonus = _proRatedBonus,
+                    GratuityAmount = _gratuity,
+                    LoanRecovery = _loanRecovery,
+                    OtherDeductions = _otherDeductions,
+                    TotalSettlement = _totalSettlement,
+                    PaymentReference = _paymentReference,
+                    Notes = _notes,
+                    ProcessedAt = DateTime.UtcNow
+                };
+                db.FinalSettlements.Add(settlement);
+            }
+            await db.SaveChangesAsync();
+            Snackbar.Add($"Settlement processed. Total: GH₵ {_totalSettlement:N2}", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex) { Snackbar.Add($"Error: {ex.Message}", Severity.Error); }
+        finally { _isSaving = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

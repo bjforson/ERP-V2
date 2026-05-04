@@ -1,0 +1,161 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.Edit : Icons.Material.Filled.Add)" Class="mr-2" />
+            @(IsEdit ? "Edit Designation" : "Add Designation")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Designation.Title"
+                                  Label="Title"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Title is required."
+                                  MaxLength="200"
+                                  Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Designation.Code"
+                                  Label="Code"
+                                  Variant="Variant.Outlined"
+                                  Required="true"
+                                  RequiredError="Code is required."
+                                  MaxLength="50"
+                                  Immediate="true"
+                                  HelperText="Short unique identifier, e.g. ENG-SR" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Designation.Description"
+                                  Label="Description"
+                                  Variant="Variant.Outlined"
+                                  Lines="3"
+                                  MaxLength="500" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSelect T="int?" @bind-Value="Designation.GradeId"
+                               Label="Grade"
+                               Variant="Variant.Outlined"
+                               Clearable="true"
+                               Placeholder="— None —">
+                        @foreach (var grade in _grades)
+                        {
+                            <MudSelectItem T="int?" Value="@((int?)grade.Id)">@grade.Name (Level @grade.Level)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudCheckBox @bind-Value="Designation.IsActive" Label="Active" Color="Color.Primary" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="Submit" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Add")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter] public Designation Designation { get; set; } = new();
+    [Parameter] public bool IsEdit { get; set; }
+
+    private MudForm _form = null!;
+    private bool _isValid;
+    private bool _isSaving;
+    private List<Grade> _grades = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGrades();
+    }
+
+    private async Task LoadGrades()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _grades = await db.Grades
+                .Where(g => !g.IsDeleted && g.IsActive)
+                .OrderBy(g => g.Level)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading grades: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+
+            if (IsEdit)
+            {
+                var entity = await db.Designations.FindAsync(Designation.Id);
+                if (entity == null)
+                {
+                    Snackbar.Add("Designation not found.", Severity.Error);
+                    return;
+                }
+                entity.Title = Designation.Title;
+                entity.Code = Designation.Code;
+                entity.Description = Designation.Description;
+                entity.GradeId = Designation.GradeId;
+                entity.IsActive = Designation.IsActive;
+                entity.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                var entity = new Designation
+                {
+                    Title = Designation.Title,
+                    Code = Designation.Code,
+                    Description = Designation.Description,
+                    GradeId = Designation.GradeId,
+                    IsActive = Designation.IsActive,
+                    CreatedAt = DateTime.UtcNow
+                };
+                db.Designations.Add(entity);
+            }
+
+            await db.SaveChangesAsync();
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving designation: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

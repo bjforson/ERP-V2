@@ -1,0 +1,209 @@
+@using Microsoft.EntityFrameworkCore
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Performance
+@using NickHR.Core.Entities.Core
+@inject IServiceProvider ServiceProvider
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(IsEdit ? Icons.Material.Filled.Edit : Icons.Material.Filled.Add)" Class="mr-2" />
+            @(IsEdit ? "Edit Goal" : "Create Goal")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_isValid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" @bind-Value="_model.EmployeeId" Label="Employee *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Employee is required">
+                        @foreach (var e in _employees)
+                        {
+                            <MudSelectItem T="int" Value="@e.Id">@e.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" @bind-Value="_model.AppraisalCycleId" Label="Appraisal Cycle *"
+                               Variant="Variant.Outlined" Required="true" RequiredError="Cycle is required">
+                        @foreach (var c in _cycles)
+                        {
+                            <MudSelectItem T="int" Value="@c.Id">@c.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Title" Label="Title *" Variant="Variant.Outlined"
+                                  Required="true" RequiredError="Title is required" MaxLength="300" Immediate="true" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.Description" Label="Description" Variant="Variant.Outlined"
+                                  Lines="3" MaxLength="1000" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="_model.TargetValue" Label="Target Value" Variant="Variant.Outlined"
+                                  MaxLength="200" />
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudNumericField @bind-Value="_model.Weight" Label="Weight (%)" Variant="Variant.Outlined"
+                                     Min="0" Max="100" Format="N0" />
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudDatePicker @bind-Date="_model.DueDate" Label="Due Date" Variant="Variant.Outlined"
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            @(IsEdit ? "Save Changes" : "Create Goal")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int? GoalId { get; set; }
+    [Parameter] public int? DefaultCycleId { get; set; }
+
+    private MudForm _form = default!;
+    private bool _isValid;
+    private bool _isSaving;
+    private bool IsEdit => GoalId.HasValue;
+
+    private GoalFormModel _model = new();
+    private List<EmpOption> _employees = new();
+    private List<CycleOption> _cycles = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDropdowns();
+        if (IsEdit)
+            await LoadGoal();
+        else if (DefaultCycleId.HasValue)
+            _model.AppraisalCycleId = DefaultCycleId.Value;
+    }
+
+    private async Task LoadDropdowns()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            _employees = await db.Employees
+                .Where(e => !e.IsDeleted)
+                .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+                .Select(e => new EmpOption { Id = e.Id, Name = e.FirstName + " " + e.LastName })
+                .ToListAsync();
+            _cycles = await db.AppraisalCycles
+                .OrderByDescending(c => c.StartDate)
+                .Select(c => new CycleOption { Id = c.Id, Name = c.Name })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading data: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task LoadGoal()
+    {
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            var entity = await db.Goals.FindAsync(GoalId!.Value);
+            if (entity == null) return;
+            _model = new GoalFormModel
+            {
+                EmployeeId = entity.EmployeeId,
+                AppraisalCycleId = entity.AppraisalCycleId,
+                Title = entity.Title,
+                Description = entity.Description,
+                TargetValue = entity.TargetValue,
+                Weight = entity.Weight,
+                DueDate = entity.DueDate
+            };
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading goal: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task Submit()
+    {
+        await _form.Validate();
+        if (!_isValid) return;
+        _isSaving = true;
+        try
+        {
+            using var scope = ServiceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+            if (IsEdit)
+            {
+                var entity = await db.Goals.FindAsync(GoalId!.Value);
+                if (entity == null) { Snackbar.Add("Goal not found.", Severity.Error); return; }
+                entity.EmployeeId = _model.EmployeeId;
+                entity.AppraisalCycleId = _model.AppraisalCycleId;
+                entity.Title = _model.Title;
+                entity.Description = _model.Description;
+                entity.TargetValue = _model.TargetValue;
+                entity.Weight = _model.Weight;
+                entity.DueDate = _model.DueDate;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Goal updated.", Severity.Success);
+            }
+            else
+            {
+                var entity = new Goal
+                {
+                    EmployeeId = _model.EmployeeId,
+                    AppraisalCycleId = _model.AppraisalCycleId,
+                    Title = _model.Title,
+                    Description = _model.Description,
+                    TargetValue = _model.TargetValue,
+                    Weight = _model.Weight,
+                    DueDate = _model.DueDate,
+                    Status = "NotStarted",
+                    ProgressPercent = 0
+                };
+                db.Goals.Add(entity);
+                await db.SaveChangesAsync();
+                Snackbar.Add("Goal created.", Severity.Success);
+            }
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private class GoalFormModel
+    {
+        public int EmployeeId { get; set; }
+        public int AppraisalCycleId { get; set; }
+        public string Title { get; set; } = "";
+        public string? Description { get; set; }
+        public string? TargetValue { get; set; }
+        public decimal Weight { get; set; } = 100;
+        public DateTime? DueDate { get; set; }
+    }
+
+    private class EmpOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+    private class CycleOption { public int Id { get; set; } public string Name { get; set; } = ""; }
+}

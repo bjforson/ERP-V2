@@ -1,0 +1,257 @@
+@page "/my-documents"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using NickHR.Infrastructure.Data
+@using NickHR.Core.Entities.Core
+@using NickHR.Core.Entities.System
+@using NickHR.Core.Enums
+
+@inject IDbContextFactory<NickHRDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IServiceProvider ServiceProvider
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>NICKSCAN ERP — NickHR — My Documents</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">
+    <MudIcon Icon="@Icons.Material.Filled.Folder" Class="mr-2" />My Documents
+</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_employeeId == 0)
+{
+    <MudAlert Severity="Severity.Warning">
+        Your account is not linked to an employee record. Contact HR.
+    </MudAlert>
+}
+else
+{
+    <MudGrid>
+        <!-- Request Hub -->
+        <MudItem xs="12">
+            <MudPaper Elevation="2" Class="pa-4 mb-4">
+                <MudText Typo="Typo.h6" Class="mb-3">
+                    <MudIcon Icon="@Icons.Material.Filled.RequestPage" Class="mr-2" />Request Documents
+                </MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+                    Request official HR documents. Processing typically takes 1-3 business days.
+                </MudText>
+                <MudGrid>
+                    <MudItem xs="12" sm="4">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                                   FullWidth="true"
+                                   StartIcon="@Icons.Material.Filled.Work"
+                                   OnClick='() => RequestDocumentAsync("Employment Letter", "Request for Employment Letter")'>
+                            Request Employment Letter
+                        </MudButton>
+                    </MudItem>
+                    <MudItem xs="12" sm="4">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                                   FullWidth="true"
+                                   StartIcon="@Icons.Material.Filled.Payments"
+                                   OnClick='() => RequestDocumentAsync("Salary Certificate", "Request for Salary Certificate")'>
+                            Request Salary Certificate
+                        </MudButton>
+                    </MudItem>
+                    <MudItem xs="12" sm="4">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Tertiary"
+                                   FullWidth="true"
+                                   StartIcon="@Icons.Material.Filled.Email"
+                                   OnClick='() => RequestDocumentAsync("Introduction Letter", "Request for Introduction Letter")'>
+                            Request Introduction Letter
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+        </MudItem>
+
+        <!-- Past Requests -->
+        <MudItem xs="12">
+            <MudPaper Elevation="2" Class="pa-4 mb-4">
+                <MudText Typo="Typo.h6" Class="mb-3">
+                    <MudIcon Icon="@Icons.Material.Filled.History" Class="mr-2" />My Requests
+                </MudText>
+                @if (!_requests.Any())
+                {
+                    <MudText Color="Color.Secondary">No document requests yet.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_requests" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Document Type</MudTh>
+                            <MudTh>Requested On</MudTh>
+                            <MudTh>Status</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>
+                                <MudIcon Icon="@Icons.Material.Filled.Description" Size="Size.Small" Class="mr-1" />
+                                @context.RelatedEntityId
+                            </MudTd>
+                            <MudTd>@context.CreatedAt.ToString("dd MMM yyyy HH:mm")</MudTd>
+                            <MudTd>
+                                <MudChip T="string" Size="Size.Small"
+                                         Color="@(context.IsRead ? Color.Success : Color.Warning)">
+                                    @(context.IsRead ? "Processed" : "Pending")
+                                </MudChip>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <!-- My Documents -->
+        <MudItem xs="12">
+            <MudPaper Elevation="2" Class="pa-4">
+                <MudText Typo="Typo.h6" Class="mb-3">
+                    <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Class="mr-2" />My Documents
+                </MudText>
+
+                @if (!_documents.Any())
+                {
+                    <MudText Color="Color.Secondary">No documents on file.</MudText>
+                }
+                else
+                {
+                    @foreach (var group in _documents.GroupBy(d => d.DocumentType).OrderBy(g => g.Key))
+                    {
+                        <MudExpansionPanels Class="mb-2">
+                            <MudExpansionPanel>
+                                <TitleContent>
+                                    <MudText Typo="Typo.subtitle1">
+                                        <MudIcon Icon="@GetDocumentIcon(group.Key)" Size="Size.Small" Class="mr-2" />
+                                        @group.Key
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-2">@group.Count()</MudChip>
+                                    </MudText>
+                                </TitleContent>
+                                <ChildContent>
+                                    <MudTable Items="group.ToList()" Dense="true" Hover="true" Elevation="0">
+                                        <HeaderContent>
+                                            <MudTh>File Name</MudTh>
+                                            <MudTh>Uploaded</MudTh>
+                                            <MudTh>Size</MudTh>
+                                            <MudTh>Description</MudTh>
+                                        </HeaderContent>
+                                        <RowTemplate>
+                                            <MudTd>
+                                                <MudIcon Icon="@Icons.Material.Filled.InsertDriveFile" Size="Size.Small" Class="mr-1" />
+                                                @context.FileName
+                                                @if (context.Version > 1)
+                                                {
+                                                    <MudChip T="string" Size="Size.Small" Class="ml-1">v@context.Version</MudChip>
+                                                }
+                                            </MudTd>
+                                            <MudTd>@context.UploadedAt.ToString("dd MMM yyyy")</MudTd>
+                                            <MudTd>@FormatFileSize(context.FileSize)</MudTd>
+                                            <MudTd>@(context.Description ?? "—")</MudTd>
+                                        </RowTemplate>
+                                    </MudTable>
+                                </ChildContent>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private bool _loading = true;
+    private List<EmployeeDocument> _documents = new();
+    private List<Notification> _requests = new();
+    private int _employeeId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task<int?> GetCurrentEmployeeIdAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated != true) return null;
+
+        var employeeIdClaim = user.FindFirst("employeeId")?.Value;
+        if (int.TryParse(employeeIdClaim, out var empId)) return empId;
+
+        var email = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? user.FindFirst("email")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(email)) return null;
+
+        using var scope = ServiceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NickHRDbContext>();
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.WorkEmail == email && !e.IsDeleted);
+        return emp?.Id;
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        var empId = await GetCurrentEmployeeIdAsync();
+        if (empId == null) { _employeeId = 0; _loading = false; return; }
+        _employeeId = empId.Value;
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+
+        _documents = await ctx.EmployeeDocuments
+            .Where(d => d.EmployeeId == _employeeId)
+            .OrderBy(d => d.DocumentType)
+            .ThenByDescending(d => d.UploadedAt)
+            .ToListAsync();
+
+        _requests = await ctx.Notifications
+            .Where(n => n.RecipientEmployeeId == _employeeId &&
+                        n.RelatedEntityType == "DocumentRequest")
+            .OrderByDescending(n => n.CreatedAt)
+            .ToListAsync();
+
+        _loading = false;
+    }
+
+    private async Task RequestDocumentAsync(string documentType, string title)
+    {
+        if (_employeeId == 0) return;
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        var notification = new Notification
+        {
+            RecipientEmployeeId = _employeeId,
+            Title = title,
+            Message = $"Employee has requested a {documentType}. Please process and send to employee.",
+            NotificationType = NotificationType.InApp,
+            RelatedEntityType = "DocumentRequest",
+            RelatedEntityId = documentType,
+            CreatedAt = DateTime.UtcNow
+        };
+        ctx.Notifications.Add(notification);
+        await ctx.SaveChangesAsync();
+
+        Snackbar.Add($"{documentType} request submitted. HR will be notified.", Severity.Success);
+        await LoadDataAsync();
+    }
+
+    private static string GetDocumentIcon(string documentType) => documentType.ToLower() switch
+    {
+        var t when t.Contains("contract") => Icons.Material.Filled.AssignmentInd,
+        var t when t.Contains("certificate") => Icons.Material.Filled.CardMembership,
+        var t when t.Contains("id") || t.Contains("card") => Icons.Material.Filled.Badge,
+        var t when t.Contains("letter") => Icons.Material.Filled.Email,
+        _ => Icons.Material.Filled.Description
+    };
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024:N1} KB";
+        return $"{bytes / (1024 * 1024):N1} MB";
+    }
+}
