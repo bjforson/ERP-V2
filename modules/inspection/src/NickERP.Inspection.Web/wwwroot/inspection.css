@@ -328,3 +328,128 @@ code {
     font-size: var(--nickerp-font-size-sm);
     font-weight: var(--nickerp-font-weight-medium);
 }
+
+/* ---------------------------------------------------------------------
+ * Sprint 14 / VP6 Phase C — claim-badge banner used by CaseDetail.razor.
+ * Visual chrome + behavior here; markup lives on the page.
+ * ------------------------------------------------------------------- */
+.inspection-claim-badge {
+    display: flex;
+    align-items: center;
+    gap: var(--nickerp-space-3);
+    margin-top: var(--nickerp-space-2);
+    padding: var(--nickerp-space-2) var(--nickerp-space-3);
+    border-radius: var(--nickerp-radius-md);
+    border: 1px solid var(--nickerp-color-border);
+    background: var(--nickerp-color-bg-elevated);
+    font-size: var(--nickerp-font-size-sm);
+}
+.inspection-claim-badge.is-mine {
+    background: rgba(22, 163, 74, 0.10);
+    border-color: rgba(22, 163, 74, 0.45);
+}
+.inspection-claim-badge.is-claimed-by-other {
+    background: rgba(202, 138, 4, 0.10);
+    border-color: rgba(202, 138, 4, 0.45);
+}
+
+/* ---------------------------------------------------------------------
+ * Sprint 20 / B1.1 — case detail tabs.
+ * ------------------------------------------------------------------- */
+.inspection-tabs {
+    display: flex;
+    gap: var(--nickerp-space-1);
+    border-bottom: 1px solid var(--nickerp-color-border);
+    margin: var(--nickerp-space-3) 0 var(--nickerp-space-4) 0;
+    flex-wrap: wrap;
+}
+.inspection-tab {
+    display: inline-block;
+    padding: var(--nickerp-space-2) var(--nickerp-space-4);
+    border: 1px solid transparent;
+    border-bottom: 0;
+    border-top-left-radius: var(--nickerp-radius-md);
+    border-top-right-radius: var(--nickerp-radius-md);
+    color: var(--nickerp-color-text-muted);
+    text-decoration: none;
+    font-weight: var(--nickerp-font-weight-medium);
+    font-size: var(--nickerp-font-size-sm);
+    margin-bottom: -1px;          /* sit on the bottom-border line */
+    background: transparent;
+}
+.inspection-tab:hover {
+    color: var(--nickerp-color-text);
+    background: var(--nickerp-color-bg-elevated);
+}
+.inspection-tab.is-active {
+    color: var(--nickerp-color-primary);
+    background: var(--nickerp-color-bg-surface);
+    border-color: var(--nickerp-color-border);
+    border-bottom-color: var(--nickerp-color-bg-surface);
+}
+.inspection-tab-panel {
+    /* Visually anchor the active tab to its panel. */
+    padding-top: var(--nickerp-space-2);
+}
+
+/* ---------------------------------------------------------------------
+ * Sprint 20 / B1.1 — image gallery grid.
+ * ------------------------------------------------------------------- */
+.inspection-gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: var(--nickerp-space-3);
+}
+.inspection-gallery-tile {
+    display: flex;
+    flex-direction: column;
+    gap: var(--nickerp-space-1);
+    padding: var(--nickerp-space-2);
+    border-radius: var(--nickerp-radius-md);
+    border: 1px solid var(--nickerp-color-border);
+    background: var(--nickerp-color-bg-surface);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.inspection-gallery-tile:hover {
+    border-color: var(--nickerp-color-primary);
+    box-shadow: var(--nickerp-shadow-sm);
+}
+.inspection-gallery-tile img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: var(--nickerp-radius-sm);
+    background: var(--nickerp-color-bg-elevated);
+}
+.inspection-gallery-empty {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 4 / 3;
+}
+.inspection-gallery-caption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--nickerp-space-2);
+    font-size: var(--nickerp-font-size-xs);
+    color: var(--nickerp-color-text-muted);
+}
+
+/* ---------------------------------------------------------------------
+ * Sprint 20 / B1.1 — JSON payload preview inside the ICUMS pane.
+ * Constrained max-height so a giant manifest doesn't blow out the page.
+ * ------------------------------------------------------------------- */
+.inspection-json-preview {
+    max-height: 320px;
+    overflow: auto;
+    margin: var(--nickerp-space-2) 0 0 0;
+    padding: var(--nickerp-space-2);
+    border-radius: var(--nickerp-radius-sm);
+    background: var(--nickerp-color-bg-elevated);
+    font-family: var(--nickerp-font-mono);
+    font-size: var(--nickerp-font-size-xs);
+    line-height: 1.4;
+    white-space: pre;
+}
