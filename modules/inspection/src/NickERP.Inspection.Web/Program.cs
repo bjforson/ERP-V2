@@ -208,6 +208,11 @@ builder.Services.AddNickErpInspectionValidationDbProvider();
 NickERP.Inspection.Application.Validation.PluginValidationRuleRegistration
     .RegisterPluginValidationRules(builder.Services, pluginsDir);
 
+// Sprint 28 / B4 Phase C — admin service backing the /admin/rules pages.
+// Reads/writes tenant_validation_rule_settings + reads recent failures
+// from audit.events.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.RulesAdminService>();
+
 // §6.5 admin actions — Approve / Reject for ScannerThresholdProfile.
 // Mirrors CaseWorkflowService — pages call this so the audit emission
 // + state-transition rules live in one place.
