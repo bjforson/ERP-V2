@@ -2,21 +2,21 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Sprint 20 (Inspection v1 parity Batch B1 — case detail tabs + analyst image viewer + multi-scan navigation) SHIPPED 2026-05-04 at main a8387a9. Branch plan/sprint-20-inspection-parity-b1 (3 commits 5d245bf/701365c/35cd9e1, deleted). Tests grew 336 -> 344 (+8 across annotation service + case detail tabs). Sprint 21 (Tenant lifecycle Pt 2 — email service + invite tokens + first-user invite) running in parallel on plan/sprint-21-tenant-lifecycle-pt2 — file-path-isolated to platform/Email + Identity + apps/portal. Next per plan §10.3: Sprint 19 (OCR eval harness) + Sprint 22+ (Inspection v1 parity Batch B2 — ICUMS queue UIs).",
+  "currentSprintNote": "Sprints 20 + 21 SHIPPED 2026-05-04 (parallel master pattern). Sprint 20 (B1 case detail tabs + analyst image viewer + multi-scan nav): main a8387a9 (3 commits, +8 tests). Sprint 21 (Tenant lifecycle Pt 2 — IEmailSender + InviteToken + first-user invite): main 89cd6b78 (5 commits, +27 tests) + fix-forward aaa32687 (MailKit 4.9->4.16 NU1902 CVE + null-coalesce). Add_InviteTokens migration applied to live identity schema. PortalBaseUrl service env var added; portal redeployed. Tests grew 336 -> 371 (+35 across both sprints + null-coalesce fix). Followup FU-tenant-lifecycle now Pt 1+2 shipped (Pt 3 export tooling still queued). Next per plan §10.3: Sprint 19 (OCR eval harness offline + v1 Tesseract baseline) + Sprint 22+ (Inspection v1 parity Batch B2 — ICUMS queue UIs).",
   "prePilotProgress": {
     "asOf": "2026-05-04",
     "deadlineMonthsLow": 6,
     "deadlineMonthsHigh": 9,
-    "shippedSprints": 9,
+    "shippedSprints": 11,
     "totalEstimateLow": 31,
     "totalEstimateHigh": 47,
-    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 9 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprint 20 added 2 — full Batch B1). Inspection v1 parity (13-18 sprints) now in-progress — B1 done, B2-B8 remaining. Pace at 1.5 sprints/week sustained = 15-25 weeks remaining.",
+    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 11 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprints 20+21 shipped in parallel). Inspection v1 parity (13-18 sprints) now in-progress — B1 done, B2-B8 remaining. Tenant lifecycle Pt 1+2 done (Pt 3 export queued). Pace at 1.5 sprints/week sustained = 13-24 weeks remaining.",
     "workstreams": [
       { "name": "AnalysisService VP6", "estimateLow": 2, "estimateHigh": 3, "shipped": 3, "status": "done", "note": "Sprint 14 (5 phases): storage + bootstrap + admin + claim + tests" },
       { "name": "ExternalSystemInstance subset junction", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 16" },
       { "name": "P2-FU-multi-event-types (edge fan-out)", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 17" },
       { "name": "NickHR v1->v2 clone", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 15. Refactor to v2-native is post-pilot (~6-10 sprints)." },
-      { "name": "Tenant lifecycle (Pt 1+2+3)", "estimateLow": 3, "estimateHigh": 5, "shipped": 1, "status": "in-progress", "note": "Pt 1 shipped Sprint 18. Pt 2 (email + first-user invite) queued Sprint 21; Pt 3 (scoped export) later." },
+      { "name": "Tenant lifecycle (Pt 1+2+3)", "estimateLow": 3, "estimateHigh": 5, "shipped": 2, "status": "in-progress", "note": "Pt 1 shipped Sprint 18 (state + soft-delete + hard-purge). Pt 2 shipped Sprint 21 (IEmailSender + InviteToken + first-user invite + AcceptInvite page). Pt 3 (scoped export) still queued." },
       { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 2, "status": "in-progress", "note": "Long pole. Per plan §11 — case viewing (B1 SHIPPED Sprint 20: tabs + analyst viewer + multi-scan nav), ICUMS UIs (B2), BG services (B3), validation rules (B4), completeness (B5), specialised review (B6), monitoring (B7), admin (B8)." },
       { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
       { "name": "Three-module co-deploy navigation", "estimateLow": 1, "estimateHigh": 1, "shipped": 0, "status": "not-started", "note": "Portal links to inspection.web + finance.web + hr.web with shared auth + chrome." },
@@ -52,6 +52,26 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 21",
+      "name": "Tenant lifecycle Pt 2 — email service + invite tokens + first-user invite flow",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "aaa32687",
+      "itemCount": 5,
+      "items": [
+        { "id": "Sprint21-PhaseA", "title": "IEmailSender abstraction + FileSystemEmailSender (dev default; .eml to var/email-outbox/) + SmtpEmailSender (MailKit; TLS-required) + NoOpEmailSender (prod default until configured) + AddNickErpEmail DI helper.", "commit": "b0bc1150" },
+        { "id": "Sprint21-PhaseB", "title": "InviteToken entity + Add_InviteTokens migration (RLS + force + tenant_isolation_invite_tokens with -1 opt-in; unique partial index on TokenHash WHERE active for race-safe single-use) + InviteService (Issue/Redeem/MarkRedeemed/Revoke/List with HMAC token hashing).", "commit": "669132fd" },
+        { "id": "Sprint21-PhaseC", "title": "Tenants.razor invite section + AcceptInvite.razor at /invite/accept/{token} ([AllowAnonymous] + antiforgery; CF Access handoff post-redemption since v2 has no local password) + portal email wiring + invite email templates (embedded resources, manifest dash->underscore).", "commit": "594327b1" },
+        { "id": "Sprint21-PhaseD", "title": "+27 tests across EmailSenderTests + InviteServiceTests + InviteTokenHasher (81 in NickERP.Platform.Tests). Total 371/371.", "commit": "9ca27230" },
+        { "id": "Sprint21-Register", "title": "system-context-audit-register entries: InviteService.RedeemInviteAsync + InviteService.MarkRedeemedAsync + AcceptInvite.razor lifecycle. New table opt-in: identity.invite_tokens.", "commit": "cd9f1938" },
+        { "id": "Sprint21-FixForward", "title": "MailKit 4.9.0 -> 4.16.0 (NU1902 CVE GHSA-9j88-vvj5-vhgr); null-coalesce TextPart.Text for 4.16's non-nullable setter; sub-agent's local NuGet cache forced 4.9 pin, top-level shell has full network so resolved by version bump.", "commit": "aaa32687" }
+      ],
+      "ratifications": [
+        { "id": "Sprint21-no-password-form", "title": "AcceptInvite does NOT collect a password. NickERP identity is CF Access JWT-driven; no PasswordHash column exists. Page provisions IdentityUser + UserScope + hands off to CF Access portal. Differs from brief which assumed local password." },
+        { "id": "Sprint21-noop-default-prod", "title": "AddNickErpEmail defaults to NoOp outside Development (stricter than brief's filesystem default) — fresh prod boxes silently log invite emails until operator opts in to a real provider." },
+        { "id": "Sprint21-mailkit-version", "title": "MailKit pinned 4.16.0 (latest stable), bumped from 4.9.0 to clear NU1902 CVE. Sub-agent's environment had only 4.9 cached; orchestrator-level shell resolved with full network access." }
+      ]
+    },
     {
       "id": "Sprint 20",
       "name": "Inspection v1 parity Batch B1 — case detail tabs + analyst image viewer + multi-scan nav",
