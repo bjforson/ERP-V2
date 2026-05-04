@@ -151,17 +151,19 @@ public sealed class SmtpEmailSender : IEmailSender
         if (hasText && hasHtml)
         {
             var alt = new MimeKit.Multipart("alternative");
-            alt.Add(new TextPart(TextFormat.Plain) { Text = message.BodyText });
-            alt.Add(new TextPart(TextFormat.Html) { Text = message.BodyHtml });
+            // hasText/hasHtml guard non-null/non-whitespace above; safe to coalesce
+            // for the MailKit 4.16+ non-nullable Text setter.
+            alt.Add(new TextPart(TextFormat.Plain) { Text = message.BodyText ?? string.Empty });
+            alt.Add(new TextPart(TextFormat.Html) { Text = message.BodyHtml ?? string.Empty });
             mime.Body = alt;
         }
         else if (hasHtml)
         {
-            mime.Body = new TextPart(TextFormat.Html) { Text = message.BodyHtml };
+            mime.Body = new TextPart(TextFormat.Html) { Text = message.BodyHtml ?? string.Empty };
         }
         else
         {
-            mime.Body = new TextPart(TextFormat.Plain) { Text = message.BodyText };
+            mime.Body = new TextPart(TextFormat.Plain) { Text = message.BodyText ?? string.Empty };
         }
 
         return mime;

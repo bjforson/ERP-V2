@@ -25,7 +25,7 @@
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.0" />
     <!-- MailKit provides the SMTP sender. 4.x line is the active stable; ships net8 / net10 compatible.
          Pinned to 4.9.0 (a version present in the local NuGet cache to keep restore offline-capable). -->
-    <PackageReference Include="MailKit" Version="4.9.0" />
+    <PackageReference Include="MailKit" Version="4.16.0" />
   </ItemGroup>
 
   <ItemGroup>
