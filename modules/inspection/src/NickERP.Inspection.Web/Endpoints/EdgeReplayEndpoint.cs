@@ -14,20 +14,24 @@ using NickERP.Platform.Tenancy;
 namespace NickERP.Inspection.Web.Endpoints;
 
 /// <summary>
-/// Sprint 11 / P2 — server-side replay endpoint that accepts buffered
-/// audit events from edge nodes and writes them into
-/// <c>audit.events</c> as fresh appends.
+/// Sprint 11 / P2 + Sprint 17 / P2-FU-multi-event-types — server-side
+/// replay endpoint that accepts buffered events from edge nodes and
+/// writes them into <c>audit.events</c> as fresh appends.
 ///
 /// <para>
-/// <b>v0 scope.</b> Only <c>audit.event.replay</c> is supported as an
-/// <c>eventTypeHint</c>; payloads are <c>DomainEvent</c>-shaped and
-/// the server writes each one verbatim to <c>audit.events</c>. The
-/// edge-captured <c>edgeTimestamp</c> becomes <c>OccurredAt</c>; the
-/// server's wall-clock at replay-time becomes <c>IngestedAt</c>; the
-/// audit row's <c>Payload</c> jsonb is augmented with replay metadata
-/// (<c>replay_source</c>, <c>replay_node_id</c>, <c>replayed_at</c>).
-/// Future event types (scan-captured, voucher-disbursed) are a
-/// follow-up sprint; the mechanism here stays the same.
+/// <b>Sprint 17 — three event types now supported.</b>
+/// <list type="bullet">
+///   <item><description><see cref="AuditEventReplayHint"/> (<c>"audit.event.replay"</c>) — the original Sprint 11 path. Payload is a <c>DomainEvent</c>-shape; the server writes it verbatim to <c>audit.events</c> with the eventType/entityType/entityId taken from the payload.</description></item>
+///   <item><description><see cref="ScanCapturedHint"/> (<c>"inspection.scan.captured"</c>) — Sprint 17. Payload describes a raw scanner artifact: scannerId + locationId + sourcePath + subjectIdentifier. The server writes an audit row with <c>EventType = "inspection.scan.captured"</c>, <c>EntityType = "ScanArtifact"</c>, <c>EntityId = sourcePath</c>. The actual <c>CaseWorkflowService.IngestRawArtifactAsync</c> wiring is intentionally deferred — the audit row is the durable record; an inspection-side projector consumes them in a future sprint.</description></item>
+///   <item><description><see cref="ScannerStatusChangedHint"/> (<c>"inspection.scanner.status.changed"</c>) — Sprint 17. Payload describes a scanner device's reported status. The server writes an audit row with <c>EventType = "inspection.scanner.status.changed"</c>, <c>EntityType = "ScannerDeviceInstance"</c>, <c>EntityId = scannerId</c>; downstream "latest status" projection lands in a future sprint.</description></item>
+/// </list>
+/// In all three cases the edge-captured <c>edgeTimestamp</c> becomes
+/// <c>OccurredAt</c>; the server's wall-clock at replay-time becomes
+/// <c>IngestedAt</c>; the audit row's <c>Payload</c> jsonb is augmented
+/// with replay metadata (<c>replay_source</c>, <c>replay_node_id</c>,
+/// <c>replayed_at</c>). The deterministic idempotency key + the
+/// <c>(TenantId, IdempotencyKey)</c> unique index keep duplicate
+/// replays collapsing to a single audit row.
 /// </para>
 ///
 /// <para>
@@ -77,8 +81,14 @@ public static class EdgeReplayEndpoint
     /// <summary>Configuration key for the legacy Sprint 11 shared secret. Read only when <c>EdgeAuth:AllowLegacyToken</c> is truthy.</summary>
     public const string SharedSecretConfigKey = "EdgeNode:SharedSecret";
 
-    /// <summary>Stable hint string for v0 audit-event replay.</summary>
+    /// <summary>Hint string for the original Sprint 11 audit-event-replay path. Payload is a <c>DomainEvent</c>-shape; the server writes it verbatim to <c>audit.events</c>.</summary>
     public const string AuditEventReplayHint = "audit.event.replay";
+
+    /// <summary>Sprint 17 — hint string for raw scanner artifacts captured at the edge. Payload carries scanner+location+sourcePath+subjectIdentifier; server writes an audit row with <c>EventType = "inspection.scan.captured"</c>.</summary>
+    public const string ScanCapturedHint = "inspection.scan.captured";
+
+    /// <summary>Sprint 17 — hint string for scanner device status changes captured at the edge. Payload carries scannerId+locationId+status; server writes an audit row with <c>EventType = "inspection.scanner.status.changed"</c>.</summary>
+    public const string ScannerStatusChangedHint = "inspection.scanner.status.changed";
 
     /// <summary>
     /// Map the edge replay endpoint onto <paramref name="app"/>.
@@ -213,6 +223,21 @@ public static class EdgeReplayEndpoint
     /// <summary>
     /// Process one event in the batch. Returns the per-entry result
     /// and (on success) writes the audit row.
+    ///
+    /// <para>
+    /// **Sprint 17 — per-hint dispatch.** The handler is shaped as
+    /// "common pre-checks (auth + future-timestamp) → per-hint
+    /// payload-shape resolution → common audit-row write". Each
+    /// supported <c>EventTypeHint</c> resolves to a different fixed
+    /// metadata triple (<c>EventType</c>/<c>EntityType</c>/<c>EntityId</c>);
+    /// for <see cref="AuditEventReplayHint"/> the values come FROM
+    /// the payload, for <see cref="ScanCapturedHint"/> and
+    /// <see cref="ScannerStatusChangedHint"/> the <c>EventType</c> is
+    /// fixed and the <c>EntityType</c>/<c>EntityId</c> come from a
+    /// strictly typed payload-resolver. Adding a new hint = adding a
+    /// case to <see cref="ResolveAuditMetadata"/> and (maybe) a new
+    /// payload-shape record below.
+    /// </para>
     /// </summary>
     private static async Task<EdgeReplayResultDto> ProcessOneAsync(
         AuditDbContext db,
@@ -223,21 +248,14 @@ public static class EdgeReplayEndpoint
         ILogger logger,
         CancellationToken ct)
     {
-        // ---- 3a. v0 dispatcher: only audit.event.replay. -------------
-        if (!string.Equals(evt.EventTypeHint, AuditEventReplayHint, StringComparison.Ordinal))
-        {
-            return new EdgeReplayResultDto(false,
-                $"unsupported eventTypeHint '{evt.EventTypeHint}'. v0 supports only '{AuditEventReplayHint}'.");
-        }
-
-        // ---- 3b. Authorization. --------------------------------------
+        // ---- 3a. Authorization. --------------------------------------
         if (!authorizedTenants.Contains(evt.TenantId))
         {
             return new EdgeReplayResultDto(false,
                 $"tenant {evt.TenantId} not authorized for edge {edgeNodeId}");
         }
 
-        // ---- 3c. Reject future-dated edge timestamps. ----------------
+        // ---- 3b. Reject future-dated edge timestamps. ----------------
         // The spec carves these out: "Post events with future
         // timestamps (server rejects)." A small clock-skew tolerance
         // (60s) absorbs jittery NTP without admitting wildly wrong
@@ -248,31 +266,31 @@ public static class EdgeReplayEndpoint
                 $"edge timestamp {evt.EdgeTimestamp:O} is more than 60s in the future relative to server time {replayedAt:O}");
         }
 
-        // ---- 3d. Parse the audit-event payload. ----------------------
-        // v0 expects the payload to be the DomainEvent-shape: at
-        // minimum EventType, EntityType, EntityId, ActorUserId
-        // (optional), and an inner Payload object. We parse defensively
-        // — a malformed payload is a per-entry permanent error, not a
-        // batch failure.
-        AuditEventReplayPayload? parsed;
+        // ---- 3c. Per-hint dispatch — resolve the audit-row metadata.
+        // Each supported hint maps the payload to (EventType,
+        // EntityType, EntityId, ActorUserId, CorrelationId). An
+        // unsupported hint returns a per-entry permanent error.
+        ResolvedAuditMetadata? meta;
         try
         {
-            parsed = evt.Payload.Deserialize<AuditEventReplayPayload>(JsonOptions);
+            meta = ResolveAuditMetadata(evt.EventTypeHint, evt.Payload);
         }
         catch (JsonException ex)
         {
             return new EdgeReplayResultDto(false, $"invalid payload JSON: {ex.Message}");
         }
-        if (parsed is null
-            || string.IsNullOrWhiteSpace(parsed.EventType)
-            || string.IsNullOrWhiteSpace(parsed.EntityType)
-            || string.IsNullOrWhiteSpace(parsed.EntityId))
+        if (meta is null)
         {
             return new EdgeReplayResultDto(false,
-                "payload missing required fields: eventType, entityType, entityId");
+                $"unsupported eventTypeHint '{evt.EventTypeHint}'. " +
+                $"Supported: '{AuditEventReplayHint}', '{ScanCapturedHint}', '{ScannerStatusChangedHint}'.");
+        }
+        if (meta.Value.Error is not null)
+        {
+            return new EdgeReplayResultDto(false, meta.Value.Error);
         }
 
-        // ---- 3e. Build deterministic idempotency key. ----------------
+        // ---- 3d. Build deterministic idempotency key. ----------------
         // edge_node_id + edge_timestamp + sha256(payload-bytes). Two
         // replays of the same edge row collapse to the same audit row
         // via the (TenantId, IdempotencyKey) unique index.
@@ -288,7 +306,7 @@ public static class EdgeReplayEndpoint
             return new EdgeReplayResultDto(true, null);
         }
 
-        // ---- 3f. Build the audit-row payload (with replay metadata). -
+        // ---- 3e. Build the audit-row payload (with replay metadata). -
         // We re-serialise the original payload with three extra fields
         // injected at the top level: replay_source, replay_node_id,
         // replayed_at. Consumers can spot edge-replayed events by the
@@ -299,11 +317,11 @@ public static class EdgeReplayEndpoint
         {
             EventId = Guid.NewGuid(),
             TenantId = evt.TenantId,
-            ActorUserId = parsed.ActorUserId,
-            CorrelationId = parsed.CorrelationId,
-            EventType = parsed.EventType!,
-            EntityType = parsed.EntityType!,
-            EntityId = parsed.EntityId!,
+            ActorUserId = meta.Value.ActorUserId,
+            CorrelationId = meta.Value.CorrelationId,
+            EventType = meta.Value.EventType,
+            EntityType = meta.Value.EntityType,
+            EntityId = meta.Value.EntityId,
             Payload = augmentedJson,
             // Edge timestamp becomes OccurredAt — the canonical "when
             // did this happen" wall-clock. IngestedAt is the server's
@@ -337,6 +355,110 @@ public static class EdgeReplayEndpoint
         }
 
         return new EdgeReplayResultDto(true, null);
+    }
+
+    /// <summary>
+    /// Sprint 17 — resolve the audit-row metadata for one event based on
+    /// its <paramref name="eventTypeHint"/>. Returns:
+    /// <list type="bullet">
+    ///   <item><description><c>null</c> when the hint is unrecognised.</description></item>
+    ///   <item><description>A <see cref="ResolvedAuditMetadata"/> with <c>Error</c> populated when the hint matches but the payload is malformed.</description></item>
+    ///   <item><description>A <see cref="ResolvedAuditMetadata"/> with <c>Error == null</c> when the metadata is good to write.</description></item>
+    /// </list>
+    /// Public so unit tests can drive payload-shape edge cases without
+    /// running the whole handler.
+    /// </summary>
+    public static ResolvedAuditMetadata? ResolveAuditMetadata(
+        string eventTypeHint, JsonElement payload)
+    {
+        if (string.Equals(eventTypeHint, AuditEventReplayHint, StringComparison.Ordinal))
+        {
+            return ResolveAuditEventReplayMetadata(payload);
+        }
+        if (string.Equals(eventTypeHint, ScanCapturedHint, StringComparison.Ordinal))
+        {
+            return ResolveScanCapturedMetadata(payload);
+        }
+        if (string.Equals(eventTypeHint, ScannerStatusChangedHint, StringComparison.Ordinal))
+        {
+            return ResolveScannerStatusChangedMetadata(payload);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Sprint 11 path — payload IS the <c>DomainEvent</c> shape. Pull
+    /// the metadata triple straight off the parsed shape.
+    /// </summary>
+    private static ResolvedAuditMetadata ResolveAuditEventReplayMetadata(JsonElement payload)
+    {
+        var parsed = payload.Deserialize<AuditEventReplayPayload>(JsonOptions);
+        if (parsed is null
+            || string.IsNullOrWhiteSpace(parsed.EventType)
+            || string.IsNullOrWhiteSpace(parsed.EntityType)
+            || string.IsNullOrWhiteSpace(parsed.EntityId))
+        {
+            return ResolvedAuditMetadata.Failed(
+                "payload missing required fields: eventType, entityType, entityId");
+        }
+        return new ResolvedAuditMetadata(
+            EventType: parsed.EventType!,
+            EntityType: parsed.EntityType!,
+            EntityId: parsed.EntityId!,
+            ActorUserId: parsed.ActorUserId,
+            CorrelationId: parsed.CorrelationId,
+            Error: null);
+    }
+
+    /// <summary>
+    /// Sprint 17 path — payload describes a raw scanner artifact. The
+    /// audit row's <c>EventType</c> is fixed (<c>"inspection.scan.captured"</c>);
+    /// <c>EntityType</c> = "ScanArtifact"; <c>EntityId</c> = the
+    /// payload's <c>sourcePath</c> (stable across edge → server).
+    /// </summary>
+    private static ResolvedAuditMetadata ResolveScanCapturedMetadata(JsonElement payload)
+    {
+        var parsed = payload.Deserialize<ScanCapturedPayload>(JsonOptions);
+        if (parsed is null
+            || string.IsNullOrWhiteSpace(parsed.SourcePath)
+            || string.IsNullOrWhiteSpace(parsed.ScannerId))
+        {
+            return ResolvedAuditMetadata.Failed(
+                "scan-captured payload missing required fields: scannerId, sourcePath");
+        }
+        return new ResolvedAuditMetadata(
+            EventType: ScanCapturedHint,
+            EntityType: "ScanArtifact",
+            EntityId: parsed.SourcePath!,
+            ActorUserId: parsed.ActorUserId,
+            CorrelationId: parsed.CorrelationId,
+            Error: null);
+    }
+
+    /// <summary>
+    /// Sprint 17 path — payload describes a scanner status change. The
+    /// audit row's <c>EventType</c> is fixed
+    /// (<c>"inspection.scanner.status.changed"</c>); <c>EntityType</c>
+    /// = "ScannerDeviceInstance"; <c>EntityId</c> = the payload's
+    /// <c>scannerId</c>.
+    /// </summary>
+    private static ResolvedAuditMetadata ResolveScannerStatusChangedMetadata(JsonElement payload)
+    {
+        var parsed = payload.Deserialize<ScannerStatusChangedPayload>(JsonOptions);
+        if (parsed is null
+            || string.IsNullOrWhiteSpace(parsed.ScannerId)
+            || string.IsNullOrWhiteSpace(parsed.Status))
+        {
+            return ResolvedAuditMetadata.Failed(
+                "scanner-status-changed payload missing required fields: scannerId, status");
+        }
+        return new ResolvedAuditMetadata(
+            EventType: ScannerStatusChangedHint,
+            EntityType: "ScannerDeviceInstance",
+            EntityId: parsed.ScannerId!,
+            ActorUserId: parsed.ActorUserId,
+            CorrelationId: parsed.CorrelationId,
+            Error: null);
     }
 
     /// <summary>
@@ -434,3 +556,59 @@ public sealed record AuditEventReplayPayload(
     string? EntityId,
     Guid? ActorUserId,
     string? CorrelationId);
+
+/// <summary>
+/// Sprint 17 — payload shape for <see cref="EdgeReplayEndpoint.ScanCapturedHint"/>
+/// events. Carries the metadata about a raw artifact captured by a
+/// scanner adapter at the edge; the file content itself stays on the
+/// scanner box and is fetched out-of-band by the inspection-side
+/// projector. <see cref="SourcePath"/> is required (it's the audit
+/// row's <c>EntityId</c>); <see cref="ScannerId"/> is required (the
+/// inspection-side consumer needs it to resolve the
+/// <c>ScannerDeviceInstance</c>).
+/// </summary>
+public sealed record ScanCapturedPayload(
+    string? ScannerId,
+    string? LocationId,
+    string? SourcePath,
+    string? SubjectIdentifier,
+    Guid? ActorUserId,
+    string? CorrelationId);
+
+/// <summary>
+/// Sprint 17 — payload shape for
+/// <see cref="EdgeReplayEndpoint.ScannerStatusChangedHint"/> events.
+/// <see cref="ScannerId"/> + <see cref="Status"/> are required;
+/// <see cref="StatusDetail"/> is free-form (e.g. error code, idle
+/// reason).
+/// </summary>
+public sealed record ScannerStatusChangedPayload(
+    string? ScannerId,
+    string? Status,
+    string? StatusDetail,
+    Guid? ActorUserId,
+    string? CorrelationId);
+
+/// <summary>
+/// Sprint 17 — resolved <see cref="DomainEventRow"/> metadata for one
+/// event in a replay batch. Returned by
+/// <see cref="EdgeReplayEndpoint.ResolveAuditMetadata"/>; the handler
+/// uses it to build the audit row without re-checking the hint.
+///
+/// <para>
+/// When <see cref="Error"/> is non-null the rest of the fields are
+/// undefined and the caller emits a per-entry failure.
+/// </para>
+/// </summary>
+public readonly record struct ResolvedAuditMetadata(
+    string EventType,
+    string EntityType,
+    string EntityId,
+    Guid? ActorUserId,
+    string? CorrelationId,
+    string? Error)
+{
+    /// <summary>Build a failure-shaped metadata holder. The caller checks <see cref="Error"/> and emits a per-entry failure.</summary>
+    public static ResolvedAuditMetadata Failed(string error) =>
+        new(string.Empty, string.Empty, string.Empty, null, null, error);
+}
