@@ -2,14 +2,19 @@
 @attribute [Authorize]
 @using System.Text.Json
 @using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.AnalysisServices
 @using NickERP.Platform.Audit.Events
 @using NickERP.Platform.Tenancy
 @using NickERP.Platform.Tenancy.Database
 @using NickERP.Platform.Tenancy.Entities
+@using NickERP.Portal.Services
 @inject TenancyDbContext Db
 @inject IEventPublisher Publisher
 @inject ITenantContext TenantCtx
 @inject AuthenticationStateProvider AuthState
+@inject IServiceProvider Sp
+@inject InspectionFeatureFlag InspectionFlag
+@inject ILogger<Tenants> Logger
 
 <PageTitle>Tenants — NickERP Portal</PageTitle>
 
@@ -133,6 +138,40 @@
 
         Db.Tenants.Add(t);
         await Db.SaveChangesAsync();
+
+        // Sprint 14 / VP6 Phase A.5 — bootstrap the immutable "All
+        // Locations" AnalysisService for the new tenant. Skipped silently
+        // when the inspection module is not wired on this portal host
+        // (ConnectionStrings:Inspection unset). Best-effort: a failure
+        // here logs but does not roll back the tenant create — operator
+        // can re-run via the bootstrap admin endpoint (TBD) or by
+        // restarting the host with the connection set, since
+        // EnsureAllLocationsServiceAsync is idempotent.
+        if (InspectionFlag.Enabled)
+        {
+            try
+            {
+                var auth2 = await AuthState.GetAuthenticationStateAsync();
+                var actorIdRaw2 = auth2.User?.FindFirst("nickerp:id")?.Value;
+                Guid? actorId2 = Guid.TryParse(actorIdRaw2, out var g2) ? g2 : null;
+
+                using var scope = Sp.CreateScope();
+                var bootstrap = scope.ServiceProvider
+                    .GetRequiredService<IAnalysisServiceBootstrap>();
+                // The bootstrap impl calls SetTenant(t.Id) internally so
+                // app.tenant_id is pushed for the inspection-side INSERT
+                // independent of this request's caller-tenant context.
+                await bootstrap.EnsureAllLocationsServiceAsync(t.Id, actorId2);
+            }
+            catch (Exception bex)
+            {
+                Logger.LogWarning(bex,
+                    "VP6 bootstrap of All Locations service failed for new tenant {TenantId}; "
+                    + "tenant create succeeded. EnsureAllLocationsServiceAsync is idempotent — "
+                    + "fix-forward by re-invoking it once the inspection DB is reachable.",
+                    t.Id);
+            }
+        }
 
         // Emit a domain event so the audit log lights up.
         await EmitTenantCreatedEventAsync(t);

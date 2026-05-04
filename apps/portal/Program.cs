@@ -15,6 +15,9 @@ using NickERP.Portal.Components;
 using NickERP.NickFinance.Database;
 using NickERP.NickFinance.Web;
 using NickERP.NickFinance.Web.Endpoints;
+// Sprint 14 / VP6 Phase A.5 — IAnalysisServiceBootstrap for Tenants.razor.
+using NickERP.Inspection.Application.AnalysisServices;
+using NickERP.Inspection.Database;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -53,6 +56,38 @@ var nickFinanceEnabled = !string.IsNullOrWhiteSpace(nickFinanceConn);
 // Exposed to Razor pages (sidenav) so a deployment without NickFinance
 // can hide the link.
 builder.Services.AddSingleton(new NickERP.Portal.Services.NickFinanceFeatureFlag(nickFinanceEnabled));
+
+// ---------------------------------------------------------------------------
+// Sprint 14 / VP6 Phase A.5 — InspectionDbContext + IAnalysisServiceBootstrap.
+// Tenants.razor calls EnsureAllLocationsServiceAsync after creating a new
+// tenant so the immutable un-deletable "All Locations" AnalysisService
+// exists for it. The bootstrap writes through InspectionDbContext, which
+// must be wired with the same tenancy interceptors as Inspection.Web so
+// the TenantId stamp + RLS policy on inspection.analysis_services pass.
+//
+// ConnectionStrings:Inspection is OPTIONAL on this host — when absent,
+// the bootstrap is not registered and Tenants.razor skips the call. This
+// matches the G2 NickFinance pattern (config-gated optional module).
+// ---------------------------------------------------------------------------
+var inspectionConn = builder.Configuration.GetConnectionString("Inspection");
+var inspectionEnabled = !string.IsNullOrWhiteSpace(inspectionConn);
+if (inspectionEnabled)
+{
+    builder.Services.AddDbContext<InspectionDbContext>((sp, opts) =>
+    {
+        opts.UseNpgsql(inspectionConn,
+            npgsql =>
+            {
+                npgsql.MigrationsAssembly(typeof(InspectionDbContext).Assembly.GetName().Name);
+                npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "inspection");
+            });
+        opts.AddInterceptors(
+            sp.GetRequiredService<TenantConnectionInterceptor>(),
+            sp.GetRequiredService<TenantOwnedEntityInterceptor>());
+    });
+    builder.Services.AddAnalysisServiceBootstrap();
+}
+builder.Services.AddSingleton(new NickERP.Portal.Services.InspectionFeatureFlag(inspectionEnabled));
 
 // Default authorization policy: every endpoint or component requires auth.
 builder.Services.AddAuthorization(opts =>
@@ -132,12 +167,20 @@ var app = builder.Build();
             if (nickFinanceEnabled)
             {
                 sp.GetRequiredService<NickFinanceDbContext>().Database.Migrate();
-                migrateLogger.LogInformation("Migrations applied for Identity, Tenancy, Audit, NickFinance.");
             }
-            else
+            // Sprint 14 / VP6 Phase A.5 — apply Inspection migrations
+            // only when ConnectionStrings:Inspection is set on this host.
+            // The Inspection.Web service applies these too; running them
+            // here is a belt-and-suspenders for portal-only deploys that
+            // need the analysis_services tables before tenant creates fire.
+            if (inspectionEnabled)
             {
-                migrateLogger.LogInformation("Migrations applied for Identity, Tenancy, Audit. NickFinance not configured.");
+                sp.GetRequiredService<InspectionDbContext>().Database.Migrate();
             }
+            migrateLogger.LogInformation(
+                "Migrations applied for Identity, Tenancy, Audit{NickFinance}{Inspection}.",
+                nickFinanceEnabled ? ", NickFinance" : string.Empty,
+                inspectionEnabled ? ", Inspection" : string.Empty);
         }
         catch (Exception ex)
         {

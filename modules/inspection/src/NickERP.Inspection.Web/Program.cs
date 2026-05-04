@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using NickERP.Inspection.Application.AnalysisServices;
 using NickERP.Inspection.Application.PostHocOutcomes;
 using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Database;
@@ -53,8 +54,20 @@ builder.Services.AddNickErpAuditNotifications(opts =>
     opts.PollIntervalSeconds = builder.Environment.IsDevelopment() ? 1 : 5;
 });
 
+// Sprint 14 / VP6 Phase A.5 — auto-join interceptor + bootstrap registrations.
+// The interceptor adds an AnalysisServiceLocation row for every new Location
+// in the same SaveChanges. The bootstrap is registered for parity with
+// apps/portal so direct callers in Inspection.Web (e.g., admin tooling)
+// can ensure a tenant's "All Locations" service exists before the first
+// location insert. Both registrations are idempotent (TryAdd*).
+builder.Services.AddAnalysisServiceBootstrap();
+builder.Services.AddAnalysisServiceLocationAutoJoinInterceptor();
+
 // Inspection's own DbContext. Phase F1 — wires the tenancy interceptors
 // (push app.tenant_id to Postgres for RLS + stamp TenantId on inserts).
+// Sprint 14 / VP6 Phase A.5 — also wires the AnalysisServiceLocation
+// auto-join interceptor so every Location insert through this DbContext
+// auto-joins the tenant's "All Locations" service in the same SaveChanges.
 builder.Services.AddDbContext<InspectionDbContext>((sp, opts) =>
 {
     opts.UseNpgsql(inspectionConn ?? throw new InvalidOperationException(
@@ -68,7 +81,8 @@ builder.Services.AddDbContext<InspectionDbContext>((sp, opts) =>
         });
     opts.AddInterceptors(
         sp.GetRequiredService<TenantConnectionInterceptor>(),
-        sp.GetRequiredService<TenantOwnedEntityInterceptor>());
+        sp.GetRequiredService<TenantOwnedEntityInterceptor>(),
+        sp.GetRequiredService<AnalysisServiceLocationAutoJoinInterceptor>());
 });
 
 // ---------------------------------------------------------------------------

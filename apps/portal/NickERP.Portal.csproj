@@ -32,6 +32,14 @@
     <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Core\NickERP.NickFinance.Core.csproj" />
     <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Database\NickERP.NickFinance.Database.csproj" />
     <ProjectReference Include="..\..\modules\nickfinance\src\NickERP.NickFinance.Web\NickERP.NickFinance.Web.csproj" />
+    <!-- Sprint 14 / VP6 Phase A.5 — Tenants.razor calls
+         IAnalysisServiceBootstrap.EnsureAllLocationsServiceAsync after
+         creating a new tenant so the un-deletable "All Locations" service
+         exists for it. The bootstrap writes against InspectionDbContext;
+         hence the Core + Database + Application references here. -->
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Application\NickERP.Inspection.Application.csproj" />
   </ItemGroup>
 
 </Project>
