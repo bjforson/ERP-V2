@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickERP.Perf.Tests</RootNamespace>
+    <!--
+      This project is the Phase V perf-test harness. It is NOT a unit-test project.
+      'dotnet test' discovers ZERO tests here by design; perf scenarios run only
+      when explicitly invoked via 'dotnet run' with a scenario name.
+
+      Suite total stays at 447 of 447 passing tests; this project contributes 0.
+    -->
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      NBomber is the load-test framework chosen per docs/perf/test-plan.md.
+      MIT-licensed, .NET-native, scenarios in C#.
+
+      We pin to a known-good version. Bumps go through the dependency hygiene
+      checklist (SEC-DEP-1) like any other NuGet.
+    -->
+    <PackageReference Include="NBomber" Version="6.1.0" />
+    <PackageReference Include="NBomber.Http" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="README.md" />
+  </ItemGroup>
+
+</Project>

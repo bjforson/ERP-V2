@@ -59,6 +59,7 @@
     <Project Path="tests/NickERP.NickFinance.Core.Tests/NickERP.NickFinance.Core.Tests.csproj" />
     <Project Path="tests/NickERP.NickFinance.Database.Tests/NickERP.NickFinance.Database.Tests.csproj" />
     <Project Path="tests/NickERP.NickFinance.Web.Tests/NickERP.NickFinance.Web.Tests.csproj" />
+    <Project Path="tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj" />
     <Project Path="tests/NickERP.Platform.Tests/NickERP.Platform.Tests.csproj" />
   </Folder>
 </Solution>
