@@ -377,10 +377,19 @@ public sealed class InspectionDbContext : DbContext
             e.Property(x => x.ResponseJson).HasColumnType("jsonb");
             e.Property(x => x.ErrorMessage).HasMaxLength(2000);
             e.Property(x => x.SubmittedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.Priority).IsRequired().HasDefaultValue(0);
+            e.Property(x => x.LastAttemptAt);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique().HasDatabaseName("ux_outbound_tenant_idempotency");
             e.HasIndex(x => new { x.TenantId, x.Status }).HasDatabaseName("ix_outbound_tenant_status");
+            // Sprint 22 / B2.1 — admin queue ordering: highest priority
+            // first, oldest submission next. Composite (TenantId, Status,
+            // Priority DESC, SubmittedAt) covers the submission-queue
+            // page's hot path on every refresh.
+            e.HasIndex(x => new { x.TenantId, x.Status, x.Priority, x.SubmittedAt })
+                .IsDescending(false, false, true, false)
+                .HasDatabaseName("ix_outbound_tenant_status_priority_time");
 
             e.HasOne(x => x.ExternalSystemInstance).WithMany().HasForeignKey(x => x.ExternalSystemInstanceId).OnDelete(DeleteBehavior.Restrict);
         });

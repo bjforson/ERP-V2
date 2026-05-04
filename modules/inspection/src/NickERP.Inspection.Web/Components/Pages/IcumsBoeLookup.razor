@@ -1,0 +1,173 @@
+@page "/admin/icums/boe-lookup"
+@page "/admin/icums/boe-lookup/{SelectedDocumentId:guid}"
+@* Sprint 22 / B2.3 — BOE (Bill of Entry) lookup. Search across
+   AuthorityDocument rows whose DocumentType matches the BOE-flavoured
+   set, filter by date range, drill into the payload via the shared
+   JsonPayloadViewer component. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Application.Downloads
+@using NickERP.Inspection.Application.Icums
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Platform.Tenancy
+@inject IcumsBoeLookupService Lookup
+@inject IcumsDownloadQueueAdminService Downloads
+@inject ITenantContext Tenant
+
+<PageTitle>ICUMS BOE lookup — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>BOE lookup</h1>
+        <p class="inspection-page-subtitle">
+            Search Bill of Entry documents pulled from ICUMS by reference, container, or date range. Drill into the payload + linked case.
+        </p>
+    </div>
+    <div class="inspection-page-actions">
+        <a class="inspection-button" href="/admin/icums">Back to ICUMS dashboard</a>
+        <a class="inspection-button inspection-button-primary" href="/admin/icums/manual-pull">Manual BOE pull</a>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Search</h2>
+            <EditForm Model="_form" OnValidSubmit="DoSearchAsync" FormName="boe-search" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Search</span>
+                        <span class="inspection-form-help">Reference number (e.g. BOE-2026-...), or container number on the linked case.</span>
+                        <InputText class="inspection-input" @bind-Value="_form.Query" placeholder="BOE-2026-001 or MSCU1234567" />
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Received from (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_form.FromUtc" />
+                    </label>
+                    <label>
+                        <span>Received to (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_form.ToUtc" />
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary">Search</button>
+                </div>
+            </EditForm>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        @if (_rows is null)
+        {
+            <p>Use the form above. The first 100 most recent BOEs are listed by default.</p>
+        }
+        else if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No BOE documents match the current search.</p>
+        }
+        else
+        {
+            <p class="inspection-empty">Showing @_rows.Count BOE document(s) (most recent first).</p>
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Reference</th>
+                        <th>Type</th>
+                        <th>Source</th>
+                        <th>Linked case</th>
+                        <th>Received</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr class="@(SelectedDocumentId == r.DocumentId ? "is-selected" : null)">
+                            <td><code>@r.ReferenceNumber</code></td>
+                            <td>@r.DocumentType</td>
+                            <td>@(r.ExternalSystemDisplayName ?? "—")</td>
+                            <td>@(r.CaseSubjectIdentifier ?? "(unmatched)")</td>
+                            <td>@r.ReceivedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td><a class="inspection-button" href="/admin/icums/boe-lookup/@r.DocumentId">View</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    @if (SelectedDocumentId is Guid sid && _payload is not null)
+    {
+        <section class="inspection-section inspection-detail-panel">
+            <header class="inspection-card-title">
+                <h2>@_payload.DocumentType — @_payload.ReferenceNumber</h2>
+                <a class="inspection-button" href="/admin/icums/boe-lookup">Close</a>
+            </header>
+            <dl class="inspection-detail-grid">
+                <dt>Document id</dt>
+                <dd><code class="inspection-monospace-small">@_payload.Id</code></dd>
+                <dt>Linked case</dt>
+                <dd>
+                    @if (_payload.CaseId == Guid.Empty)
+                    {
+                        <span>(unmatched)</span>
+                    }
+                    else
+                    {
+                        <a href="/cases/@_payload.CaseId">@_payload.CaseId</a>
+                    }
+                </dd>
+                <dt>Received</dt>
+                <dd>@_payload.ReceivedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC</dd>
+            </dl>
+            <JsonPayloadViewer Title="BOE payload" Json="@_payload.PayloadJson" />
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid? SelectedDocumentId { get; set; }
+
+    private IReadOnlyList<BoeLookupRow>? _rows;
+    private DownloadPayload? _payload;
+    private FormModel _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        _rows = await Lookup.SearchAsync(query: null);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        if (SelectedDocumentId is Guid id)
+        {
+            _payload = await Downloads.GetPayloadAsync(id);
+        }
+        else
+        {
+            _payload = null;
+        }
+    }
+
+    private async Task DoSearchAsync()
+    {
+        var fromUtc = _form.FromUtc is DateTime f ? new DateTimeOffset(DateTime.SpecifyKind(f, DateTimeKind.Utc)) : (DateTimeOffset?)null;
+        var toUtc = _form.ToUtc is DateTime t ? new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Utc)) : (DateTimeOffset?)null;
+        _rows = await Lookup.SearchAsync(_form.Query, fromUtc, toUtc);
+    }
+
+    public sealed class FormModel
+    {
+        public string? Query { get; set; }
+        public DateTime? FromUtc { get; set; }
+        public DateTime? ToUtc { get; set; }
+    }
+}

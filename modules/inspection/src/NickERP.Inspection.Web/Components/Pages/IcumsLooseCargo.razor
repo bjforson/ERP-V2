@@ -1,0 +1,120 @@
+@page "/admin/icums/loose-cargo"
+@* Sprint 22 / B2.3 — loose cargo: cases that have aged past the
+   grace window without an authority document attached. v1 parity port
+   of the loose-cargo page; computes loose-ness at query time from the
+   case + authority-document graph rather than from a dedicated table. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Application.Icums
+@using NickERP.Platform.Tenancy
+@inject IcumsLooseCargoService LooseCargo
+@inject ITenantContext Tenant
+
+<PageTitle>ICUMS loose cargo — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Loose cargo</h1>
+        <p class="inspection-page-subtitle">
+            Cases older than @_graceHours h with no authority document attached. Operator triage list.
+        </p>
+    </div>
+    <div class="inspection-page-actions">
+        <a class="inspection-button" href="/admin/icums">Back to ICUMS dashboard</a>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Filters</h2>
+            <EditForm Model="_form" OnValidSubmit="ReloadAsync" FormName="loose-cargo-filter" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Grace window (hours)</span>
+                        <span class="inspection-form-help">Defaults to 4 hours; the v1 operational threshold.</span>
+                        <InputNumber class="inspection-input" @bind-Value="_form.GraceHours" />
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary">Refresh</button>
+                </div>
+            </EditForm>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        @if (_rows is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No loose cases — every aged case has at least one authority document attached.</p>
+        }
+        else
+        {
+            <p class="inspection-empty">Showing @_rows.Count loose case(s).</p>
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>Location</th>
+                        <th>State</th>
+                        <th>Opened</th>
+                        <th>Age</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr>
+                            <td><code>@r.SubjectIdentifier</code></td>
+                            <td>@(r.LocationName ?? "—")</td>
+                            <td>@r.State</td>
+                            <td>@r.OpenedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@FormatAge(r.AgeWaiting)</td>
+                            <td><a class="inspection-button" href="/cases/@r.CaseId">Open case</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private double _graceHours = 4.0;
+    private IReadOnlyList<LooseCargoRow>? _rows;
+    private FormModel _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        _form.GraceHours = _graceHours;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (_form.GraceHours < 0.5) _form.GraceHours = 0.5;
+        _graceHours = _form.GraceHours;
+        _rows = await LooseCargo.ListAsync(TimeSpan.FromHours(_graceHours));
+    }
+
+    private static string FormatAge(TimeSpan age)
+    {
+        if (age.TotalHours < 24) return $"{age.TotalHours:N1}h";
+        return $"{age.TotalDays:N1}d";
+    }
+
+    public sealed class FormModel
+    {
+        public double GraceHours { get; set; } = 4.0;
+    }
+}

@@ -36,5 +36,23 @@ public sealed class OutboundSubmission : ITenantOwned
     public DateTimeOffset SubmittedAt { get; set; }
     public DateTimeOffset? RespondedAt { get; set; }
 
+    /// <summary>
+    /// Sprint 22 / B2.1 — operational priority for the submission queue
+    /// (admin requeue ordering, "high priority" badge). Higher values run
+    /// earlier in the dispatcher; ties break on
+    /// <see cref="SubmittedAt"/>. Unconfigured rows default to 0
+    /// ("normal"); ad-hoc operator-level priority bumps land here.
+    /// </summary>
+    public int Priority { get; set; }
+
+    /// <summary>
+    /// Sprint 22 / B2.1 — when the most recent dispatch attempt happened.
+    /// Distinct from <see cref="SubmittedAt"/> (record creation) and
+    /// <see cref="RespondedAt"/> (final response received). Powers the
+    /// admin queue's "last attempt" column and operator triage of
+    /// long-pending rows.
+    /// </summary>
+    public DateTimeOffset? LastAttemptAt { get; set; }
+
     public long TenantId { get; set; }
 }

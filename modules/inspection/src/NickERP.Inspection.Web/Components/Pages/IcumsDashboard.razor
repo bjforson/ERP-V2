@@ -1,0 +1,172 @@
+@page "/admin/icums"
+@* Sprint 22 / B2.3 — ICUMS dashboard. Composes summary cards from
+   the per-area admin services + links into the queue + lookup pages.
+   v1 parity port of `/icums` (the dashboard tab on v1's IcumsDashboard
+   page). *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Application.Icums
+@using NickERP.Platform.Tenancy
+@inject IcumsDashboardService Dashboard
+@inject ITenantContext Tenant
+
+<PageTitle>ICUMS dashboard — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>ICUMS integration</h1>
+        <p class="inspection-page-subtitle">
+            Operational dashboard for the ICUMS-flavoured external systems in this tenant. Links into the queue + lookup pages.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_summary is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <section class="inspection-section">
+        <h2 class="inspection-card-title">Overview</h2>
+        <div class="inspection-stat-grid">
+            <div class="inspection-stat-card">
+                <div class="label">Pending submissions</div>
+                <div class="value">@(_summary.SubmissionCountsByStatus.GetValueOrDefault("pending", 0))</div>
+                <a class="inspection-button" href="/admin/icums/submission-queue">Open queue</a>
+            </div>
+            <div class="inspection-stat-card">
+                <div class="label">Submission errors</div>
+                <div class="value">@(_summary.SubmissionCountsByStatus.GetValueOrDefault("error", 0))</div>
+                <a class="inspection-button" href="/admin/icums/submission-queue">Triage</a>
+            </div>
+            <div class="inspection-stat-card">
+                <div class="label">Inbound documents</div>
+                <div class="value">@_summary.DownloadCountsByType.Values.Sum()</div>
+                <a class="inspection-button" href="/admin/icums/download-queue">Open queue</a>
+            </div>
+            <div class="inspection-stat-card">
+                <div class="label">Unmatched docs</div>
+                <div class="value">@_summary.UnmatchedDocumentCount</div>
+                <a class="inspection-button" href="/admin/icums/download-queue?match=Unmatched">Review</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Submissions by status</h2>
+            @if (_summary.SubmissionCountsByStatus.Count == 0)
+            {
+                <p class="inspection-empty">No outbound submissions yet.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th>Status</th><th>Count</th></tr></thead>
+                    <tbody>
+                        @foreach (var kv in _summary.SubmissionCountsByStatus.OrderBy(k => k.Key))
+                        {
+                            <tr>
+                                <td><span class="inspection-badge inspection-badge-@StatusBadgeClass(kv.Key)">@kv.Key</span></td>
+                                <td>@kv.Value</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Inbound documents by type</h2>
+            @if (_summary.DownloadCountsByType.Count == 0)
+            {
+                <p class="inspection-empty">No authority documents pulled yet.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th>Type</th><th>Count</th></tr></thead>
+                    <tbody>
+                        @foreach (var kv in _summary.DownloadCountsByType.OrderBy(k => k.Key))
+                        {
+                            <tr>
+                                <td><code>@kv.Key</code></td>
+                                <td>@kv.Value</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Active external systems</h2>
+            @if (_summary.ExternalSystems.Count == 0)
+            {
+                <p class="inspection-empty">No active external systems. Configure one at <a href="/external-systems">/external-systems</a>.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead>
+                        <tr>
+                            <th>Display name</th>
+                            <th>Type</th>
+                            <th>Scope</th>
+                            <th>Bindings</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in _summary.ExternalSystems)
+                        {
+                            <tr>
+                                <td>@e.DisplayName</td>
+                                <td><code>@e.TypeCode</code></td>
+                                <td>@e.Scope</td>
+                                <td>@e.BindingCount</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Quick links</h2>
+            <div class="inspection-button-row">
+                <a class="inspection-button" href="/admin/icums/submission-queue">Submission queue</a>
+                <a class="inspection-button" href="/admin/icums/download-queue">Download queue</a>
+                <a class="inspection-button" href="/admin/icums/loose-cargo">Loose cargo</a>
+                <a class="inspection-button" href="/admin/icums/boe-lookup">BOE lookup</a>
+                <a class="inspection-button inspection-button-primary" href="/admin/icums/manual-pull">Manual BOE pull</a>
+            </div>
+        </div>
+    </section>
+}
+
+@code {
+    private DashboardSummary? _summary;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        _summary = await Dashboard.GetSummaryAsync();
+    }
+
+    private static string StatusBadgeClass(string status) => status?.ToLowerInvariant() switch
+    {
+        "pending" => "info",
+        "accepted" => "success",
+        "rejected" => "warning",
+        "error" => "error",
+        _ => "neutral",
+    };
+}

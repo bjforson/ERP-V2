@@ -3,8 +3,11 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Application.AnalysisServices;
+using NickERP.Inspection.Application.Downloads;
 using NickERP.Inspection.Application.ExternalSystems;
+using NickERP.Inspection.Application.Icums;
 using NickERP.Inspection.Application.PostHocOutcomes;
+using NickERP.Inspection.Application.Submissions;
 using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
@@ -72,6 +75,24 @@ builder.Services.AddAnalysisServiceAdmin();
 // page. Centralises the per-scope (PerLocation/SubsetOfLocations/Shared)
 // validation + binding writes so the page doesn't have to. Scoped.
 builder.Services.AddExternalSystemAdmin();
+
+// Sprint 22 / B2.1 — ICUMS submission queue admin service for the
+// /admin/icums/submission-queue Razor page. Scoped; idempotent
+// (TryAddScoped under the hood).
+builder.Services.AddIcumsSubmissionQueueAdmin();
+
+// Sprint 22 / B2.2 — ICUMS download queue admin service for the
+// /admin/icums/download-queue Razor page. Reads AuthorityDocument +
+// OutcomePullCursor; supports admin re-link of a case override.
+builder.Services.AddIcumsDownloadQueueAdmin();
+
+// Sprint 22 / B2.3 — ICUMS dashboard sub-page admin services
+// (dashboard summary, loose cargo, BOE lookup) + the manual-pull
+// service that re-fetches outcomes from one external system instance
+// on operator command. Manual-pull lives in Inspection.Web because
+// it needs IPluginRegistry to resolve adapters.
+builder.Services.AddIcumsDashboardSuite();
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.IcumsManualPullService>();
 
 // Sprint 14 / VP6 Phase C — claim semantics + case-visibility helper.
 // Cases.razor consults CaseVisibilityService for the access-list under

@@ -1,0 +1,463 @@
+@page "/admin/icums/download-queue"
+@page "/admin/icums/download-queue/{SelectedId:guid}"
+@* Sprint 22 / B2.2 — ICUMS download queue admin UI. v1 parity port:
+   list inbound BOE / CMR / IM / Manifest documents, filter by type +
+   source + match-state, view payload, drill into linked case, and
+   admin-override the case link when the auto-match misroutes.
+
+   Surfaces the OutcomePullCursor state for every external system in
+   the tenant — operator visibility into when the OutcomePullWorker is
+   wedged without log-grepping. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.Downloads
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+@inject IcumsDownloadQueueAdminService Admin
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<PageTitle>ICUMS download queue — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>ICUMS download queue</h1>
+        <p class="inspection-page-subtitle">
+            Inbound BOE, CMR, IM, and manifest documents pulled from ICUMS-flavoured external systems. Filter, view payload, override case links.
+        </p>
+    </div>
+    <div class="inspection-page-actions">
+        <a class="inspection-button" href="/admin/icums">Back to ICUMS dashboard</a>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Pull cursors</h2>
+            @if (_cursors is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (_cursors.Count == 0)
+            {
+                <p class="inspection-empty">No pull cursors active. Cursors are created on first successful pull per external system.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead>
+                        <tr>
+                            <th>External system</th>
+                            <th>Last successful pull (UTC)</th>
+                            <th>Window-until (UTC)</th>
+                            <th>Consecutive failures</th>
+                            <th>Lag</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in _cursors)
+                        {
+                            var lagBadge = LagBadgeClass(c.LagSeconds);
+                            <tr>
+                                <td>@(c.ExternalSystemDisplayName ?? c.ExternalSystemTypeCode ?? "—")</td>
+                                <td>@c.LastSuccessfulPullAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@c.LastPullWindowUntil.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@(c.ConsecutiveFailures > 0 ? $"⚠ {c.ConsecutiveFailures}" : "0")</td>
+                                <td><span class="inspection-badge inspection-badge-@lagBadge">@FormatLag(c.LagSeconds)</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Filters</h2>
+            <EditForm Model="_filterForm" OnValidSubmit="ApplyFiltersAsync" FormName="filter-downloads" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Document types</span>
+                        <span class="inspection-form-help">Multi-select. Leave empty to include all types.</span>
+                        <div class="inspection-checkbox-group">
+                            @foreach (var dt in CommonDocumentTypes)
+                            {
+                                var checkedNow = _filterForm.SelectedDocumentTypes.Contains(dt);
+                                <label class="inspection-checkbox-label">
+                                    <input type="checkbox" name="docTypes" value="@dt" checked="@checkedNow"
+                                           @onchange="e => ToggleDocType(dt, e.Value as bool? ?? false)" />
+                                    <span>@dt</span>
+                                </label>
+                            }
+                        </div>
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>External system</span>
+                        <InputSelect class="inspection-input" @bind-Value="_filterForm.ExternalSystemInstanceId">
+                            <option value="">— all —</option>
+                            @foreach (var esi in _externalSystems)
+                            {
+                                <option value="@esi.Id">@esi.DisplayName (@esi.TypeCode)</option>
+                            }
+                        </InputSelect>
+                    </label>
+                    <label>
+                        <span>Match status</span>
+                        <InputSelect class="inspection-input" @bind-Value="_filterForm.MatchStatus">
+                            <option value="">— all —</option>
+                            <option value="@DownloadMatchStatus.Matched">Matched (case linked)</option>
+                            <option value="@DownloadMatchStatus.Unmatched">Unmatched (no case)</option>
+                        </InputSelect>
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Search</span>
+                        <span class="inspection-form-help">Reference number or case subject identifier.</span>
+                        <InputText class="inspection-input" @bind-Value="_filterForm.SearchText" placeholder="BOE-2026-..., MSCU1234567" />
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Received from (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_filterForm.FromUtc" />
+                    </label>
+                    <label>
+                        <span>Received to (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_filterForm.ToUtc" />
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary">Apply filters</button>
+                    <button type="button" class="inspection-button" @onclick="ResetFiltersAsync">Reset</button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="inspection-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        @if (_page is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (_page.Rows.Count == 0)
+        {
+            <p class="inspection-empty">No documents match the current filter.</p>
+        }
+        else
+        {
+            <div class="inspection-table-meta">
+                <span>Showing @_page.Rows.Count of @_page.TotalCount rows.</span>
+                <span>Page @_page.Page of @TotalPages</span>
+            </div>
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Reference</th>
+                        <th>Source</th>
+                        <th>Case</th>
+                        <th>Match</th>
+                        <th>Received</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _page.Rows)
+                    {
+                        <tr class="@(SelectedId == r.Id ? "is-selected" : null)">
+                            <td>@r.DocumentType</td>
+                            <td><code>@r.ReferenceNumber</code></td>
+                            <td>@(r.ExternalSystemDisplayName ?? r.ExternalSystemTypeCode ?? "—")</td>
+                            <td>@(r.CaseSubjectIdentifier ?? "(unmatched)")</td>
+                            <td>
+                                @if (r.IsMatched)
+                                {
+                                    <span class="inspection-badge inspection-badge-success">matched</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-badge inspection-badge-warning">unmatched</span>
+                                }
+                            </td>
+                            <td>@r.ReceivedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td class="inspection-table-actions">
+                                <a class="inspection-button" href="/admin/icums/download-queue/@r.Id">View</a>
+                                @if (r.IsMatched)
+                                {
+                                    <a class="inspection-button" href="/cases/@r.CaseId">Case</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div class="inspection-button-row">
+                <button type="button" class="inspection-button"
+                        @onclick="() => GoToPage(_page.Page - 1)"
+                        disabled="@(_page.Page <= 1)">Previous</button>
+                <button type="button" class="inspection-button"
+                        @onclick="() => GoToPage(_page.Page + 1)"
+                        disabled="@(_page.Page >= TotalPages)">Next</button>
+            </div>
+        }
+    </section>
+
+    @if (SelectedId is Guid sid && _payload is not null)
+    {
+        <section class="inspection-section inspection-detail-panel">
+            <header class="inspection-card-title">
+                <h2>@_payload.DocumentType — @_payload.ReferenceNumber</h2>
+                <a class="inspection-button" href="/admin/icums/download-queue">Close</a>
+            </header>
+            <dl class="inspection-detail-grid">
+                <dt>Document id</dt>
+                <dd><code class="inspection-monospace-small">@_payload.Id</code></dd>
+                <dt>Linked case</dt>
+                <dd>
+                    @if (_payload.CaseId == Guid.Empty)
+                    {
+                        <span>(unmatched — no case linked)</span>
+                    }
+                    else
+                    {
+                        <a href="/cases/@_payload.CaseId">@_payload.CaseId</a>
+                    }
+                </dd>
+                <dt>Received</dt>
+                <dd>@_payload.ReceivedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC</dd>
+            </dl>
+
+            <div class="inspection-card">
+                <h3 class="inspection-card-title">Re-link case</h3>
+                <EditForm Model="_relinkForm" OnValidSubmit="DoRelinkAsync" FormName="relink-doc" class="inspection-form">
+                    <div class="inspection-form-row">
+                        <label>
+                            <span>New case id (or leave blank to detach)</span>
+                            <InputText class="inspection-input" @bind-Value="_relinkForm.NewCaseId" placeholder="00000000-0000-0000-0000-000000000000" />
+                        </label>
+                    </div>
+                    <div class="inspection-form-actions">
+                        <button type="submit" class="inspection-button inspection-button-primary" disabled="@_loading">Re-link</button>
+                        @if (!string.IsNullOrEmpty(_relinkMessage))
+                        {
+                            <span class="inspection-form-message">@_relinkMessage</span>
+                        }
+                    </div>
+                </EditForm>
+            </div>
+
+            <JsonPayloadViewer Title="Document payload" Json="@_payload.PayloadJson" />
+        </section>
+    }
+}
+
+@code {
+    /// <summary>Most-common document type tags. The entity allows arbitrary strings; the page surfaces the common set as multi-select chips.</summary>
+    private static readonly string[] CommonDocumentTypes = new[]
+    {
+        "BOE", "CMR", "IM", "Manifest", "WaybillDeclaration", "PostHocOutcome"
+    };
+    private const int PageSize = 50;
+
+    [Parameter] public Guid? SelectedId { get; set; }
+
+    private int _currentPage = 1;
+    private DownloadPage? _page;
+    private DownloadPayload? _payload;
+    private IReadOnlyList<PullCursorRow>? _cursors;
+    private List<ExternalSystemRow> _externalSystems = new();
+    private FilterFormModel _filterForm = new();
+    private RelinkFormModel _relinkForm = new();
+    private string _message = string.Empty;
+    private string _relinkMessage = string.Empty;
+    private bool _loading;
+
+    private int TotalPages => _page is null
+        ? 0
+        : Math.Max(1, (int)Math.Ceiling(_page.TotalCount / (double)PageSize));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+
+        _externalSystems = await Db.ExternalSystemInstances.AsNoTracking()
+            .OrderBy(e => e.DisplayName)
+            .Select(e => new ExternalSystemRow(e.Id, e.TypeCode, e.DisplayName))
+            .ToListAsync();
+
+        await ReloadCursorsAsync();
+        await ReloadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        if (SelectedId is Guid sid)
+        {
+            _payload = await Admin.GetPayloadAsync(sid);
+            _relinkForm = new RelinkFormModel
+            {
+                NewCaseId = _payload?.CaseId == Guid.Empty ? string.Empty : _payload?.CaseId.ToString() ?? string.Empty,
+            };
+        }
+        else
+        {
+            _payload = null;
+        }
+    }
+
+    private async Task ReloadCursorsAsync()
+    {
+        _cursors = await Admin.GetPullCursorsAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _page = await Admin.ListAsync(BuildFilter(), _currentPage, PageSize);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private DownloadQueueFilter BuildFilter()
+    {
+        DownloadMatchStatus? matchStatus = null;
+        if (Enum.TryParse<DownloadMatchStatus>(_filterForm.MatchStatus, out var ms))
+        {
+            matchStatus = ms;
+        }
+        return new DownloadQueueFilter
+        {
+            DocumentTypes = _filterForm.SelectedDocumentTypes.Count == 0
+                ? null
+                : _filterForm.SelectedDocumentTypes.ToArray(),
+            ExternalSystemInstanceId = Guid.TryParse(_filterForm.ExternalSystemInstanceId, out var g) ? g : null,
+            ReceivedFromUtc = _filterForm.FromUtc is DateTime f
+                ? new DateTimeOffset(DateTime.SpecifyKind(f, DateTimeKind.Utc))
+                : null,
+            ReceivedToUtc = _filterForm.ToUtc is DateTime t
+                ? new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Utc))
+                : null,
+            SearchText = _filterForm.SearchText,
+            MatchStatus = matchStatus,
+        };
+    }
+
+    private void ToggleDocType(string dt, bool isChecked)
+    {
+        if (isChecked) _filterForm.SelectedDocumentTypes.Add(dt);
+        else _filterForm.SelectedDocumentTypes.Remove(dt);
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _currentPage = 1;
+        _message = string.Empty;
+        await ReloadAsync();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _filterForm = new FilterFormModel();
+        _currentPage = 1;
+        await ReloadAsync();
+    }
+
+    private async Task GoToPage(int page)
+    {
+        if (page < 1) page = 1;
+        if (page > TotalPages) page = TotalPages;
+        _currentPage = page;
+        await ReloadAsync();
+    }
+
+    private async Task DoRelinkAsync()
+    {
+        if (_payload is null) return;
+        _loading = true;
+        try
+        {
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            var raw = auth.User?.FindFirst("nickerp:id")?.Value;
+            var actor = Guid.TryParse(raw, out var g) ? g : Guid.Empty;
+
+            var newCaseId = string.IsNullOrWhiteSpace(_relinkForm.NewCaseId)
+                ? Guid.Empty
+                : Guid.TryParse(_relinkForm.NewCaseId, out var nc) ? nc : Guid.Empty;
+            if (!string.IsNullOrWhiteSpace(_relinkForm.NewCaseId)
+                && !Guid.TryParse(_relinkForm.NewCaseId, out _))
+            {
+                _relinkMessage = "Could not parse case id — check the format.";
+                return;
+            }
+            var result = await Admin.RelinkAsync(_payload.Id, newCaseId, actor);
+            _relinkMessage = result.Notice;
+            if (result.Success)
+            {
+                _payload = await Admin.GetPayloadAsync(_payload.Id);
+                await ReloadAsync();
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string LagBadgeClass(double lagSeconds) => lagSeconds switch
+    {
+        <= 3600 => "success",         // ≤ 1 h
+        <= 6 * 3600 => "info",        // ≤ 6 h
+        <= 24 * 3600 => "warning",    // ≤ 24 h — runbook escalation threshold
+        _ => "error",                 // > 24 h
+    };
+
+    private static string FormatLag(double lagSeconds)
+    {
+        if (lagSeconds < 60) return $"{lagSeconds:N0}s";
+        if (lagSeconds < 3600) return $"{lagSeconds / 60:N0}m";
+        if (lagSeconds < 86400) return $"{lagSeconds / 3600:N1}h";
+        return $"{lagSeconds / 86400:N1}d";
+    }
+
+    private sealed record ExternalSystemRow(Guid Id, string TypeCode, string DisplayName);
+
+    public sealed class FilterFormModel
+    {
+        public HashSet<string> SelectedDocumentTypes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public string? ExternalSystemInstanceId { get; set; }
+        public string? SearchText { get; set; }
+        public string? MatchStatus { get; set; }
+        public DateTime? FromUtc { get; set; }
+        public DateTime? ToUtc { get; set; }
+    }
+
+    public sealed class RelinkFormModel
+    {
+        public string NewCaseId { get; set; } = string.Empty;
+    }
+}

@@ -1,0 +1,174 @@
+@page "/admin/icums/manual-pull"
+@* Sprint 22 / B2.3 — admin-triggered manual pull of post-hoc outcomes
+   from one external system instance over an explicit window. v1 parity
+   port of the manual-BOE-request page. The cursor is intentionally NOT
+   advanced — this is a one-off operator action, not a scheduled tick. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.ExternalSystems.Abstractions
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject IcumsManualPullService PullService
+@inject ITenantContext Tenant
+
+<PageTitle>ICUMS manual pull — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Manual pull</h1>
+        <p class="inspection-page-subtitle">
+            Re-fetch outcomes from one external system over a deliberate window. The cursor is unchanged — manual pulls coexist with the periodic worker.
+        </p>
+    </div>
+    <div class="inspection-page-actions">
+        <a class="inspection-button" href="/admin/icums">Back to ICUMS dashboard</a>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Trigger</h2>
+            <EditForm Model="_form" OnValidSubmit="DoPullAsync" FormName="manual-pull" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>External system</span>
+                        <InputSelect class="inspection-input" @bind-Value="_form.ExternalSystemInstanceId">
+                            <option value="">— pick one —</option>
+                            @foreach (var esi in _externalSystems)
+                            {
+                                <option value="@esi.Id">@esi.DisplayName (@esi.TypeCode)</option>
+                            }
+                        </InputSelect>
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Since (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_form.SinceUtc" />
+                    </label>
+                    <label>
+                        <span>Until (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_form.UntilUtc" />
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Window kind</span>
+                        <span class="inspection-form-help">Authority-side timestamp the bounds refer to. LastModifiedAt is the most permissive choice.</span>
+                        <InputSelect class="inspection-input" @bind-Value="_form.WindowKind">
+                            <option value="@OutcomeWindowKind.LastModifiedAt">Last modified at</option>
+                            <option value="@OutcomeWindowKind.DecidedAt">Decided at</option>
+                            <option value="@OutcomeWindowKind.ReceivedAt">Received at</option>
+                        </InputSelect>
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary" disabled="@_loading">
+                        @if (_loading) { @("Pulling…") } else { @("Pull now") }
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </section>
+
+    @if (_lastResult is not null)
+    {
+        <section class="inspection-section">
+            <div class="inspection-callout">
+                @if (_lastResult.Success)
+                {
+                    <strong>Pull succeeded.</strong>
+                }
+                else
+                {
+                    <strong class="inspection-error-text">Pull failed.</strong>
+                }
+                <p>@_lastResult.Notice</p>
+                @if (_lastResult.Success)
+                {
+                    <ul>
+                        <li>Fetched: @_lastResult.Fetched</li>
+                        <li>Inserted: @_lastResult.Inserted</li>
+                        <li>Deduped (idempotency hit): @_lastResult.Deduplicated</li>
+                        <li>Superseded: @_lastResult.Superseded</li>
+                        <li>Unmatched (no case): @_lastResult.Unmatched</li>
+                        <li>Failed: @_lastResult.Failed</li>
+                    </ul>
+                }
+            </div>
+        </section>
+    }
+}
+
+@code {
+    private FormModel _form = new();
+    private List<ExternalSystemRow> _externalSystems = new();
+    private ManualPullResult? _lastResult;
+    private bool _loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+
+        _externalSystems = await Db.ExternalSystemInstances.AsNoTracking()
+            .Where(e => e.IsActive)
+            .OrderBy(e => e.DisplayName)
+            .Select(e => new ExternalSystemRow(e.Id, e.TypeCode, e.DisplayName))
+            .ToListAsync();
+
+        _form.SinceUtc = DateTime.UtcNow.AddDays(-1);
+        _form.UntilUtc = DateTime.UtcNow;
+        _form.WindowKind = OutcomeWindowKind.LastModifiedAt.ToString();
+    }
+
+    private async Task DoPullAsync()
+    {
+        if (!Guid.TryParse(_form.ExternalSystemInstanceId, out var esiId))
+        {
+            _lastResult = ManualPullResult.Failure("Pick an external system before pulling.");
+            return;
+        }
+        if (_form.SinceUtc is not DateTime since || _form.UntilUtc is not DateTime until)
+        {
+            _lastResult = ManualPullResult.Failure("Both Since and Until are required.");
+            return;
+        }
+        var sinceUtc = new DateTimeOffset(DateTime.SpecifyKind(since, DateTimeKind.Utc));
+        var untilUtc = new DateTimeOffset(DateTime.SpecifyKind(until, DateTimeKind.Utc));
+        var kind = Enum.TryParse<OutcomeWindowKind>(_form.WindowKind, out var k)
+            ? k
+            : OutcomeWindowKind.LastModifiedAt;
+
+        _loading = true;
+        try
+        {
+            _lastResult = await PullService.PullAsync(esiId, sinceUtc, untilUtc, kind);
+        }
+        catch (Exception ex)
+        {
+            _lastResult = ManualPullResult.Failure("Manual pull threw: " + ex.Message);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private sealed record ExternalSystemRow(Guid Id, string TypeCode, string DisplayName);
+
+    public sealed class FormModel
+    {
+        public string? ExternalSystemInstanceId { get; set; }
+        public DateTime? SinceUtc { get; set; }
+        public DateTime? UntilUtc { get; set; }
+        public string? WindowKind { get; set; }
+    }
+}
