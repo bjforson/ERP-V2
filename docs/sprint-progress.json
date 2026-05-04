@@ -2,7 +2,34 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Sprints 16 + 17 SHIPPED 2026-05-04. Sprint 16 (ExternalSystemInstance subset-of-locations scope): 2c1f65b (feature) + 00d2507 (merge). Sprint 17 (edge replay multi-event-type fan-out — scan-captured + scanner-status-changed beyond v0 audit-only): 712bc15 (feature) + b2ef228 (merge). Tests grew 286 -> 317 (+31; Sprint 16 = 16, Sprint 17 = 15). Followups resolved: FU-external-system-subset-junction + P2-FU-multi-event-types. Next dispatch per plan-file §10.3: Sprint 18 (Tenant lifecycle Pt 1 — state + soft-delete + hard-purge admin) or Sprint 19 (OCR eval harness offline + v1 Tesseract baseline).",
+  "currentSprintNote": "Sprint 18 (Tenant lifecycle Pt 1 — state + soft-delete + hard-purge admin) SHIPPED 2026-05-04 at main 1093350. Phase commits a0d8d18/acf4c30/ea8813e. Tests grew 317 -> 336 (+19). Followup FU-tenant-lifecycle flipped to shipped Pt 1 (Pt 2 email + first-user invite stays queued for Sprint 21; Pt 3 export tooling for later). Next dispatch per plan-file §10.3: Sprint 19 (OCR eval harness offline + v1 Tesseract baseline) or Sprint 20+ (Inspection v1 parity Batch B1).",
+  "prePilotProgress": {
+    "asOf": "2026-05-04",
+    "deadlineMonthsLow": 6,
+    "deadlineMonthsHigh": 9,
+    "shippedSprints": 7,
+    "totalEstimateLow": 31,
+    "totalEstimateHigh": 47,
+    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 7 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope. Inspection v1 parity (13-18 sprints) is the long pole — 0 shipped. Pace at 1.5 sprints/week sustained = 17-25 weeks remaining.",
+    "workstreams": [
+      { "name": "AnalysisService VP6", "estimateLow": 2, "estimateHigh": 3, "shipped": 3, "status": "done", "note": "Sprint 14 (5 phases): storage + bootstrap + admin + claim + tests" },
+      { "name": "ExternalSystemInstance subset junction", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 16" },
+      { "name": "P2-FU-multi-event-types (edge fan-out)", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 17" },
+      { "name": "NickHR v1->v2 clone", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 15. Refactor to v2-native is post-pilot (~6-10 sprints)." },
+      { "name": "Tenant lifecycle (Pt 1+2+3)", "estimateLow": 3, "estimateHigh": 5, "shipped": 1, "status": "in-progress", "note": "Pt 1 shipped Sprint 18. Pt 2 (email + first-user invite) queued Sprint 21; Pt 3 (scoped export) later." },
+      { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 0, "status": "not-started", "note": "Long pole. Per plan §11 — case viewing, ICUMS UIs, BG services, validation rules, completeness, specialised review, monitoring, admin." },
+      { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
+      { "name": "Three-module co-deploy navigation", "estimateLow": 1, "estimateHigh": 1, "shipped": 0, "status": "not-started", "note": "Portal links to inspection.web + finance.web + hr.web with shared auth + chrome." },
+      { "name": "§6.1 OCR eval + Florence-2", "estimateLow": 4, "estimateHigh": 6, "shipped": 0, "status": "not-started", "note": "Gated on GPU box availability. Per plan §12 — eval harness + v1 baseline + GPU training (out-of-band) + integration + drift monitor." },
+      { "name": "Phase V lightweight (security + perf)", "estimateLow": 1, "estimateHigh": 2, "shipped": 0, "status": "not-started", "note": "Pre-pilot validation. Targeted security audit + perf/load test scoped to pilot site." },
+      { "name": "Pilot site setup + monitoring", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Final site call due Sprint 22-24. Tentative front-runners: Kotoka or Takoradi per plan §13." }
+    ],
+    "operatorActions": [
+      { "id": "live-deploy-staged-migrations", "title": "Apply Sprint 13 T1 staged SQL scripts to live nickerp_platform + nickerp_nickfinance (32 migrations)", "blocking": "any prod cutover" },
+      { "id": "gpu-box-availability", "title": "Confirm GPU box (A100 / H100 / 4090, 24 GB+ VRAM) for Florence-2 fine-tune", "blocking": "Sprint 19+ §6.1 work" },
+      { "id": "pilot-site-selection", "title": "Pick pilot site (Kotoka / Takoradi / other) per plan §13 decision matrix", "blocking": "Phase V scoping (Sprint 22-24)" }
+    ]
+  },
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {

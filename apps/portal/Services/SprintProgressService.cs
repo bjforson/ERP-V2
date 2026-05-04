@@ -68,6 +68,51 @@ public sealed class SprintProgressDocument
     [JsonPropertyName("history")] public List<HistoricalSprint> History { get; set; } = new();
     [JsonPropertyName("backlog")] public List<BacklogItem> Backlog { get; set; } = new();
     [JsonPropertyName("followups")] public List<Followup> Followups { get; set; } = new();
+    [JsonPropertyName("prePilotProgress")] public PrePilotProgress? PrePilotProgress { get; set; }
+}
+
+public sealed class PrePilotProgress
+{
+    [JsonPropertyName("asOf")] public string AsOf { get; set; } = "";
+    [JsonPropertyName("deadlineMonthsLow")] public int DeadlineMonthsLow { get; set; }
+    [JsonPropertyName("deadlineMonthsHigh")] public int DeadlineMonthsHigh { get; set; }
+    [JsonPropertyName("shippedSprints")] public int ShippedSprints { get; set; }
+    [JsonPropertyName("totalEstimateLow")] public int TotalEstimateLow { get; set; }
+    [JsonPropertyName("totalEstimateHigh")] public int TotalEstimateHigh { get; set; }
+    [JsonPropertyName("note")] public string Note { get; set; } = "";
+    [JsonPropertyName("workstreams")] public List<Workstream> Workstreams { get; set; } = new();
+    [JsonPropertyName("operatorActions")] public List<OperatorAction> OperatorActions { get; set; } = new();
+
+    /// <summary>
+    /// Lower-bound percentage = shipped / high-estimate (more conservative).
+    /// </summary>
+    public int PercentLow => TotalEstimateHigh == 0 ? 0 : (int)Math.Round(ShippedSprints * 100.0 / TotalEstimateHigh);
+
+    /// <summary>
+    /// Upper-bound percentage = shipped / low-estimate (more optimistic).
+    /// </summary>
+    public int PercentHigh => TotalEstimateLow == 0 ? 0 : (int)Math.Round(ShippedSprints * 100.0 / TotalEstimateLow);
+}
+
+public sealed class Workstream
+{
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("estimateLow")] public int EstimateLow { get; set; }
+    [JsonPropertyName("estimateHigh")] public int EstimateHigh { get; set; }
+    [JsonPropertyName("shipped")] public int Shipped { get; set; }
+    /// <summary><c>done</c> | <c>in-progress</c> | <c>not-started</c>.</summary>
+    [JsonPropertyName("status")] public string Status { get; set; } = "not-started";
+    [JsonPropertyName("note")] public string? Note { get; set; }
+
+    public int PercentLow => EstimateHigh == 0 ? 0 : (int)Math.Round(Shipped * 100.0 / EstimateHigh);
+    public int PercentHigh => EstimateLow == 0 ? 0 : (int)Math.Round(Shipped * 100.0 / EstimateLow);
+}
+
+public sealed class OperatorAction
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("title")] public string Title { get; set; } = "";
+    [JsonPropertyName("blocking")] public string Blocking { get; set; } = "";
 }
 
 public sealed class CurrentSprintInfo
