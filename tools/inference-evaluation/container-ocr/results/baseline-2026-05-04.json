@@ -1,0 +1,29 @@
+{
+  "engine": "tesseract",
+  "corpusSize": 2157,
+  "scoredRows": 1917,
+  "exactMatchRate": 0,
+  "checkDigitPassRate": 0,
+  "perFailureMode": {
+    "stylizedTypography": 0,
+    "weathering": 0,
+    "obliqueAngles": 0,
+    "falsePositiveSurfaces": 0,
+    "bucketCounts": {
+      "stylizedTypography": 215,
+      "weathering": 0,
+      "obliqueAngles": 0,
+      "falsePositiveSurfaces": 0
+    }
+  },
+  "latency": {
+    "p50Ms": 666.208,
+    "p95Ms": 1306.2196,
+    "p99Ms": 1750.6813,
+    "meanMs": 721.3745104311544,
+    "samples": 2157
+  },
+  "ranAt": "2026-05-04T17:37:16.5395058\u002B00:00",
+  "host": "TEST-SERVER (CPU; Tesseract 5.2.0; Otsu\u002BCLAHE port from v1)",
+  "notes": "240/2157 rows had no ground truth and were excluded from accuracy scoring."
+}
