@@ -9,6 +9,8 @@ using Microsoft.JSInterop;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Web.Components.Pages;
+using NickERP.Inspection.Web.Services;
+using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Tenancy;
 using BunitTestContext = Bunit.TestContext;
 
@@ -68,6 +70,12 @@ public sealed class ScanViewerTests : IDisposable
         _ctx.Services.AddSingleton(NullLoggerFactory.Instance);
         _ctx.Services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>),
             typeof(NullLogger<>));
+
+        // Sprint 20 / B1.2 — annotation service the page now @injects.
+        // Tests don't exercise annotation persistence; the service still
+        // needs to resolve so component initialisation completes.
+        _ctx.Services.AddSingleton<IEventPublisher, NoopEventPublisher>();
+        _ctx.Services.AddScoped<AnalystAnnotationService>();
 
         // Pre-register the interop calls the page makes on first render.
         // The page also `import`s the JS module; bunit's JSInterop returns
@@ -306,5 +314,14 @@ public sealed class ScanViewerTests : IDisposable
             }, "Test");
             return Task.FromResult(new AuthenticationState(new ClaimsPrincipal(identity)));
         }
+    }
+
+    /// <summary>No-op event publisher for the AnalystAnnotationService DI graph.</summary>
+    private sealed class NoopEventPublisher : IEventPublisher
+    {
+        public Task<DomainEvent> PublishAsync(DomainEvent evt, CancellationToken ct = default) =>
+            Task.FromResult(evt);
+        public Task<IReadOnlyList<DomainEvent>> PublishBatchAsync(IReadOnlyList<DomainEvent> events, CancellationToken ct = default) =>
+            Task.FromResult(events);
     }
 }

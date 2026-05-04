@@ -9,38 +9,46 @@
 @using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
 @using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Audit.Database
 @inject InspectionDbContext Db
+@inject AuditDbContext AuditDb
 @inject CaseWorkflowService Workflow
 @inject CaseClaimService Claims
 @inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
 @inject ILogger<CaseDetail> Logger
+
+@*
+    Sprint 20 / B1.1 — case detail tabs.
+
+    Replaces the previous single-page layout with a tabbed surface that
+    matches v1 NSCIM's case detail page (overview + ICUMS metadata +
+    scanner data + image gallery + rules/findings + history).
+
+    Design choices:
+      * Active tab is driven by the `?tab=` query string so the URL
+        is shareable and the back button works as expected.
+      * Each tab loads its own data via `EnsureTabDataLoadedAsync()` so
+        a slow audit query doesn't block the overview tab. Loaded-state
+        flags live on the page so a re-render after a workflow action
+        keeps the same tab's data current without re-fetching the
+        others.
+      * The 2026-04 claim badge stays in the persistent header
+        region above the tab strip; it's status that applies regardless
+        of which tab the analyst is on.
+      * Workflow actions stay on the overview tab — that's the
+        "primary" view the analyst lands on; tabs to its right are
+        progressively-disclosed depth.
+*@
 
 <PageTitle>Case @ShortId — Inspection v2</PageTitle>
 
 @if (_notFound)
 {
-    @* FU-2 — when the case load returns null (either because no row exists
-       at this id at all, or because RLS hid a foreign-tenant row), we set
-       Response.StatusCode = 404 in OnInitializedAsync (see @code below).
-
-       Why this shape (status-code on cascading HttpContext + inline body)
-       over a NavigateTo("/not-found") redirect: keeps the browser at
-       /cases/{guid} (so back-button + URL-share semantics line up with
-       what the user did), avoids a redirect roundtrip, and avoids
-       provoking a fresh DI scope via UseStatusCodePagesWithReExecute
-       (which races EF DbContext disposal on the test host). Mirrors the
-       pattern in Error.razor.
-
-       We render the not-found body INLINE here instead of relying on
-       UseStatusCodePagesWithReExecute to swap in NotFound.razor — the
-       re-execute creates a new scope whose Inspection / Identity
-       DbContexts open fresh Postgres connections through the F1 tenant
-       interceptor, and on a small body the response disposes before the
-       new scope's connection-open completes (Npgsql 'Connecting' state
-       race). OnInitializedAsync also flips IStatusCodePagesFeature.Enabled
-       off for this request so the middleware doesn't try the re-execute
-       at all. Body text is deliberately generic — never the
-       SubjectIdentifier — so we don't disclose tenant existence. *@
+    @* FU-2 — 404 path. Body deliberately generic — never the
+       SubjectIdentifier — so we don't disclose tenant existence.
+       See OnInitializedAsync for the response code + status-code-
+       pages-feature handling that keeps the URL at /cases/{guid}. *@
     <header class="inspection-page-header">
         <div>
             <h1>Case not found</h1>
@@ -98,229 +106,53 @@ else
         </div>
     </header>
 
-    <section class="inspection-section">
-        <div class="inspection-card">
-            <h2 class="inspection-card-title">Workflow actions</h2>
+    <nav class="inspection-tabs" role="tablist" aria-label="Case detail sections">
+        @foreach (var t in AllTabs)
+        {
+            var isActive = _activeTab == t;
+            var label = TabLabel(t);
+            var href = $"/cases/{CaseId}?tab={t.ToString().ToLowerInvariant()}";
+            <a href="@href"
+               role="tab"
+               aria-selected="@(isActive ? "true" : "false")"
+               class="inspection-tab @(isActive ? "is-active" : "")">@label</a>
+        }
+    </nav>
 
-            <div class="inspection-button-row">
-                <select class="inspection-input" @bind="_selectedScannerId">
-                    <option value="">— pick scanner —</option>
-                    @foreach (var s in _scanners)
-                    {
-                        <option value="@s.Id">@s.TypeCode — @s.DisplayName</option>
-                    }
-                </select>
-                <button class="inspection-button" @onclick="SimulateScan" disabled="@(_selectedScannerId == Guid.Empty)">Simulate scan</button>
-
-                <select class="inspection-input" @bind="_selectedExternalId">
-                    <option value="">— pick external system —</option>
-                    @foreach (var e in _externals)
-                    {
-                        <option value="@e.Id">@e.TypeCode — @e.DisplayName</option>
-                    }
-                </select>
-                <button class="inspection-button" @onclick="FetchDocuments" disabled="@(_selectedExternalId == Guid.Empty)">Fetch documents</button>
-
-                <button class="inspection-button" @onclick="AssignSelf" disabled="@(_case.State == InspectionWorkflowState.Submitted || _case.State == InspectionWorkflowState.Closed)">Assign me + start review</button>
-
-                <button class="inspection-button" @onclick="EvaluateRules" disabled="@(_documents.Count == 0)">Run authority checks</button>
-            </div>
-
-            <div class="inspection-form-row" style="margin-top: var(--nickerp-space-3);">
-                <label>
-                    <span>Verdict</span>
-                    <InputSelect class="inspection-input" @bind-Value="_verdictDecision">
-                        @foreach (var d in Enum.GetValues<VerdictDecision>())
-                        {
-                            <option value="@d">@d</option>
-                        }
-                    </InputSelect>
-                </label>
-                <label>
-                    <span>Confidence (0.0–1.0)</span>
-                    <InputNumber class="inspection-input" step="0.05" @bind-Value="_confidence" />
-                </label>
-                <label style="grid-column: 1 / -1;">
-                    <span>Basis</span>
-                    <InputTextArea class="inspection-input" rows="2" @bind-Value="_basis" placeholder="One or two sentences justifying the call." />
-                </label>
-            </div>
-            <div class="inspection-button-row" style="margin-top: var(--nickerp-space-2);">
-                <button class="inspection-button inspection-button-primary" @onclick="SetVerdict">Set verdict</button>
-
-                <select class="inspection-input" @bind="_submitToId">
-                    <option value="">— submit to —</option>
-                    @foreach (var e in _externals)
-                    {
-                        <option value="@e.Id">@e.TypeCode — @e.DisplayName</option>
-                    }
-                </select>
-                <button class="inspection-button" @onclick="Submit" disabled="@(_submitToId == Guid.Empty || _case.Verdict is null)">Submit verdict</button>
-
-                <button class="inspection-button" @onclick="Close" disabled="@(_case.State == InspectionWorkflowState.Closed)">Close case</button>
-            </div>
-
-            @if (!string.IsNullOrEmpty(_message))
-            {
-                <p class="inspection-form-message" style="margin-top: var(--nickerp-space-3);">@_message</p>
-            }
-        </div>
+    <section class="inspection-section inspection-tab-panel">
+        @switch (_activeTab)
+        {
+            case CaseTab.Overview:
+                @OverviewPane
+                break;
+            case CaseTab.Icums:
+                @IcumsPane
+                break;
+            case CaseTab.Scanner:
+                @ScannerPane
+                break;
+            case CaseTab.Gallery:
+                @GalleryPane
+                break;
+            case CaseTab.Rules:
+                @RulesPane
+                break;
+            case CaseTab.History:
+                @HistoryPane
+                break;
+        }
     </section>
-
-    <div class="inspection-detail-grid">
-        <div>
-            <section class="inspection-section">
-                <h2>Scans (@_scans.Count)</h2>
-                @if (_scans.Count == 0) { <p class="inspection-empty">No scans yet.</p> }
-                else
-                {
-                    <table class="inspection-table">
-                        <thead><tr><th></th><th>Captured</th><th>Mode</th><th>Artifacts</th><th></th></tr></thead>
-                        <tbody>
-                            @foreach (var s in _scans)
-                            {
-                                <tr>
-                                    <td>
-                                        @if (_primaryArtifactByScan.TryGetValue(s.Id, out var artId))
-                                        {
-                                            <img class="inspection-thumb"
-                                                 src="/api/images/@artId/thumbnail"
-                                                 alt="Scan thumbnail"
-                                                 loading="lazy" />
-                                        }
-                                        else
-                                        {
-                                            <div class="inspection-thumb is-empty" aria-hidden="true"></div>
-                                        }
-                                    </td>
-                                    <td>@s.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                                    <td>@s.Mode</td>
-                                    <td>@_artifactsPerScan.GetValueOrDefault(s.Id, 0)</td>
-                                    <td>
-                                        @* V4 — analyst W/L viewer link. Stays inert when there's no
-                                           primary artifact yet; the viewer page itself shows the
-                                           "no preview" fallback if the user navigates anyway. *@
-                                        <a href="/cases/@CaseId/scans/@s.Id" class="inspection-button">Open viewer</a>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                }
-            </section>
-
-            <section class="inspection-section">
-                <h2>Authority documents (@_documents.Count)</h2>
-                @if (_documents.Count == 0) { <p class="inspection-empty">No documents fetched yet.</p> }
-                else
-                {
-                    <table class="inspection-table">
-                        <thead><tr><th>Type</th><th>Reference</th><th>Received</th></tr></thead>
-                        <tbody>
-                            @foreach (var d in _documents)
-                            {
-                                <tr><td>@d.DocumentType</td><td><code>@d.ReferenceNumber</code></td><td>@d.ReceivedAt.ToString("yyyy-MM-dd HH:mm")</td></tr>
-                            }
-                        </tbody>
-                    </table>
-                }
-            </section>
-
-            @if (_rulesResult is not null)
-            {
-                <section class="inspection-section">
-                    <h2>Authority checks</h2>
-                    <div class="inspection-card">
-                        @if (_rulesResult.Violations.Count == 0 && _rulesResult.Mutations.Count == 0 && _rulesResult.ProviderErrors.Count == 0)
-                        {
-                            <p class="inspection-empty">No violations. No suggested mutations. Case is clean.</p>
-                        }
-                        else
-                        {
-                            @if (_rulesResult.Violations.Count > 0)
-                            {
-                                <h3>Violations (@_rulesResult.Violations.Count)</h3>
-                                <table class="inspection-table">
-                                    <thead><tr><th>Authority</th><th>Rule</th><th>Severity</th><th>Message</th></tr></thead>
-                                    <tbody>
-                                        @foreach (var ev in _rulesResult.Violations)
-                                        {
-                                            <tr>
-                                                <td><code>@ev.AuthorityCode</code></td>
-                                                <td><code>@ev.Violation.RuleCode</code></td>
-                                                <td><span class="inspection-pill-state is-@ev.Violation.Severity.ToLowerInvariant()">@ev.Violation.Severity</span></td>
-                                                <td>@ev.Violation.Message</td>
-                                            </tr>
-                                        }
-                                    </tbody>
-                                </table>
-                            }
-                            @if (_rulesResult.Mutations.Count > 0)
-                            {
-                                <h3 style="margin-top: var(--nickerp-space-3);">Suggested mutations (@_rulesResult.Mutations.Count)</h3>
-                                <ul>
-                                    @foreach (var em in _rulesResult.Mutations)
-                                    {
-                                        <li><code>@em.AuthorityCode</code> · <code>@em.Mutation.MutationKind</code> — @em.Mutation.Reason</li>
-                                    }
-                                </ul>
-                            }
-                            @if (_rulesResult.ProviderErrors.Count > 0)
-                            {
-                                <h3 style="margin-top: var(--nickerp-space-3);">Provider errors (@_rulesResult.ProviderErrors.Count)</h3>
-                                <ul>
-                                    @foreach (var err in _rulesResult.ProviderErrors)
-                                    {
-                                        <li><code>@err</code></li>
-                                    }
-                                </ul>
-                            }
-                        }
-                    </div>
-                </section>
-            }
-
-            <section class="inspection-section">
-                <h2>Submissions (@_submissions.Count)</h2>
-                @if (_submissions.Count == 0) { <p class="inspection-empty">No verdict submissions yet.</p> }
-                else
-                {
-                    <table class="inspection-table">
-                        <thead><tr><th>External system</th><th>Status</th><th>Submitted</th></tr></thead>
-                        <tbody>
-                            @foreach (var s in _submissions)
-                            {
-                                <tr><td>@(_externals.FirstOrDefault(e => e.Id == s.ExternalSystemInstanceId)?.DisplayName ?? "?")</td>
-                                    <td>@s.Status</td>
-                                    <td>@s.SubmittedAt.ToString("yyyy-MM-dd HH:mm")</td></tr>
-                            }
-                        </tbody>
-                    </table>
-                }
-            </section>
-        </div>
-
-        <aside>
-            <section class="inspection-section">
-                <h2>Verdict</h2>
-                <div class="inspection-card">
-                    @if (_case.Verdict is null)
-                    {
-                        <p class="inspection-empty">No verdict yet.</p>
-                    }
-                    else
-                    {
-                        <p><strong>@_case.Verdict.Decision</strong> by analyst <code>@_case.Verdict.DecidedByUserId.ToString()[..8]</code> at @_case.Verdict.DecidedAt.ToString("yyyy-MM-dd HH:mm")</p>
-                        <p>@_case.Verdict.Basis</p>
-                    }
-                </div>
-            </section>
-        </aside>
-    </div>
 }
 
 @code {
     [Parameter] public Guid CaseId { get; set; }
+
+    /// <summary>
+    /// B1.1 — query-string-bound active tab. Default falls back to
+    /// <see cref="CaseTab.Overview"/> on missing/unknown values so a
+    /// hand-typed URL never lands on a blank page.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "tab")] public string? Tab { get; set; }
 
     // FU-2 — cascading HttpContext lets us set Response.StatusCode = 404
     // on the foreign-tenant / not-found path. Null in interactive
@@ -338,12 +170,39 @@ else
     /// <summary>VP6 Phase C — viewer's identity user id, used to compare against the claim owner.</summary>
     private Guid _userId;
     private bool _isAdmin;
+
+    /// <summary>B1.1 — currently selected tab. Re-derived from <see cref="Tab"/> on every render.</summary>
+    private CaseTab _activeTab;
+
+    // -------- Overview / Scanner shared state --------
     private List<Scan> _scans = new();
-    private List<AuthorityDocument> _documents = new();
-    private List<OutboundSubmission> _submissions = new();
     private Dictionary<Guid, int> _artifactsPerScan = new();
     /// <summary>ScanId → first Primary ScanArtifact.Id, used for per-scan thumbnails.</summary>
     private Dictionary<Guid, Guid> _primaryArtifactByScan = new();
+    /// <summary>ScanId → list of all artifacts (for scanner-data tab + gallery).</summary>
+    private Dictionary<Guid, List<ScanArtifact>> _artifactsByScan = new();
+
+    // -------- ICUMS / Authority docs --------
+    private List<AuthorityDocument> _documents = new();
+    private bool _icumsLoaded;
+
+    // -------- Submissions (overview) --------
+    private List<OutboundSubmission> _submissions = new();
+
+    // -------- Gallery --------
+    private List<GalleryThumb> _galleryThumbs = new();
+    private bool _galleryLoaded;
+
+    // -------- Rules + Findings --------
+    private RulesEvaluationResult? _rulesResult;
+    private List<Finding> _findings = new();
+    private bool _findingsLoaded;
+
+    // -------- History --------
+    private List<DomainEventRow> _historyRows = new();
+    private bool _historyLoaded;
+
+    // -------- Workflow controls (overview tab) --------
     private List<ScannerDeviceInstance> _scanners = new();
     private List<ExternalSystemInstance> _externals = new();
     private Dictionary<Guid, Location> _locationsById = new();
@@ -355,9 +214,31 @@ else
     private double _confidence = 0.85;
     private string _basis = string.Empty;
     private string _message = string.Empty;
-    private RulesEvaluationResult? _rulesResult;
 
     private string ShortId => _case is null ? "" : _case.Id.ToString()[..8];
+
+    // -------- Tab definitions --------
+    public enum CaseTab { Overview, Icums, Scanner, Gallery, Rules, History }
+
+    private static readonly CaseTab[] AllTabs = new[]
+    {
+        CaseTab.Overview, CaseTab.Icums, CaseTab.Scanner,
+        CaseTab.Gallery, CaseTab.Rules, CaseTab.History,
+    };
+
+    private static string TabLabel(CaseTab t) => t switch
+    {
+        CaseTab.Overview => "Overview",
+        CaseTab.Icums => "Authority documents",
+        CaseTab.Scanner => "Scanner data",
+        CaseTab.Gallery => "Image gallery",
+        CaseTab.Rules => "Rules + findings",
+        CaseTab.History => "History",
+        _ => t.ToString(),
+    };
+
+    private static CaseTab ParseTab(string? raw) =>
+        Enum.TryParse<CaseTab>(raw, ignoreCase: true, out var t) ? t : CaseTab.Overview;
 
     protected override async Task OnInitializedAsync()
     {
@@ -371,6 +252,24 @@ else
         await Reload();
     }
 
+    protected override async Task OnParametersSetAsync()
+    {
+        // Fired both on first load and on every query-string change. We
+        // re-derive the active tab here (cheap) and lazy-load the new tab's
+        // data if it hasn't been hydrated yet. The case-load itself only
+        // happens once per visit (see Reload + the _case null guard above).
+        _activeTab = ParseTab(Tab);
+        if (_case is not null)
+        {
+            await EnsureTabDataLoadedAsync();
+        }
+    }
+
+    /// <summary>
+    /// Header-level data + the overview tab's prerequisites. Always loads
+    /// (the header always renders); other tabs lazy-load on demand via
+    /// <see cref="EnsureTabDataLoadedAsync"/>.
+    /// </summary>
     private async Task Reload()
     {
         _case = await Db.Cases.Include(c => c.Verdict).FirstOrDefaultAsync(c => c.Id == CaseId);
@@ -405,9 +304,9 @@ else
             }
             return;
         }
+
+        // -------- always-loaded shared state --------
         _scans = await Db.Scans.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.CapturedAt).ToListAsync();
-        _documents = await Db.AuthorityDocuments.AsNoTracking().Where(d => d.CaseId == CaseId).OrderByDescending(d => d.ReceivedAt).ToListAsync();
-        _submissions = await Db.OutboundSubmissions.AsNoTracking().Where(s => s.CaseId == CaseId).OrderByDescending(s => s.SubmittedAt).ToListAsync();
         var scanIds = _scans.Select(s => s.Id).ToList();
         _artifactsPerScan = await Db.ScanArtifacts.AsNoTracking()
             .Where(a => scanIds.Contains(a.ScanId))
@@ -419,6 +318,8 @@ else
             .GroupBy(a => a.ScanId)
             .Select(g => new { ScanId = g.Key, ArtifactId = g.First().Id })
             .ToDictionaryAsync(x => x.ScanId, x => x.ArtifactId);
+        _submissions = await Db.OutboundSubmissions.AsNoTracking()
+            .Where(s => s.CaseId == CaseId).OrderByDescending(s => s.SubmittedAt).ToListAsync();
 
         _scanners = await Db.ScannerDeviceInstances.AsNoTracking()
             .Where(s => s.LocationId == _case.LocationId && s.IsActive)
@@ -428,15 +329,16 @@ else
             .OrderBy(x => x.DisplayName).ToListAsync();
         _locationsById = await Db.Locations.AsNoTracking().ToDictionaryAsync(l => l.Id);
 
-        // Sprint A1 — hydrate the rules pane from the persisted snapshot
-        // table so the analyst doesn't have to click "Run authority checks"
-        // again on every reload. One row per (case, AuthorityCode); we
-        // collect the latest set across all authorities into a single
-        // RulesEvaluationResult mirroring what EvaluateAuthorityRulesAsync
-        // would have returned. Fetch path / button click overwrite this
-        // with their fresh result; absent any persisted snapshot, the pane
-        // stays hidden as before.
-        _rulesResult = await HydrateRulesResultAsync();
+        // Workflow actions changed something on screen — reset every
+        // per-tab cache flag so the next tab visit re-fetches. This is
+        // the simple, correct behavior; analysts rarely thrash through
+        // tabs after a workflow action so the few extra queries are
+        // cheap.
+        _icumsLoaded = false;
+        _galleryLoaded = false;
+        _findingsLoaded = false;
+        _historyLoaded = false;
+        _artifactsByScan.Clear();
 
         // Sprint 14 / VP6 Phase C — load active claim metadata so the
         // header banner can show "claimed by [user] in [service]" or
@@ -444,7 +346,508 @@ else
         // through CaseClaimService so the unique-partial-index narrowing
         // matches the rest of the claim flow.
         _activeClaim = await Claims.GetActiveClaimAsync(CaseId);
+
+        await EnsureTabDataLoadedAsync();
     }
+
+    /// <summary>
+    /// Lazy-load whichever tab is currently active. Each branch sets a
+    /// per-tab boolean so subsequent re-renders without a workflow
+    /// action don't re-query.
+    /// </summary>
+    private async Task EnsureTabDataLoadedAsync()
+    {
+        switch (_activeTab)
+        {
+            case CaseTab.Overview:
+                // Overview reads from the always-loaded shared state +
+                // the rules snapshot. The rules snapshot is also used by
+                // the Rules tab, so we hydrate it once here lazily.
+                if (_rulesResult is null) _rulesResult = await HydrateRulesResultAsync();
+                break;
+            case CaseTab.Icums:
+                if (!_icumsLoaded)
+                {
+                    _documents = await Db.AuthorityDocuments.AsNoTracking()
+                        .Where(d => d.CaseId == CaseId)
+                        .OrderByDescending(d => d.ReceivedAt).ToListAsync();
+                    _icumsLoaded = true;
+                }
+                break;
+            case CaseTab.Scanner:
+                // Scanner data needs the per-scan artifact list grouped
+                // by scan id. _scans + per-scan counts already loaded; we
+                // just need the artifact rows themselves.
+                if (_artifactsByScan.Count == 0 && _scans.Count > 0)
+                {
+                    var ids = _scans.Select(s => s.Id).ToList();
+                    var rows = await Db.ScanArtifacts.AsNoTracking()
+                        .Where(a => ids.Contains(a.ScanId))
+                        .OrderBy(a => a.ArtifactKind).ThenBy(a => a.CreatedAt)
+                        .ToListAsync();
+                    _artifactsByScan = rows.GroupBy(a => a.ScanId)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+                }
+                break;
+            case CaseTab.Gallery:
+                if (!_galleryLoaded)
+                {
+                    var ids = _scans.Select(s => s.Id).ToList();
+                    // Pull every primary + side-view artifact id, then
+                    // pair each with its render row (if any). The image
+                    // pipeline serves the thumbnail/preview by artifact
+                    // id; the render row's existence tells us whether
+                    // the pre-render worker has caught up.
+                    var primaries = await Db.ScanArtifacts.AsNoTracking()
+                        .Where(a => ids.Contains(a.ScanId))
+                        .OrderByDescending(a => a.CreatedAt)
+                        .ToListAsync();
+                    var artifactIds = primaries.Select(p => p.Id).ToList();
+                    var rendered = await Db.ScanRenderArtifacts.AsNoTracking()
+                        .Where(r => artifactIds.Contains(r.ScanArtifactId)
+                                    && r.Kind == NickERP.Inspection.Imaging.RenderKinds.Thumbnail)
+                        .Select(r => r.ScanArtifactId)
+                        .ToListAsync();
+                    var renderedSet = rendered.ToHashSet();
+                    _galleryThumbs = primaries.Select(a => new GalleryThumb(
+                        a.Id, a.ScanId, a.ArtifactKind, a.WidthPx, a.HeightPx, a.CreatedAt,
+                        renderedSet.Contains(a.Id)
+                    )).ToList();
+                    _galleryLoaded = true;
+                }
+                break;
+            case CaseTab.Rules:
+                if (_rulesResult is null) _rulesResult = await HydrateRulesResultAsync();
+                if (!_findingsLoaded)
+                {
+                    // Findings live under AnalystReview which lives under
+                    // ReviewSession. We need both joins to scope to the
+                    // current case. AsNoTracking + an explicit projection
+                    // keeps the query cheap.
+                    _findings = await (
+                        from f in Db.Findings.AsNoTracking()
+                        join r in Db.AnalystReviews.AsNoTracking() on f.AnalystReviewId equals r.Id
+                        join s in Db.ReviewSessions.AsNoTracking() on r.ReviewSessionId equals s.Id
+                        where s.CaseId == CaseId
+                        orderby f.CreatedAt descending
+                        select f
+                    ).ToListAsync();
+                    _findingsLoaded = true;
+                }
+                break;
+            case CaseTab.History:
+                if (!_historyLoaded)
+                {
+                    var caseIdString = CaseId.ToString();
+                    // History query — pull every audit event whose
+                    // EntityId matches the case id (regardless of
+                    // EntityType, so verdict / submission / scan rows
+                    // attached via their own ids surface as well — but
+                    // those use their own EntityIds, so the canonical
+                    // case-history view is "EntityType = InspectionCase
+                    // OR EntityId IN (verdict.id, submission.id, scan.id)".
+                    // Sprint 20 ships the simple "EntityType = InspectionCase
+                    // AND EntityId = caseId" view; the related-entities
+                    // expansion is a follow-up.
+                    _historyRows = await AuditDb.Events.AsNoTracking()
+                        .Where(e => e.EntityType == "InspectionCase" && e.EntityId == caseIdString)
+                        .OrderByDescending(e => e.OccurredAt)
+                        .Take(200)
+                        .ToListAsync();
+                    _historyLoaded = true;
+                }
+                break;
+        }
+    }
+
+    // ============================================================================
+    // Tab panes — extracted as RenderFragments so the @switch above stays small.
+    // Each pane reads the per-tab state hydrated by EnsureTabDataLoadedAsync.
+    // ============================================================================
+
+    private RenderFragment OverviewPane => __builder =>
+    {
+    <div class="inspection-card">
+        <h2 class="inspection-card-title">Workflow actions</h2>
+
+        <div class="inspection-button-row">
+            <select class="inspection-input" @bind="_selectedScannerId">
+                <option value="">— pick scanner —</option>
+                @foreach (var s in _scanners)
+                {
+                    <option value="@s.Id">@s.TypeCode — @s.DisplayName</option>
+                }
+            </select>
+            <button class="inspection-button" @onclick="SimulateScan" disabled="@(_selectedScannerId == Guid.Empty)">Simulate scan</button>
+
+            <select class="inspection-input" @bind="_selectedExternalId">
+                <option value="">— pick external system —</option>
+                @foreach (var e in _externals)
+                {
+                    <option value="@e.Id">@e.TypeCode — @e.DisplayName</option>
+                }
+            </select>
+            <button class="inspection-button" @onclick="FetchDocuments" disabled="@(_selectedExternalId == Guid.Empty)">Fetch documents</button>
+
+            <button class="inspection-button" @onclick="AssignSelf" disabled="@(_case!.State == InspectionWorkflowState.Submitted || _case.State == InspectionWorkflowState.Closed)">Assign me + start review</button>
+
+            <button class="inspection-button" @onclick="EvaluateRules">Run authority checks</button>
+        </div>
+
+        <div class="inspection-form-row" style="margin-top: var(--nickerp-space-3);">
+            <label>
+                <span>Verdict</span>
+                <InputSelect class="inspection-input" @bind-Value="_verdictDecision">
+                    @foreach (var d in Enum.GetValues<VerdictDecision>())
+                    {
+                        <option value="@d">@d</option>
+                    }
+                </InputSelect>
+            </label>
+            <label>
+                <span>Confidence (0.0–1.0)</span>
+                <InputNumber class="inspection-input" step="0.05" @bind-Value="_confidence" />
+            </label>
+            <label style="grid-column: 1 / -1;">
+                <span>Basis</span>
+                <InputTextArea class="inspection-input" rows="2" @bind-Value="_basis" placeholder="One or two sentences justifying the call." />
+            </label>
+        </div>
+        <div class="inspection-button-row" style="margin-top: var(--nickerp-space-2);">
+            <button class="inspection-button inspection-button-primary" @onclick="SetVerdict">Set verdict</button>
+
+            <select class="inspection-input" @bind="_submitToId">
+                <option value="">— submit to —</option>
+                @foreach (var e in _externals)
+                {
+                    <option value="@e.Id">@e.TypeCode — @e.DisplayName</option>
+                }
+            </select>
+            <button class="inspection-button" @onclick="Submit" disabled="@(_submitToId == Guid.Empty || _case.Verdict is null)">Submit verdict</button>
+
+            <button class="inspection-button" @onclick="Close" disabled="@(_case.State == InspectionWorkflowState.Closed)">Close case</button>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="inspection-form-message" style="margin-top: var(--nickerp-space-3);">@_message</p>
+        }
+    </div>
+
+    <div class="inspection-detail-grid" style="margin-top: var(--nickerp-space-4);">
+        <div>
+            <h2>Scans (@_scans.Count)</h2>
+            @if (_scans.Count == 0) { <p class="inspection-empty">No scans yet.</p> }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th></th><th>Captured</th><th>Mode</th><th>Artifacts</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var s in _scans)
+                        {
+                            <tr>
+                                <td>
+                                    @if (_primaryArtifactByScan.TryGetValue(s.Id, out var artId))
+                                    {
+                                        <img class="inspection-thumb"
+                                             src="/api/images/@artId/thumbnail"
+                                             alt="Scan thumbnail"
+                                             loading="lazy" />
+                                    }
+                                    else
+                                    {
+                                        <div class="inspection-thumb is-empty" aria-hidden="true"></div>
+                                    }
+                                </td>
+                                <td>@s.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td>@s.Mode</td>
+                                <td>@_artifactsPerScan.GetValueOrDefault(s.Id, 0)</td>
+                                <td>
+                                    @* V4 — analyst W/L viewer link. Stays inert when there's no
+                                       primary artifact yet; the viewer page itself shows the
+                                       "no preview" fallback if the user navigates anyway. *@
+                                    <a href="/cases/@CaseId/scans/@s.Id" class="inspection-button">Open viewer</a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            <h2 style="margin-top: var(--nickerp-space-5);">Submissions (@_submissions.Count)</h2>
+            @if (_submissions.Count == 0) { <p class="inspection-empty">No verdict submissions yet.</p> }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th>External system</th><th>Status</th><th>Submitted</th></tr></thead>
+                    <tbody>
+                        @foreach (var s in _submissions)
+                        {
+                            <tr><td>@(_externals.FirstOrDefault(e => e.Id == s.ExternalSystemInstanceId)?.DisplayName ?? "?")</td>
+                                <td>@s.Status</td>
+                                <td>@s.SubmittedAt.ToString("yyyy-MM-dd HH:mm")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <aside>
+            <h2>Verdict</h2>
+            <div class="inspection-card">
+                @if (_case.Verdict is null)
+                {
+                    <p class="inspection-empty">No verdict yet.</p>
+                }
+                else
+                {
+                    <p><strong>@_case.Verdict.Decision</strong> by analyst <code>@_case.Verdict.DecidedByUserId.ToString()[..8]</code> at @_case.Verdict.DecidedAt.ToString("yyyy-MM-dd HH:mm")</p>
+                    <p>@_case.Verdict.Basis</p>
+                }
+            </div>
+        </aside>
+    </div>
+    };
+
+    private RenderFragment IcumsPane => __builder =>
+    {
+        <h2>Authority documents (@_documents.Count)</h2>
+        @if (!_icumsLoaded) { <p>Loading…</p> }
+        else if (_documents.Count == 0) { <p class="inspection-empty">No documents fetched yet. Use the Overview tab to fetch from an external system.</p> }
+        else
+        {
+            // B1.1 — group by DocumentType so the analyst sees BOE / CMR /
+            // IM / etc. as distinct sections rather than a single flat
+            // list. Within each group, newest-first.
+            foreach (var grp in _documents.GroupBy(d => d.DocumentType).OrderBy(g => g.Key))
+            {
+                <div class="inspection-card">
+                    <h3 class="inspection-card-title">@grp.Key (@grp.Count())</h3>
+                    <table class="inspection-table">
+                        <thead><tr><th>Reference</th><th>External system</th><th>Received</th><th>Payload</th></tr></thead>
+                        <tbody>
+                            @foreach (var d in grp.OrderByDescending(d => d.ReceivedAt))
+                            {
+                                var ext = _externals.FirstOrDefault(e => e.Id == d.ExternalSystemInstanceId);
+                                var pretty = TryPrettyPrintJson(d.PayloadJson);
+                                <tr>
+                                    <td><code>@d.ReferenceNumber</code></td>
+                                    <td>@(ext?.DisplayName ?? "?")</td>
+                                    <td>@d.ReceivedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td>
+                                        <details>
+                                            <summary>view JSON</summary>
+                                            <pre class="inspection-json-preview"><code>@pretty</code></pre>
+                                        </details>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    };
+
+    private RenderFragment ScannerPane => __builder =>
+    {
+        <h2>Scanner data (@_scans.Count scans)</h2>
+        @if (_scans.Count == 0) { <p class="inspection-empty">No scans yet.</p> }
+        else
+        {
+            foreach (var s in _scans)
+            {
+                var scanner = _scanners.FirstOrDefault(d => d.Id == s.ScannerDeviceInstanceId);
+                var artifacts = _artifactsByScan.GetValueOrDefault(s.Id) ?? new List<ScanArtifact>();
+                <div class="inspection-card">
+                    <h3 class="inspection-card-title">
+                        Scan <code>@s.Id.ToString()[..8]</code>
+                        <span class="inspection-pill">@s.Mode</span>
+                    </h3>
+                    <p class="inspection-page-subtitle">
+                        Captured @s.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss") •
+                        Scanner @(scanner?.DisplayName ?? "?") •
+                        Idempotency key <code>@s.IdempotencyKey</code> •
+                        <a href="/cases/@CaseId/scans/@s.Id">Open viewer →</a>
+                    </p>
+                    @if (artifacts.Count == 0)
+                    {
+                        <p class="inspection-empty">No artifacts attached.</p>
+                    }
+                    else
+                    {
+                        <table class="inspection-table">
+                            <thead><tr><th>Kind</th><th>Dimensions</th><th>MIME</th><th>Channels</th><th>Hash</th><th>Storage URI</th></tr></thead>
+                            <tbody>
+                                @foreach (var a in artifacts)
+                                {
+                                    <tr>
+                                        <td><span class="inspection-pill">@a.ArtifactKind</span></td>
+                                        <td>@a.WidthPx × @a.HeightPx</td>
+                                        <td><code>@a.MimeType</code></td>
+                                        <td>@a.Channels</td>
+                                        <td><code>@(string.IsNullOrEmpty(a.ContentHash) ? "—" : a.ContentHash[..Math.Min(16, a.ContentHash.Length)])</code></td>
+                                        <td><code>@a.StorageUri</code></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            }
+        }
+    };
+
+    private RenderFragment GalleryPane => __builder =>
+    {
+        <h2>Image gallery (@_galleryThumbs.Count artifacts)</h2>
+        @if (!_galleryLoaded) { <p>Loading…</p> }
+        else if (_galleryThumbs.Count == 0)
+        {
+            <p class="inspection-empty">No images yet — try the Overview tab to capture a scan.</p>
+        }
+        else
+        {
+            <div class="inspection-gallery-grid">
+                @foreach (var t in _galleryThumbs)
+                {
+                    var hasThumb = t.HasThumbnail;
+                    var viewerHref = $"/cases/{CaseId}/scans/{t.ScanId}";
+                    <a class="inspection-gallery-tile" href="@viewerHref" title="@t.ArtifactKind · @t.WidthPx×@t.HeightPx">
+                        @if (hasThumb)
+                        {
+                            <img src="/api/images/@t.ArtifactId/thumbnail" alt="@t.ArtifactKind" loading="lazy" />
+                        }
+                        else
+                        {
+                            <div class="inspection-thumb is-empty inspection-gallery-empty" aria-hidden="true"></div>
+                        }
+                        <span class="inspection-gallery-caption">
+                            <span class="inspection-pill">@t.ArtifactKind</span>
+                            <span>@t.CreatedAt.ToString("HH:mm:ss")</span>
+                        </span>
+                    </a>
+                }
+            </div>
+        }
+    };
+
+    private RenderFragment RulesPane => __builder =>
+    {
+        <h2>Rules + findings</h2>
+        <div class="inspection-card">
+            <h3 class="inspection-card-title">Authority checks</h3>
+            @if (_rulesResult is null)
+            {
+                <p class="inspection-empty">No authority-rules evaluation yet — use the Overview tab.</p>
+            }
+            else if (_rulesResult.Violations.Count == 0
+                     && _rulesResult.Mutations.Count == 0
+                     && _rulesResult.ProviderErrors.Count == 0)
+            {
+                <p class="inspection-empty">No violations. No suggested mutations. Case is clean.</p>
+            }
+            else
+            {
+                @if (_rulesResult.Violations.Count > 0)
+                {
+                    <h4>Violations (@_rulesResult.Violations.Count)</h4>
+                    <table class="inspection-table">
+                        <thead><tr><th>Authority</th><th>Rule</th><th>Severity</th><th>Message</th></tr></thead>
+                        <tbody>
+                            @foreach (var ev in _rulesResult.Violations)
+                            {
+                                <tr>
+                                    <td><code>@ev.AuthorityCode</code></td>
+                                    <td><code>@ev.Violation.RuleCode</code></td>
+                                    <td><span class="inspection-pill-state is-@ev.Violation.Severity.ToLowerInvariant()">@ev.Violation.Severity</span></td>
+                                    <td>@ev.Violation.Message</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                @if (_rulesResult.Mutations.Count > 0)
+                {
+                    <h4 style="margin-top: var(--nickerp-space-3);">Suggested mutations (@_rulesResult.Mutations.Count)</h4>
+                    <ul>
+                        @foreach (var em in _rulesResult.Mutations)
+                        {
+                            <li><code>@em.AuthorityCode</code> · <code>@em.Mutation.MutationKind</code> — @em.Mutation.Reason</li>
+                        }
+                    </ul>
+                }
+                @if (_rulesResult.ProviderErrors.Count > 0)
+                {
+                    <h4 style="margin-top: var(--nickerp-space-3);">Provider errors (@_rulesResult.ProviderErrors.Count)</h4>
+                    <ul>
+                        @foreach (var err in _rulesResult.ProviderErrors)
+                        {
+                            <li><code>@err</code></li>
+                        }
+                    </ul>
+                }
+            }
+        </div>
+
+        <div class="inspection-card">
+            <h3 class="inspection-card-title">Analyst findings (@_findings.Count)</h3>
+            @if (!_findingsLoaded) { <p>Loading…</p> }
+            else if (_findings.Count == 0)
+            {
+                <p class="inspection-empty">No findings recorded yet. The image viewer's annotation tool persists findings here.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th>Type</th><th>Severity</th><th>Note</th><th>Location</th><th>Recorded</th></tr></thead>
+                    <tbody>
+                        @foreach (var f in _findings)
+                        {
+                            <tr>
+                                <td><code>@f.FindingType</code></td>
+                                <td><span class="inspection-pill-state is-@f.Severity.ToLowerInvariant()">@f.Severity</span></td>
+                                <td>@(string.IsNullOrEmpty(f.Note) ? "—" : f.Note)</td>
+                                <td><code>@FormatRoiSummary(f.LocationInImageJson)</code></td>
+                                <td>@f.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    };
+
+    private RenderFragment HistoryPane => __builder =>
+    {
+        <h2>History</h2>
+        @if (!_historyLoaded) { <p>Loading…</p> }
+        else if (_historyRows.Count == 0)
+        {
+            <p class="inspection-empty">No audit events recorded yet for this case.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Correlation</th></tr></thead>
+                <tbody>
+                    @foreach (var ev in _historyRows)
+                    {
+                        <tr>
+                            <td>@ev.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td><code>@ev.EventType</code></td>
+                            <td><code>@(ev.ActorUserId.HasValue ? ev.ActorUserId.Value.ToString()[..8] : "system")</code></td>
+                            <td><code>@(ev.CorrelationId ?? "—")</code></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p class="inspection-page-subtitle">
+                Showing the @_historyRows.Count most recent events for <code>EntityType=InspectionCase</code>.
+                Verdict / submission / scan history have their own EntityIds — the relations expansion is a follow-up.
+            </p>
+        }
+    };
 
     private async Task ReleaseClaimAsync()
     {
@@ -500,6 +903,48 @@ else
             }
         }
         return new RulesEvaluationResult(violations, mutations, errors);
+    }
+
+    /// <summary>
+    /// Best-effort pretty-print of a JSON payload string for the ICUMS
+    /// pane's "view JSON" disclosure. Bad JSON falls back to the raw
+    /// string — analysts shouldn't be blocked because an adapter
+    /// wrote something the .NET parser doesn't like.
+    /// </summary>
+    private static string TryPrettyPrintJson(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return raw;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (JsonException)
+        {
+            return raw;
+        }
+    }
+
+    /// <summary>
+    /// Render the {x,y,w,h} part of a finding's location-in-image
+    /// payload as a one-liner. Anything else (or malformed JSON)
+    /// degrades to the raw payload so analysts still see something.
+    /// </summary>
+    private static string FormatRoiSummary(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw == "{}") return "—";
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("x", out var xEl) && root.TryGetProperty("y", out var yEl)
+                && root.TryGetProperty("w", out var wEl) && root.TryGetProperty("h", out var hEl))
+            {
+                return $"{xEl.GetInt32()},{yEl.GetInt32()} {wEl.GetInt32()}x{hEl.GetInt32()}";
+            }
+        }
+        catch (JsonException) { /* fall through */ }
+        return raw.Length > 24 ? raw[..24] + "…" : raw;
     }
 
     private async Task SimulateScan()
@@ -573,4 +1018,19 @@ else
         }
         catch (Exception ex) { _message = UserFacingError.Render(Logger, ex, "INSP-CASE-EVALUATE-RULES-FAILED", "Failed to evaluate authority rules."); }
     }
+
+    /// <summary>
+    /// Lightweight gallery row — projection of <see cref="ScanArtifact"/>
+    /// + a flag for whether the pre-render worker has produced a
+    /// thumbnail. Used by the gallery tab so we don't have to keep
+    /// the full artifact rows + render-artifact rows in scope.
+    /// </summary>
+    private sealed record GalleryThumb(
+        Guid ArtifactId,
+        Guid ScanId,
+        string ArtifactKind,
+        int WidthPx,
+        int HeightPx,
+        DateTimeOffset CreatedAt,
+        bool HasThumbnail);
 }
