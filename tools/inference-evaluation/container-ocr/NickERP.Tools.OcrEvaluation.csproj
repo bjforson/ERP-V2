@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OcrEvaluation — Sprint 19 (plan §12 Phase 1) offline evaluation harness
+    for the §6.1 container-OCR replacement track. Stand-alone .NET console app
+    that runs an OCR engine (Tesseract baseline, future Florence-2 / Donut)
+    against a held-out corpus and reports accuracy + latency in a JSON shape
+    the §12.3 acceptance gate consumes.
+
+    Sibling pattern of tools/inference-training/container-ocr/ (Python; ships
+    the trainer + harvester) and modules/inspection/tools/OcrSmokeTest (proves
+    the v2 IContainerNumberRecognizer contract). This project is the EVALUATOR
+    — it measures, it does not train, and it does not deploy.
+
+    Locked acceptance bar (§6.1 / §12.3): >= 95% exact match, >= 98% check-
+    digit pass, p95 <= 200 ms iGPU. Phase 2 of Sprint 19 establishes the v1
+    Tesseract floor that Florence-2 must beat.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Tools.OcrEvaluation</RootNamespace>
+    <AssemblyName>NickERP.Tools.OcrEvaluation</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Hosting + DI + logging + config — same shape as the platform stack -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+
+    <!-- Postgres source for the FS6000Images corpus join -->
+    <PackageReference Include="Npgsql" Version="9.0.5" />
+
+    <!-- Tesseract engine — same package + version v1 ships in
+         NickScanCentralImagingPortal.Services.ImageProcessing.csproj (5.2.0)
+         so the baseline measurement reflects v1 reality, not a different
+         build of Tesseract. -->
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+
+    <!-- Image decode + preprocess. Match v1's OpenCvSharp4 stack so the
+         Otsu/CLAHE preprocessing chain is byte-for-byte the same. -->
+    <PackageReference Include="OpenCvSharp4" Version="4.9.0.20240103" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.9.0.20240103" />
+  </ItemGroup>
+
+  <!-- The OCR.ContainerNumber plugin transitively pulls SixLabors.ImageSharp
+       3.1.10 which has a known moderate-severity vulnerability (NU1902).
+       We don't decode plate ROIs through ImageSharp here (OpenCvSharp does
+       the work). Suppress the transitive warning at the harness level —
+       the plugin owns the upgrade decision and Sprint 19 is not the place
+       to bump it.  -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rxmq-m78w-7wmc" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference the v2 contract so the harness can speak the same
+         IContainerNumberRecognizer shape Florence-2 will satisfy. The
+         baseline Tesseract engine implements its own contract because v1's
+         Tesseract path predates IContainerNumberRecognizer. -->
+    <ProjectReference Include="..\..\..\modules\inspection\plugins\NickERP.Inspection.Inference.OCR.ContainerNumber\NickERP.Inspection.Inference.OCR.ContainerNumber.csproj" />
+  </ItemGroup>
+
+</Project>

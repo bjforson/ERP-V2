@@ -45,6 +45,10 @@
   <Folder Name="/apps/edge-node/">
     <Project Path="apps/edge-node/NickERP.EdgeNode/NickERP.EdgeNode.csproj" />
   </Folder>
+  <Folder Name="/tools/" />
+  <Folder Name="/tools/inference-evaluation/">
+    <Project Path="tools/inference-evaluation/container-ocr/NickERP.Tools.OcrEvaluation.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/NickERP.EdgeNode.Tests/NickERP.EdgeNode.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Authorities.CustomsGh.Tests/NickERP.Inspection.Authorities.CustomsGh.Tests.csproj" />
