@@ -2,22 +2,22 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Sprint 18 (Tenant lifecycle Pt 1 — state + soft-delete + hard-purge admin) SHIPPED 2026-05-04 at main 1093350. Phase commits a0d8d18/acf4c30/ea8813e. Tests grew 317 -> 336 (+19). Followup FU-tenant-lifecycle flipped to shipped Pt 1 (Pt 2 email + first-user invite stays queued for Sprint 21; Pt 3 export tooling for later). Next dispatch per plan-file §10.3: Sprint 19 (OCR eval harness offline + v1 Tesseract baseline) or Sprint 20+ (Inspection v1 parity Batch B1).",
+  "currentSprintNote": "Sprint 20 (Inspection v1 parity Batch B1 — case detail tabs + analyst image viewer + multi-scan navigation) SHIPPED 2026-05-04 at main a8387a9. Branch plan/sprint-20-inspection-parity-b1 (3 commits 5d245bf/701365c/35cd9e1, deleted). Tests grew 336 -> 344 (+8 across annotation service + case detail tabs). Sprint 21 (Tenant lifecycle Pt 2 — email service + invite tokens + first-user invite) running in parallel on plan/sprint-21-tenant-lifecycle-pt2 — file-path-isolated to platform/Email + Identity + apps/portal. Next per plan §10.3: Sprint 19 (OCR eval harness) + Sprint 22+ (Inspection v1 parity Batch B2 — ICUMS queue UIs).",
   "prePilotProgress": {
     "asOf": "2026-05-04",
     "deadlineMonthsLow": 6,
     "deadlineMonthsHigh": 9,
-    "shippedSprints": 7,
+    "shippedSprints": 9,
     "totalEstimateLow": 31,
     "totalEstimateHigh": 47,
-    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 7 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope. Inspection v1 parity (13-18 sprints) is the long pole — 0 shipped. Pace at 1.5 sprints/week sustained = 17-25 weeks remaining.",
+    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 9 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprint 20 added 2 — full Batch B1). Inspection v1 parity (13-18 sprints) now in-progress — B1 done, B2-B8 remaining. Pace at 1.5 sprints/week sustained = 15-25 weeks remaining.",
     "workstreams": [
       { "name": "AnalysisService VP6", "estimateLow": 2, "estimateHigh": 3, "shipped": 3, "status": "done", "note": "Sprint 14 (5 phases): storage + bootstrap + admin + claim + tests" },
       { "name": "ExternalSystemInstance subset junction", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 16" },
       { "name": "P2-FU-multi-event-types (edge fan-out)", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 17" },
       { "name": "NickHR v1->v2 clone", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 15. Refactor to v2-native is post-pilot (~6-10 sprints)." },
       { "name": "Tenant lifecycle (Pt 1+2+3)", "estimateLow": 3, "estimateHigh": 5, "shipped": 1, "status": "in-progress", "note": "Pt 1 shipped Sprint 18. Pt 2 (email + first-user invite) queued Sprint 21; Pt 3 (scoped export) later." },
-      { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 0, "status": "not-started", "note": "Long pole. Per plan §11 — case viewing, ICUMS UIs, BG services, validation rules, completeness, specialised review, monitoring, admin." },
+      { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 2, "status": "in-progress", "note": "Long pole. Per plan §11 — case viewing (B1 SHIPPED Sprint 20: tabs + analyst viewer + multi-scan nav), ICUMS UIs (B2), BG services (B3), validation rules (B4), completeness (B5), specialised review (B6), monitoring (B7), admin (B8)." },
       { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
       { "name": "Three-module co-deploy navigation", "estimateLow": 1, "estimateHigh": 1, "shipped": 0, "status": "not-started", "note": "Portal links to inspection.web + finance.web + hr.web with shared auth + chrome." },
       { "name": "§6.1 OCR eval + Florence-2", "estimateLow": 4, "estimateHigh": 6, "shipped": 0, "status": "not-started", "note": "Gated on GPU box availability. Per plan §12 — eval harness + v1 baseline + GPU training (out-of-band) + integration + drift monitor." },
@@ -52,6 +52,23 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 20",
+      "name": "Inspection v1 parity Batch B1 — case detail tabs + analyst image viewer + multi-scan nav",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "a8387a9",
+      "itemCount": 3,
+      "items": [
+        { "id": "Sprint20-B1.1", "title": "Case detail tabs (Overview / ICUMS / Scanner data / Image gallery / Rules + findings / History) — query-string-bound [SupplyParameterFromQuery] Tab; lazy-load per tab on activation; workflow actions reset all caches.", "commit": "5d245bf" },
+        { "id": "Sprint20-B1.2-1.3", "title": "Analyst image viewer with annotations (AnalystAnnotationService + /api/inspection/annotations + Inspect/Annotate tool toggle + per-severity overlay; findings persist as FindingType=analyst.annotation on find-or-create AnalystReview) + multi-scan navigation (prev/next pager + predictive prefetch via Fetch priority hints).", "commit": "701365c" },
+        { "id": "Sprint20-Phase-D", "title": "+8 unit tests (5 annotation service + 3 case detail tabs); InMemoryAuditDbContext + JsonDocument↔string converter helper for jsonb-typed Payload tests.", "commit": "35cd9e1" }
+      ],
+      "ratifications": [
+        { "id": "Sprint20-tabs-as-query-string", "title": "Tabs use query-string-bound [SupplyParameterFromQuery] Tab on the existing /cases/{id} route rather than separate Razor pages — keeps URL shareable + workflow surface coherent." },
+        { "id": "Sprint20-annotations-as-findings", "title": "Annotations persist as FindingType=analyst.annotation rows on AnalystReview/ReviewSession (not a new entity) — uses existing entity shapes." },
+        { "id": "Sprint20-history-tab-scope", "title": "History tab filters audit.events by EntityType=InspectionCase + EntityId=caseId only (top 200). Verdict/submission/scan-row events whose EntityIds are non-case live in their own surfaces — flagged for B-followup." }
+      ]
+    },
     {
       "id": "Sprint 17",
       "name": "Edge replay multi-event-type fan-out (P2-FU-multi-event-types)",
