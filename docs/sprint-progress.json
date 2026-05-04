@@ -7,10 +7,10 @@
     "asOf": "2026-05-04",
     "deadlineMonthsLow": 6,
     "deadlineMonthsHigh": 9,
-    "shippedSprints": 14,
-    "totalEstimateLow": 31,
-    "totalEstimateHigh": 47,
-    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 14 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprint 19 added 1 — Phase 1+2 of plan §12 ML training arc). Inspection v1 parity (13-18 sprints) advancing — B1+B2 done (4 of 13-18). §6.1 OCR arc (4-6 sprints) started — eval harness + baseline shipped (1 of 4-6). MAJOR FINDING: v1 Tesseract baseline 0% — see decisionsNeeded. Tenant lifecycle Pt 1+2 done. Pace at 1.5 sprints/week sustained = 11-22 weeks remaining.",
+    "shippedSprints": 13,
+    "totalEstimateLow": 27,
+    "totalEstimateHigh": 41,
+    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md), reduced 2026-05-04 after §6.1 OCR moved to post-pilot. 13 sprint-equivalents shipped against an estimated 27-41 sprint pre-pilot scope. §6.1 OCR (4-6 sprints) deferred to post-pilot — operational probe found v1's OCR is a broken verification check that doesn't gate pilot. Inspection v1 parity (13-18 sprints) advancing — B1+B2 done (4 of 13-18). Tenant lifecycle Pt 1+2 done. Pace at 1.5 sprints/week sustained = 9-19 weeks remaining.",
     "workstreams": [
       { "name": "AnalysisService VP6", "estimateLow": 2, "estimateHigh": 3, "shipped": 3, "status": "done", "note": "Sprint 14 (5 phases): storage + bootstrap + admin + claim + tests" },
       { "name": "ExternalSystemInstance subset junction", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 16" },
@@ -20,7 +20,7 @@
       { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 4, "status": "in-progress", "note": "Long pole. Per plan §11 — case viewing (B1 SHIPPED Sprint 20: tabs + analyst viewer + multi-scan nav), ICUMS UIs (B2 SHIPPED Sprint 22: submission/download queues + dashboard + loose cargo + BOE lookup + manual pull), BG services (B3), validation rules (B4), completeness (B5), specialised review (B6), monitoring (B7), admin (B8)." },
       { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
       { "name": "Three-module co-deploy navigation", "estimateLow": 1, "estimateHigh": 1, "shipped": 0, "status": "not-started", "note": "Portal links to inspection.web + finance.web + hr.web with shared auth + chrome." },
-      { "name": "§6.1 OCR eval + Florence-2", "estimateLow": 4, "estimateHigh": 6, "shipped": 1, "status": "in-progress", "note": "Per plan §12. Phase 1 (eval harness) + Phase 2 (v1 Tesseract baseline) SHIPPED Sprint 19 (2026-05-04). v1 baseline measured 0% exact-match — see decisionsNeeded. Phase 3 (training data prep), Phase 4 (Florence-2 GPU fine-tune, out-of-band), Phase 5+ (validation, integration, drift monitor) remaining." },
+      { "name": "§6.1 OCR eval + Florence-2 (DEFERRED to post-pilot 2026-05-04)", "estimateLow": 0, "estimateHigh": 0, "shipped": 0, "status": "deferred-to-post-pilot", "note": "Moved out of pre-pilot scope 2026-05-04 after operational probe revealed v1 OCR is a verification check, not the linkage source — broken for years without affecting operations. Sprint 19 shipped Phase 1 (eval harness) + Phase 2 (baseline measurement; result: 0% exact-match on 1917 prod rows) which remain in tree as diagnostic tooling. Phases 3-7 (training data prep / GPU fine-tune / validation / integration / drift monitor) all post-pilot. Original estimate 4-6 sprints, now removed from pre-pilot totals." },
       { "name": "Phase V lightweight (security + perf)", "estimateLow": 1, "estimateHigh": 2, "shipped": 0, "status": "not-started", "note": "Pre-pilot validation. Targeted security audit + perf/load test scoped to pilot site." },
       { "name": "Pilot site setup + monitoring", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Final site call due Sprint 22-24. Tentative front-runners: Kotoka or Takoradi per plan §13." }
     ],
@@ -30,7 +30,8 @@
       { "id": "pilot-site-selection", "title": "Pick pilot site (Kotoka / Takoradi / other) per plan §13 decision matrix", "blocking": "Phase V scoping (Sprint 22-24)" }
     ]
   },
-  "decisionsNeeded": [
+  "decisionsNeeded": [],
+  "_resolvedThisSession": [
     {
       "id": "ocr-baseline-0pct-followups",
       "title": "v1 Tesseract OCR measures 0% on 1917 prod rows — what now?",
@@ -38,7 +39,7 @@
       "raisedBy": "Sprint 19 master",
       "context": "Sprint 19 measured v1's Tesseract container-OCR against 1917 fs6000images rows (imagetype='Main') with truth from fs6000scans.containernumber (FS6000 vendor manifest, scan-time, independent of Tesseract). Result: 0/1917 exact-match, 0/2157 check-digit pass. Tesseract operates on full-container LUT JPEGs (no plate-ROI detector in v1). The painted container number is visually unreadable in the LUT-rendered preview. See docs/runbooks/08-ocr-baseline-2026-05-04.md.",
       "operationalProbe": "Code archaeology resolves the operational question without needing user investigation. v1's IImageAnalysisFacade.ExtractContainerNumberAsync(string containerNumber) takes the EXPECTED container number AS INPUT and returns OcrResult.MatchesExpected — it's a VERIFICATION CHECK, not the linkage source. Found at NickScanCentralImagingPortal.API/Controllers/ImageAnalysisController.cs:1787 (analyst-triggered endpoint, not automatic). The actual linkage is fs6000scans.containernumber set at scan time by gate barcode or manual entry. Therefore: 0% baseline means the verification check has been silently failing for years but the system still works because linkage isn't OCR-dependent. Operators never knew the verification was useless.",
-      "resolution": "Pending user decision 2026-05-04. Per operational probe, §6.1 OCR drops from must-have-pilot to quality-enhancement-post-pilot. Florence-2 + plate-ROI gives back the verification check (and unblocks §6.3 manifest×X-ray scoring later) but is not a parity blocker.",
+      "resolution": "RESOLVED 2026-05-04: §6.1 dropped from pilot scope. v1's container-OCR is a verification check that has been silently broken for years — the system works because linkage isn't OCR-dependent. Florence-2 + plate-ROI moves to post-pilot as a quality enhancement (also unblocks §6.3 manifest×X-ray scoring when picked up). Sprint 19's 1 shipped sprint (eval harness + baseline) stays as a useful diagnostic tool in tree but no longer counts as pre-pilot scope. Pre-pilot estimate shrinks by 3-5 remaining sprints + 1 already-shipped = 4-6 total. Workstream marked deferred-to-post-pilot in prePilotProgress.",
       "options": [
         "Drop §6.1 from pilot scope (move to post-pilot). Verification check stays broken in pilot — same posture v1 has had for years. Frees ~3-5 sprints of pre-pilot effort + the GPU-box gating dependency. Recommended given the operational finding.",
         "Keep §6.1 in pilot scope. Restore OCR verification quality + unblock §6.3 manifest×X-ray scoring (which depends on working OCR linkage). GPU box availability remains a gate. Plan §12 phases 3-7 still ~3-5 sprints.",
