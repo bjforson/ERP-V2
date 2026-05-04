@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Platform.Email</RootNamespace>
+    <AssemblyName>NickERP.Platform.Email</AssemblyName>
+    <Description>NICKSCAN ERP SOLUTION — Email-sending abstraction for the platform. IEmailSender contract + a filesystem-backed dev provider (writes .eml files to var/email-outbox/), an SMTP provider (MailKit), a noop provider for tests, plus a small file-based template provider. Used by the Sprint 21 first-user-invite flow and any future module that needs to send mail (password reset, NickFinance disbursement notices, etc.).</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.0" />
+    <!-- MailKit provides the SMTP sender. 4.x line is the active stable; ships net8 / net10 compatible.
+         Pinned to 4.9.0 (a version present in the local NuGet cache to keep restore offline-capable). -->
+    <PackageReference Include="MailKit" Version="4.9.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Templates ship as embedded resources so they travel with the assembly without a separate Resources/ deploy step. -->
+    <EmbeddedResource Include="Resources\email-templates\*" />
+  </ItemGroup>
+
+</Project>

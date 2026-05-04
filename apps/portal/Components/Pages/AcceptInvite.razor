@@ -1,0 +1,308 @@
+@page "/invite/accept/{Token}"
+@* Sprint 21 / Phase C — invite-acceptance page. Anonymous (no
+   AuthenticationStateProvider), takes the plaintext token from the
+   URL, redeems it via InviteService, and provisions the IdentityUser
+   + UserScope rows on the tenant the invite is for.
+
+   Note on "Set your password" deviation from the brief: NickERP's
+   identity layer is CF Access JWT-driven (no local passwords —
+   IdentityUser has no PasswordHash column). The redemption path
+   creates the canonical row + scope assignment; the user then signs
+   in via the existing CF Access flow. We surface this clearly to
+   the invitee instead of a misleading "set password" form. *@
+@attribute [AllowAnonymous]
+@using System.Security.Cryptography
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Platform.Identity.Database
+@using NickERP.Platform.Identity.Database.Services
+@using NickERP.Platform.Identity.Entities
+@using NickERP.Platform.Tenancy
+@using NickERP.Platform.Tenancy.Database
+@using NickERP.Platform.Tenancy.Entities
+@inject IInviteService InviteSvc
+@inject IdentityDbContext IdentityDb
+@inject TenancyDbContext TenancyDb
+@inject ITenantContext TenantCtx
+@inject ILogger<AcceptInvite> Logger
+
+<PageTitle>Accept invite — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Accept invite</h1>
+    </div>
+</header>
+
+<section class="portal-section">
+    <div class="portal-card">
+        @switch (_step)
+        {
+            case Step.Validating:
+                <p>Validating your invite link...</p>
+                break;
+
+            case Step.UnknownToken:
+                <h2 class="portal-card-title">This invite link is not valid</h2>
+                <p>The link may have been mistyped, or the invite has been revoked. Ask the platform admin who sent the invite to reissue it.</p>
+                break;
+
+            case Step.Expired:
+                <h2 class="portal-card-title">This invite has expired</h2>
+                <p>Invites are valid for a limited time (typically 72 hours). Ask the platform admin who sent the invite to reissue it.</p>
+                break;
+
+            case Step.AlreadyRedeemed:
+                <h2 class="portal-card-title">This invite has already been used</h2>
+                <p>If you already accepted the invite, you can sign in normally. If someone else used the link, contact the platform admin who sent the invite.</p>
+                break;
+
+            case Step.Revoked:
+                <h2 class="portal-card-title">This invite has been revoked</h2>
+                <p>The platform admin who sent the invite has revoked it. If you still need access, ask them to reissue an invite.</p>
+                break;
+
+            case Step.LookupError:
+                <h2 class="portal-card-title">Something went wrong</h2>
+                <p>The platform could not validate your invite right now. Please try again in a few minutes; if the issue persists, contact the platform admin.</p>
+                break;
+
+            case Step.AwaitingConfirmation:
+                <h2 class="portal-card-title">Confirm your invite</h2>
+                <p class="portal-card-subtitle">
+                    You're being added to <strong>@_tenantName</strong> with role <code>@_intendedRoles</code>.
+                </p>
+                <EditForm Model="_form" OnValidSubmit="ConfirmAsync" FormName="accept-invite" class="portal-form">
+                    <AntiforgeryToken />
+                    <div class="portal-form-row">
+                        <label>
+                            <span>Display name</span>
+                            <InputText class="portal-input" @bind-Value="_form.DisplayName" placeholder="Jane Doe" />
+                        </label>
+                    </div>
+                    <p class="portal-form-message">Email: <code>@_email</code> (locked to the invite).</p>
+                    <div class="portal-form-actions">
+                        <button type="submit" class="portal-button portal-button-primary" disabled="@_busy">Accept invite</button>
+                        @if (!string.IsNullOrEmpty(_message))
+                        {
+                            <span class="portal-form-message">@_message</span>
+                        }
+                    </div>
+                </EditForm>
+                break;
+
+            case Step.Done:
+                <h2 class="portal-card-title">You're set up</h2>
+                <p>You've been added to <strong>@_tenantName</strong> with role <code>@_intendedRoles</code>.</p>
+                <p>Sign in through your team's Cloudflare Access portal to start using NickERP. If your organisation uses email-based sign-in, the same address you received the invite at will work.</p>
+            @if (_signInUrl is not null)
+            {
+                <p><a class="portal-button portal-button-primary" href="@_signInUrl">Continue to sign in</a></p>
+            }
+                break;
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter] public string? Token { get; set; }
+
+    [SupplyParameterFromForm]
+    private AcceptForm _form { get; set; } = new();
+
+    private enum Step
+    {
+        Validating,
+        UnknownToken,
+        Expired,
+        AlreadyRedeemed,
+        Revoked,
+        LookupError,
+        AwaitingConfirmation,
+        Done,
+    }
+
+    private Step _step = Step.Validating;
+    private string _email = string.Empty;
+    private string _intendedRoles = string.Empty;
+    private string _tenantName = string.Empty;
+    private long _tenantId;
+    private Guid _inviteId;
+    private bool _busy;
+    private string _message = string.Empty;
+    private string? _signInUrl;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Token))
+        {
+            _step = Step.UnknownToken;
+            return;
+        }
+
+        // Defence-in-depth: a 32-char URL-safe base64 token is what we
+        // issued. Reject anything outrageously long up front so an
+        // attacker probing with multi-MB tokens can't waste cycles on
+        // the HMAC + DB lookup.
+        if (Token.Length > 256)
+        {
+            _step = Step.UnknownToken;
+            return;
+        }
+
+        try
+        {
+            var redemption = await InviteSvc.RedeemInviteAsync(Token);
+            _step = redemption.Outcome switch
+            {
+                InviteRedemptionOutcome.Ok => Step.AwaitingConfirmation,
+                InviteRedemptionOutcome.UnknownToken => Step.UnknownToken,
+                InviteRedemptionOutcome.Expired => Step.Expired,
+                InviteRedemptionOutcome.AlreadyRedeemed => Step.AlreadyRedeemed,
+                InviteRedemptionOutcome.Revoked => Step.Revoked,
+                InviteRedemptionOutcome.LookupError => Step.LookupError,
+                _ => Step.UnknownToken,
+            };
+
+            if (redemption.MatchedRow is { } row && _step == Step.AwaitingConfirmation)
+            {
+                _email = row.Email;
+                _intendedRoles = row.IntendedRoles;
+                _tenantId = row.TenantId;
+                _inviteId = row.Id;
+
+                // Tenancy.tenants is intentionally NOT under RLS (root
+                // of the tenant graph), so a system-context read here
+                // is the canonical way to look up the tenant name from
+                // an anonymous request. Capture the value into the form.
+                if (!TenantCtx.IsSystem) TenantCtx.SetSystemContext();
+                var t = await TenancyDb.Tenants.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == row.TenantId);
+                _tenantName = t?.Name ?? $"Tenant {row.TenantId}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Invite redemption failed for token prefix {Prefix}", Token.Length > 8 ? Token[..8] : "(short)");
+            _step = Step.LookupError;
+        }
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (_step != Step.AwaitingConfirmation) return;
+        _busy = true;
+        _message = string.Empty;
+        try
+        {
+            // Re-validate the token in case the user spent time on the
+            // form and it expired in the meantime. This is the second
+            // pass — the first happened in OnInitializedAsync.
+            var revalidation = await InviteSvc.RedeemInviteAsync(Token!);
+            if (revalidation.Outcome != InviteRedemptionOutcome.Ok || revalidation.MatchedRow is null)
+            {
+                _step = revalidation.Outcome switch
+                {
+                    InviteRedemptionOutcome.Expired => Step.Expired,
+                    InviteRedemptionOutcome.AlreadyRedeemed => Step.AlreadyRedeemed,
+                    InviteRedemptionOutcome.Revoked => Step.Revoked,
+                    _ => Step.UnknownToken,
+                };
+                return;
+            }
+
+            var row = revalidation.MatchedRow;
+
+            // Identity provisioning runs in system context too — the
+            // invitee has no tenant scope yet (that's exactly what we're
+            // adding). The TenantConnectionInterceptor pushes app.tenant_id
+            // = '-1' on the next save; identity_users is under RLS but
+            // the existing policy admits the system-context write via
+            // the OR clause (added Sprint 9 / FU-userid).
+            if (!TenantCtx.IsSystem) TenantCtx.SetSystemContext();
+
+            // Find or create the IdentityUser for this email + tenant.
+            var normalized = row.Email.Trim().ToUpperInvariant();
+            var existing = await IdentityDb.Users
+                .FirstOrDefaultAsync(u => u.NormalizedEmail == normalized && u.TenantId == row.TenantId);
+
+            Guid userId;
+            var now = DateTimeOffset.UtcNow;
+            if (existing is null)
+            {
+                var user = new IdentityUser
+                {
+                    Email = row.Email,
+                    NormalizedEmail = normalized,
+                    DisplayName = string.IsNullOrWhiteSpace(_form.DisplayName) ? null : _form.DisplayName.Trim(),
+                    IsActive = true,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    TenantId = row.TenantId,
+                };
+                IdentityDb.Users.Add(user);
+                userId = user.Id;
+            }
+            else
+            {
+                userId = existing.Id;
+                if (!string.IsNullOrWhiteSpace(_form.DisplayName) && string.IsNullOrEmpty(existing.DisplayName))
+                {
+                    existing.DisplayName = _form.DisplayName.Trim();
+                    existing.UpdatedAt = now;
+                }
+            }
+
+            // Grant intended roles. Roles in the invite are
+            // comma-separated; we treat each as an AppScope code.
+            // Skip if the user already has the same scope active in
+            // the tenant.
+            foreach (var roleRaw in row.IntendedRoles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var alreadyOpen = await IdentityDb.UserScopes
+                    .AnyAsync(s => s.IdentityUserId == userId
+                        && s.TenantId == row.TenantId
+                        && s.AppScopeCode == roleRaw
+                        && s.RevokedAt == null);
+                if (alreadyOpen) continue;
+
+                IdentityDb.UserScopes.Add(new UserScope
+                {
+                    IdentityUserId = userId,
+                    AppScopeCode = roleRaw,
+                    GrantedAt = now,
+                    GrantedByUserId = userId, // self-granted via invite redemption — not a platform admin action
+                    TenantId = row.TenantId,
+                });
+            }
+
+            await IdentityDb.SaveChangesAsync();
+
+            // Mark the invite redeemed AFTER the identity rows commit so
+            // a SaveChangesAsync failure leaves the invite usable for a
+            // retry. The mark itself is race-safe via the unique
+            // partial index on TokenHash.
+            await InviteSvc.MarkRedeemedAsync(_inviteId, userId);
+
+            // Surface a "continue to sign in" link. The portal itself
+            // is the canonical entry point; for a CF Access deployment
+            // the team-portal URL would be configured by ops elsewhere.
+            _signInUrl = "/";
+            _step = Step.Done;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Invite confirm failed for invite id {InviteId}", _inviteId);
+            _message = "Could not complete the invite. Please try again or contact your platform admin.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    public sealed class AcceptForm
+    {
+        public string DisplayName { get; set; } = string.Empty;
+    }
+}

@@ -3,9 +3,11 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Platform.Audit.Database;
+using NickERP.Platform.Email;
 using NickERP.Platform.Identity;
 using NickERP.Platform.Identity.Auth;
 using NickERP.Platform.Identity.Database;
+using NickERP.Platform.Identity.Database.Services;
 using NickERP.Platform.Logging;
 using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
@@ -130,6 +132,19 @@ builder.Services.AddSingleton<NickERP.Platform.Audit.Database.IEdgeKeyHashEnvelo
     NickERP.Portal.Services.PortalEdgeKeyHashEnvelope>();
 builder.Services.AddScoped<NickERP.Platform.Audit.Database.EdgeKeyHasher>();
 builder.Services.AddScoped<NickERP.Platform.Audit.Database.EdgeNodeApiKeyService>();
+
+// ---------------------------------------------------------------------------
+// Sprint 21 / Phase A + B — email service abstraction + invite tokens.
+// AddNickErpEmail picks the sender based on Email:Provider config:
+//   Development default = filesystem (writes .eml to var/email-outbox/)
+//   Otherwise default   = noop (operator must opt in to a real provider)
+// AddNickErpInviteService registers the InviteTokenHasher + InviteService;
+// the host supplies an IInviteTokenHashEnvelope (data-protection backed).
+// ---------------------------------------------------------------------------
+builder.Services.AddNickErpEmail(builder.Configuration, builder.Environment);
+builder.Services.AddSingleton<IInviteTokenHashEnvelope,
+    NickERP.Portal.Services.PortalInviteTokenHashEnvelope>();
+builder.Services.AddNickErpInviteService();
 
 // Blazor Server (interactive server-side rendering).
 builder.Services.AddRazorComponents()

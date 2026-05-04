@@ -1,0 +1,1 @@
+Welcome to NickERP — accept your invite to {{TenantName}}
