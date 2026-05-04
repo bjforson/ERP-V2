@@ -9,6 +9,7 @@ using NickERP.Inspection.Application.Icums;
 using NickERP.Inspection.Application.PostHocOutcomes;
 using NickERP.Inspection.Application.Submissions;
 using NickERP.Inspection.Application.Thresholds;
+using NickERP.Inspection.Application.Workers;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Web.Components;
@@ -251,6 +252,35 @@ builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutcomePullWorker>());
 builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutcomePullWorker>());
+
+// ---------------------------------------------------------------------------
+// Sprint 24 / B3.1 — Specialised scanner workers. Both default-disabled
+// per the Sprint 24 architectural decision; opt-in per environment via
+// the corresponding Inspection:Workers:<Name>:Enabled flag.
+//
+// ScannerHealthSweepWorker — periodic IScannerAdapter.TestAsync sweep
+// across every active scanner. Surfaces vendor connectivity loss
+// without waiting for an inbound scan. Vendor-neutral.
+//
+// AseSyncWorker — periodic cursor pull for any scanner whose plugin
+// implements IScannerCursorSyncAdapter (replaces v1's
+// AseBackgroundService; vendor-neutralised).
+// ---------------------------------------------------------------------------
+builder.Services.Configure<ScannerHealthSweepOptions>(
+    builder.Configuration.GetSection(ScannerHealthSweepOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.ScannerHealthSweepWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerHealthSweepWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerHealthSweepWorker>());
+
+builder.Services.Configure<AseSyncOptions>(
+    builder.Configuration.GetSection(AseSyncOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.AseSyncWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AseSyncWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AseSyncWorker>());
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
