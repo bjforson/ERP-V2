@@ -1,0 +1,159 @@
+/*
+ * SharedHeader — Sprint 29 cross-module top bar styling. Layered between
+ * the legacy TopNav (which still renders for the portal's apps grid) and
+ * the per-module sidenavs / content; reuses tokens.css custom props so
+ * any rebrand stays in one file.
+ */
+
+.nickerp-shared-header {
+    background: var(--nickerp-color-bg-topnav);
+    color: var(--nickerp-color-text-inverse);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.nickerp-shared-header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 1rem;
+    max-width: 1600px;
+    margin: 0 auto;
+    gap: 1rem;
+}
+
+.nickerp-shared-header-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.nickerp-shared-header-launcher {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--nickerp-color-text-inverse);
+    text-decoration: none;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    transition: background 120ms ease;
+}
+
+.nickerp-shared-header-launcher:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.nickerp-shared-header-launcher-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 4px;
+    background: var(--nickerp-color-primary);
+    color: var(--nickerp-color-text-inverse);
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.nickerp-shared-header-launcher-text {
+    font-size: 0.9rem;
+}
+
+.nickerp-shared-header-divider {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 1.1rem;
+}
+
+.nickerp-shared-header-module {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.nickerp-shared-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.nickerp-shared-header-anonymous {
+    color: var(--nickerp-color-text-muted);
+    font-size: 0.85rem;
+}
+
+.nickerp-shared-header-identity {
+    position: relative;
+}
+
+.nickerp-shared-header-identity-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    list-style: none;
+    transition: background 120ms ease;
+}
+
+.nickerp-shared-header-identity-summary::-webkit-details-marker {
+    display: none;
+}
+
+.nickerp-shared-header-identity-summary:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.nickerp-shared-header-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    background: var(--nickerp-color-primary);
+    color: var(--nickerp-color-text-inverse);
+    font-weight: 700;
+    font-size: 0.75rem;
+}
+
+.nickerp-shared-header-name {
+    font-size: 0.9rem;
+}
+
+.nickerp-shared-header-identity-dropdown {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    background: var(--nickerp-color-bg-surface);
+    color: var(--nickerp-color-text);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    padding: 0.75rem;
+    min-width: 220px;
+    z-index: 1000;
+}
+
+.nickerp-shared-header-identity-name {
+    font-weight: 600;
+    margin-bottom: 0.15rem;
+}
+
+.nickerp-shared-header-identity-email,
+.nickerp-shared-header-identity-module {
+    color: var(--nickerp-color-text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.15rem;
+}
+
+.nickerp-shared-header-identity-link {
+    display: inline-block;
+    margin-top: 0.5rem;
+    color: var(--nickerp-color-primary);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.nickerp-shared-header-identity-link:hover {
+    text-decoration: underline;
+}
