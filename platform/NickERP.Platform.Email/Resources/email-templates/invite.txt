@@ -1,0 +1,13 @@
+Hello,
+
+You have been invited to join the NickERP tenant "{{TenantName}}" with role {{IntendedRoles}}.
+
+Accept your invite by opening the following link:
+
+  {{InviteLink}}
+
+This link expires {{ExpiresAt}}. If you did not expect this invite, you can ignore this message and the link will become invalid on its own.
+
+If you have questions, reply to this email or contact your platform administrator.
+
+— NickERP
