@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using NickERP.NickFinance.Core.Services;
 using NickERP.NickFinance.Database;
 using NickERP.NickFinance.Web.Services;
+// Sprint 29 — three-module co-deploy chrome adoption.
+using NickERP.Platform.Web.Shared.Modules;
 
 namespace NickERP.NickFinance.Web;
 
@@ -64,5 +66,32 @@ public static class NickFinanceWebServiceCollectionExtensions
         services.AddScoped<PeriodLockService>();
 
         return connectionString;
+    }
+
+    /// <summary>
+    /// Sprint 29 — register the SharedHeader/SharedFooter chrome with
+    /// <c>ModuleId = "nickfinance"</c> so a STANDALONE NickFinance.Web
+    /// host (the post-pilot 5420 deployment) renders the right module
+    /// label + back-to-launcher link. Idempotent (TryAddSingleton); the
+    /// portal host calls <c>AddNickErpSharedChrome</c> with
+    /// <c>ModuleId = "portal"</c> FIRST and that registration wins, so
+    /// the portal-hosted G2 pathfinder pages keep showing the portal
+    /// label rather than impersonating the standalone module.
+    /// </summary>
+    public static IServiceCollection AddNickErpNickFinanceSharedChrome(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.AddNickErpSharedChrome(opts =>
+        {
+            opts.ModuleId = "nickfinance";
+            opts.DisplayName = "NickFinance";
+            opts.PortalLauncherUrl = configuration["Portal:LauncherUrl"]
+                ?? ModuleContext.DefaultLauncherUrl;
+        });
+        return services;
     }
 }
