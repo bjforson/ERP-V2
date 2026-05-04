@@ -4,6 +4,7 @@
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Inspection.Application.AnalysisServices
 @using NickERP.Platform.Audit.Events
+@using NickERP.Platform.Identity.Database.Services
 @using NickERP.Platform.Tenancy
 @using NickERP.Platform.Tenancy.Database
 @using NickERP.Platform.Tenancy.Entities
@@ -14,6 +15,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject IServiceProvider Sp
 @inject InspectionFeatureFlag InspectionFlag
+@inject IInviteService InviteSvc
 @inject ILogger<Tenants> Logger
 
 <PageTitle>Tenants — NickERP Portal</PageTitle>
@@ -45,6 +47,21 @@
                 <label>
                     <span>Time zone</span>
                     <InputText class="portal-input" @bind-Value="_form.TimeZone" placeholder="Africa/Accra" />
+                </label>
+            </div>
+            @* Sprint 21 — optional first-user invite. When InviteEmail
+               is non-empty after a successful tenant create, an invite
+               token is issued + emailed via IInviteService. Empty =
+               skip the invite (operator can issue manually later from
+               the future Invites admin page). *@
+            <div class="portal-form-row">
+                <label>
+                    <span>Invite email (optional)</span>
+                    <InputText class="portal-input" @bind-Value="_form.InviteEmail" placeholder="admin@my-customer.example" />
+                </label>
+                <label>
+                    <span>Invite roles</span>
+                    <InputText class="portal-input" @bind-Value="_form.InviteRoles" placeholder="Tenant.Admin" />
                 </label>
             </div>
             <div class="portal-form-actions">
@@ -189,8 +206,44 @@
         // Emit a domain event so the audit log lights up.
         await EmitTenantCreatedEventAsync(t);
 
+        // Sprint 21 — first-user invite. Optional: skipped if
+        // _form.InviteEmail is empty. Best-effort like the VP6
+        // bootstrap — a failed invite send doesn't roll back the
+        // tenant create; operator can re-issue from the (future)
+        // invites admin page.
+        var inviteNote = string.Empty;
+        if (!string.IsNullOrWhiteSpace(_form.InviteEmail))
+        {
+            try
+            {
+                var auth3 = await AuthState.GetAuthenticationStateAsync();
+                Guid? actorId3 = Guid.TryParse(auth3.User?.FindFirst("nickerp:id")?.Value, out var g3) ? g3 : null;
+                var roles = string.IsNullOrWhiteSpace(_form.InviteRoles) ? "Tenant.Admin" : _form.InviteRoles.Trim();
+                var issuance = await InviteSvc.IssueInviteAsync(
+                    tenantId: t.Id,
+                    tenantName: t.Name,
+                    email: _form.InviteEmail.Trim(),
+                    intendedRoles: roles,
+                    issuedByUserId: actorId3);
+                inviteNote = issuance.EmailStatus switch
+                {
+                    EmailSendStatus.Sent => $" Invite sent to {_form.InviteEmail.Trim()} (token prefix {issuance.Prefix}).",
+                    EmailSendStatus.Failed => $" Invite saved but email send failed; reissue from the invites admin page (token prefix {issuance.Prefix}).",
+                    EmailSendStatus.Skipped => $" Invite saved but Email:Invite:PortalBaseUrl is not configured; manual send required (token prefix {issuance.Prefix}).",
+                    _ => string.Empty,
+                };
+            }
+            catch (Exception iex)
+            {
+                Logger.LogWarning(iex,
+                    "First-user invite failed for new tenant {TenantId} email {Email}; tenant create succeeded.",
+                    t.Id, _form.InviteEmail);
+                inviteNote = " Tenant created but invite issuance failed; reissue from the invites admin page.";
+            }
+        }
+
         _form = new TenantForm();
-        _message = $"Created tenant {t.Code} (id {t.Id}).";
+        _message = $"Created tenant {t.Code} (id {t.Id}).{inviteNote}";
         await Reload();
     }
 
@@ -230,5 +283,8 @@
         public string BillingPlan { get; set; } = "internal";
         public string TimeZone { get; set; } = "Africa/Accra";
         public string Currency { get; set; } = "GHS";
+        // Sprint 21 — optional first-user invite. Empty email skips the invite.
+        public string InviteEmail { get; set; } = string.Empty;
+        public string InviteRoles { get; set; } = "Tenant.Admin";
     }
 }
