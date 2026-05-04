@@ -138,6 +138,61 @@ a { color: var(--nickerp-color-primary); }
     color: var(--nickerp-color-text-muted);
 }
 
+/* Sprint 29 — launcher tiles. Larger version of portal-app-card so the
+   dedicated launcher reads as the suite's hero surface. Same color
+   tokens, same hover behaviour. */
+.portal-launcher-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: var(--nickerp-space-4);
+}
+
+.portal-launcher-tile {
+    display: flex;
+    align-items: center;
+    gap: var(--nickerp-space-4);
+    background: var(--nickerp-color-bg-surface);
+    border: 1px solid var(--nickerp-color-border);
+    border-radius: var(--nickerp-radius-md);
+    padding: var(--nickerp-space-4);
+    text-decoration: none;
+    color: inherit;
+    transition: box-shadow 120ms, transform 120ms;
+}
+
+.portal-launcher-tile:hover {
+    box-shadow: var(--nickerp-shadow-md);
+    transform: translateY(-2px);
+}
+
+.portal-launcher-mark {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--nickerp-radius-md);
+    color: var(--nickerp-color-text-inverse);
+    font-weight: var(--nickerp-font-weight-bold);
+    font-size: 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.portal-launcher-text { flex: 1; }
+.portal-launcher-title {
+    font-weight: var(--nickerp-font-weight-semibold);
+    font-size: 1.05rem;
+}
+.portal-launcher-desc {
+    font-size: var(--nickerp-font-size-sm);
+    color: var(--nickerp-color-text-muted);
+}
+.portal-launcher-url {
+    font-size: 0.75rem;
+    color: var(--nickerp-color-text-muted);
+    font-family: var(--nickerp-font-family-mono, monospace);
+    margin-top: 0.25rem;
+}
+
 /* Tables / cards / forms ----------------------------------------------- */
 .portal-card {
     background: var(--nickerp-color-bg-surface);

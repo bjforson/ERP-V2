@@ -1,0 +1,78 @@
+@page "/launcher"
+@* Sprint 29 — three-module co-deploy launcher. Tile grid driven by
+   IModuleRegistry; one tile per module enabled for the caller's tenant.
+   Click → opens the module BaseUrl in a new tab so the launcher window
+   stays available for cross-module hops.
+
+   The launcher coexists with Home.razor at "/" — Home keeps the legacy
+   stats grid + platform-tools row; Launcher is the streamlined
+   module-only view linked from Home and from each module's
+   SharedHeader back-to-launcher link. *@
+@attribute [Authorize]
+@using NickERP.Platform.Tenancy
+@using NickERP.Portal.Services.Modules
+@inject IModuleRegistry Registry
+@inject ITenantContext TenantCtx
+
+<PageTitle>Launcher — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Launcher</h1>
+        <p class="portal-page-subtitle">
+            Three-module co-deploy — pick a module to open it in a new tab.
+        </p>
+    </div>
+</header>
+
+<section class="portal-section">
+    @if (_modules is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_modules.Count == 0)
+    {
+        <p class="portal-page-subtitle">
+            No modules are enabled for this tenant. Contact a platform admin
+            to activate at least one module on the
+            <a href="/tenants">tenants page</a>.
+        </p>
+    }
+    else
+    {
+        <div class="portal-launcher-grid">
+            @foreach (var m in _modules)
+            {
+                <a class="portal-launcher-tile"
+                   href="@m.BaseUrl"
+                   target="_blank"
+                   rel="noopener noreferrer">
+                    <div class="portal-launcher-mark" style="background: @m.Color">@m.IconHint</div>
+                    <div class="portal-launcher-text">
+                        <div class="portal-launcher-title">@m.DisplayName</div>
+                        <div class="portal-launcher-desc">@m.Description</div>
+                        <div class="portal-launcher-url">@m.BaseUrl</div>
+                    </div>
+                </a>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private IReadOnlyList<ModuleRegistryEntry>? _modules;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Sprint 29 — the resolved tenant comes from the request's
+        // nickerp:tenant_id claim (UseNickErpTenancy middleware). When
+        // the claim is missing (anonymous edges or misconfigured hosts)
+        // we fall back to the default tenant id so the launcher still
+        // shows something instead of a blank page.
+        var tenantId = TenantCtx.IsResolved
+            ? TenantCtx.TenantId
+            : NickERP.Platform.Tenancy.Entities.Tenant.DefaultTenantId;
+
+        _modules = await Registry.GetModulesForTenantAsync(tenantId, includeDisabled: false);
+    }
+}

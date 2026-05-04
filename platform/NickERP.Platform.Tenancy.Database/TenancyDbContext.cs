@@ -29,6 +29,14 @@ public sealed class TenancyDbContext : DbContext
     /// </summary>
     public DbSet<TenantExportRequest> TenantExportRequests => Set<TenantExportRequest>();
 
+    /// <summary>
+    /// Sprint 29 — per-tenant module enable/disable rows for the portal
+    /// launcher. Tenant-scoped (<see cref="ITenantOwned"/>); the
+    /// <c>(TenantId, ModuleId)</c> pair is unique. Backs
+    /// <c>IModuleRegistry.GetModulesAsync(tenantId)</c>.
+    /// </summary>
+    public DbSet<TenantModuleSetting> TenantModuleSettings => Set<TenantModuleSetting>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -154,6 +162,27 @@ public sealed class TenancyDbContext : DbContext
             // Status = Pending ORDER BY RequestedAt ASC LIMIT N.
             e.HasIndex(x => new { x.Status, x.RequestedAt })
                 .HasDatabaseName("ix_tenant_export_requests_status_requestedat");
+        });
+
+        // Sprint 29 — TenantModuleSetting. Tenant-scoped (ITenantOwned);
+        // stamped by the existing TenantOwnedEntityInterceptor on insert.
+        // The (TenantId, ModuleId) unique index enforces "at most one row
+        // per module per tenant" and is the index the registry's
+        // upsert path collides on.
+        modelBuilder.Entity<TenantModuleSetting>(e =>
+        {
+            e.ToTable("tenant_module_settings");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).UseIdentityAlwaysColumn();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.ModuleId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Enabled).IsRequired().HasDefaultValue(true);
+            e.Property(x => x.UpdatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.UpdatedByUserId);
+
+            e.HasIndex(x => new { x.TenantId, x.ModuleId })
+                .IsUnique()
+                .HasDatabaseName("ux_tenant_module_settings_tenant_module");
         });
     }
 }
