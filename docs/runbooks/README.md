@@ -19,7 +19,11 @@ without prior system context.
 Are you responding to an alert / user report / log line?
 ├── No — you're shipping a planned change.
 │   ├── Deploying a new build .................... 01-deploy.md
-│   └── Rotating a secret ......................... 02-secret-rotation.md
+│   ├── Rotating a secret ......................... 02-secret-rotation.md
+│   ├── Standing up Postgres HA (primary + standby) 09-postgres-ha-setup.md
+│   ├── Configuring pgbackrest backups ............ 10-pgbackrest-backup-restore.md
+│   ├── Quarterly restore drill ................... 10-pgbackrest-backup-restore.md §8
+│   └── Upgrading an older PG to PG17 ............. 11-postgres-version-lock-pg17.md
 │
 └── Yes — what's the failure shape?
     ├── /healthz/ready is Unhealthy
@@ -44,6 +48,17 @@ Are you responding to an alert / user report / log line?
     ├── Edge node queue depth growing /
     │   replays not draining ...................... 06-edge-node-stalled.md
     │
+    ├── Postgres primary down, standby healthy .... 09-postgres-ha-setup.md §7
+    │   (manual failover required)
+    │
+    ├── Replication-lag alert firing .............. 09-postgres-ha-setup.md §10.1
+    │
+    ├── Backups silently failing
+    │   (no successful backup in 7 days) .......... 10-pgbackrest-backup-restore.md §10.1
+    │
+    ├── Data loss / corruption / "I dropped a
+    │   table" — need point-in-time restore ....... 10-pgbackrest-backup-restore.md §7
+    │
     └── A capability silently disappeared
         (admin UI option missing, scanner
          no longer picks up files) ................ 04-plugin-load-failure.md
@@ -61,6 +76,14 @@ Are you responding to an alert / user report / log line?
 | [04](04-plugin-load-failure.md) | Plugin DLL fails to load on host start | `plugin-registry` Unhealthy, missing capability | P1 (zero plugins loaded) |
 | [05](05-icums-outbox-backlog.md) | ICUMS file-based outbox backlog | files piling up unread in `OutboxPath` | P1 (>1000 files or > 4 h old) |
 | [06](06-edge-node-stalled.md) | Edge node queue depth growing / replays not draining | edge `/edge/healthz` `queueDepth` rises monotonically; no recent `audit.edge_node_replay_log` rows | P1 (disk-full risk) / P2 (typical) |
+| [09](09-postgres-ha-setup.md) | Postgres HA setup (primary + streaming standby + manual failover) | n/a — operator-initiated; or primary down + manual failover | P1 (failover) |
+| [10](10-pgbackrest-backup-restore.md) | pgbackrest backup + restore (full + incremental + PITR) | n/a — operator-initiated; or backup-failed alert | P1 (data-loss restore; 7-day-no-backup) |
+| [11](11-postgres-version-lock-pg17.md) | PG17 version lock + upgrade-from-older procedure | n/a — operator-initiated | P1 (failed upgrade rollback) |
+
+> Slots 07 + 08 are post-incident / analytical runbooks (sprint-13
+> live-deploy backlog and 2026-05-04 OCR baseline) — they sit
+> outside the symptom-driven index above and aren't part of the
+> decision tree.
 
 ---
 
@@ -156,8 +179,14 @@ warrant them:
 - **Edge node failover** (multi-edge cutover, hot-spare). Phase
   7.6, post-cutover. The single-edge "stalled queue" case ships in
   Sprint 11 as [`06-edge-node-stalled.md`](06-edge-node-stalled.md).
-- **Multi-host failover.** Today ERP V2 is single-host; multi-host
-  posture lives in `ROADMAP.md` Phase 5+.
+- **Auto-failover (Patroni / pg_auto_failover).** Deferred per
+  ROADMAP §1 locked answer 3. Manual failover ships in Sprint 27 as
+  [`09-postgres-ha-setup.md`](09-postgres-ha-setup.md) §7.
+- **Cross-region DR.** v0 is single-region per ROADMAP §1 answer 3.
+  pgbackrest's S3 / Azure-backed repo
+  ([`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+  §5.6) is the v0 off-site posture; full DR with hot standby in a
+  second region is post-pilot.
 - **NickFinance / NickHR runbooks.** Out of scope until those modules
   ship in v2 (today they live only in v1, which has its own runbooks
   under `C:\Shared\NSCIM_PRODUCTION\docs\migration\RUNBOOK.md`).

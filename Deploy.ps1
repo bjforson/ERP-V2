@@ -101,6 +101,38 @@
 # password literal in this script.
 #
 # ============================================================
+# HA awareness (Sprint 27)
+# ============================================================
+# This script is HA-agnostic: it does NOT know whether the cluster
+# behind ConnectionStrings__Inspection / ConnectionStrings__Platform
+# is a single host or a primary + streaming standby pair. The Host=
+# segment of each connection string lives in the NSSM service's
+# AppEnvironmentExtra, NOT in this script. That's intentional: a
+# manual failover (per docs/runbooks/09-postgres-ha-setup.md S7)
+# repoints the host segment via `nssm set ... AppEnvironmentExtra`
+# and restarts the app services. This script then deploys against
+# the new primary on the next run, no script-side change needed.
+#
+# Operator quick-reference for connection-string source-of-truth:
+#   - Default (single-host dev):
+#       Host=localhost or 127.0.0.1
+#   - HA primary (post Sprint 27 stand-up):
+#       Host=<primary-ip-or-hostname>
+#   - After a failover (runbook 09 S7):
+#       Host=<promoted-standby-ip-or-hostname>
+#
+# ALL connections (read AND write) target the primary; the standby
+# is HA-only per ROADMAP S1 locked answer 3 (2026-05-02). Do not
+# add a read-routing layer.
+#
+# Sister runbooks:
+#   docs/runbooks/09-postgres-ha-setup.md   - HA stand-up + manual
+#                                             failover procedure
+#   docs/runbooks/10-pgbackrest-backup-restore.md - backup + PITR
+#   docs/runbooks/11-postgres-version-lock-pg17.md - PG17 lock +
+#                                             upgrade-from-older
+#
+# ============================================================
 # Compatibility
 # ============================================================
 # Targets PowerShell 5.1+ (Windows-bundled) and PowerShell 7+. No
