@@ -11,6 +11,11 @@
     <!-- Sprint 21 — Email senders + InviteService tests. -->
     <ProjectReference Include="..\..\platform\NickERP.Platform.Email\NickERP.Platform.Email.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Identity.Database\NickERP.Platform.Identity.Database.csproj" />
+    <!-- Sprint 29 — module registry / per-tenant settings / shared chrome
+         all live in apps/portal/Services/Modules + platform/NickERP.Platform.Web.Shared.
+         The portal project ref drags Web.Shared along transitively. -->
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Web.Shared\NickERP.Platform.Web.Shared.csproj" />
+    <ProjectReference Include="..\..\apps\portal\NickERP.Portal.csproj" />
   </ItemGroup>
 
   <ItemGroup>
