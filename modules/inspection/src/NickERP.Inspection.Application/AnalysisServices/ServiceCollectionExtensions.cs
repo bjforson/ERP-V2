@@ -68,4 +68,20 @@ public static class ServiceCollectionExtensions
         services.TryAddScoped<AnalysisServiceAdminService>();
         return services;
     }
+
+    /// <summary>
+    /// Phase C — register <see cref="CaseClaimService"/> +
+    /// <see cref="CaseVisibilityService"/> as scoped. Used by the
+    /// analyst <c>Cases.razor</c> list (visibility filtering) and
+    /// <c>CaseDetail.razor</c> (claim badge + acquire/release flow).
+    /// Idempotent (TryAddScoped).
+    /// </summary>
+    public static IServiceCollection AddCaseClaimAndVisibility(
+        this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.TryAddScoped<CaseClaimService>();
+        services.TryAddScoped<CaseVisibilityService>();
+        return services;
+    }
 }

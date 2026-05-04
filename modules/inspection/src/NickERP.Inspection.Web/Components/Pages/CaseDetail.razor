@@ -4,12 +4,15 @@
 @using Microsoft.AspNetCore.Diagnostics
 @using Microsoft.AspNetCore.Http
 @using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.AnalysisServices
 @using NickERP.Inspection.Authorities.Abstractions
 @using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
 @using NickERP.Inspection.Web.Services
 @inject InspectionDbContext Db
 @inject CaseWorkflowService Workflow
+@inject CaseClaimService Claims
+@inject AuthenticationStateProvider AuthState
 @inject ILogger<CaseDetail> Logger
 
 <PageTitle>Case @ShortId — Inspection v2</PageTitle>
@@ -69,6 +72,29 @@ else
                 opened @_case.OpenedAt.ToString("yyyy-MM-dd HH:mm") •
                 in this state since @_case.StateEnteredAt.ToString("yyyy-MM-dd HH:mm")
             </p>
+            @* Sprint 14 / VP6 Phase C — active-claim badge. Shown when
+               the case is locked under shared visibility and the
+               current viewer isn't the claimer. The acquire happens
+               server-side on AssignSelf (CaseWorkflowService); this
+               panel is read-only. *@
+            @if (_activeClaim is not null)
+            {
+                var ageMin = (int)Math.Max(0, (DateTimeOffset.UtcNow - _activeClaim.ClaimedAt).TotalMinutes);
+                var serviceName = _activeClaim.AnalysisService?.Name ?? "(unknown service)";
+                var owner = _activeClaim.ClaimedByUserId.ToString()[..8];
+                var owned = _activeClaim.ClaimedByUserId == _userId;
+                <p class="inspection-claim-badge @(owned ? "is-mine" : "is-claimed-by-other")">
+                    @if (owned)
+                    {
+                        <span>You hold this claim under <strong>@serviceName</strong> since @ageMin minute(s) ago.</span>
+                        <button type="button" class="inspection-button" @onclick="ReleaseClaimAsync">Release claim</button>
+                    }
+                    else
+                    {
+                        <span>Claimed by <code>@owner</code> in <strong>@serviceName</strong> · @ageMin minute(s) ago. Read-only for you.</span>
+                    }
+                </p>
+            }
         </div>
     </header>
 
@@ -307,6 +333,11 @@ else
 
     private InspectionCase? _case;
     private bool _notFound;
+    /// <summary>VP6 Phase C — active claim (or null if none); read-only banner.</summary>
+    private CaseClaim? _activeClaim;
+    /// <summary>VP6 Phase C — viewer's identity user id, used to compare against the claim owner.</summary>
+    private Guid _userId;
+    private bool _isAdmin;
     private List<Scan> _scans = new();
     private List<AuthorityDocument> _documents = new();
     private List<OutboundSubmission> _submissions = new();
@@ -328,7 +359,17 @@ else
 
     private string ShortId => _case is null ? "" : _case.Id.ToString()[..8];
 
-    protected override async Task OnInitializedAsync() => await Reload();
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+        Guid.TryParse(idClaim, out _userId);
+        _isAdmin = state.User?.IsInRole("platform.admin") == true
+                   || state.User?.IsInRole("Identity.Admin") == true
+                   || state.User?.HasClaim("nickerp:scope", "Identity.Admin") == true
+                   || state.User?.HasClaim("nickerp:scope", "platform.admin") == true;
+        await Reload();
+    }
 
     private async Task Reload()
     {
@@ -396,6 +437,28 @@ else
         // with their fresh result; absent any persisted snapshot, the pane
         // stays hidden as before.
         _rulesResult = await HydrateRulesResultAsync();
+
+        // Sprint 14 / VP6 Phase C — load active claim metadata so the
+        // header banner can show "claimed by [user] in [service]" or
+        // "you hold this claim" + a Release button. Single round-trip
+        // through CaseClaimService so the unique-partial-index narrowing
+        // matches the rest of the claim flow.
+        _activeClaim = await Claims.GetActiveClaimAsync(CaseId);
+    }
+
+    private async Task ReleaseClaimAsync()
+    {
+        if (_activeClaim is null) return;
+        try
+        {
+            await Claims.ReleaseClaimAsync(_activeClaim.Id, _userId, _isAdmin);
+            _message = "Claim released.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Release claim failed: {ex.Message}";
+        }
     }
 
     /// <summary>

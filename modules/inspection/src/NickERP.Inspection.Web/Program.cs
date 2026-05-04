@@ -67,6 +67,12 @@ builder.Services.AddAnalysisServiceLocationAutoJoinInterceptor();
 // list + detail Razor pages. Scoped (mirrors the Phase A.5 bootstrap).
 builder.Services.AddAnalysisServiceAdmin();
 
+// Sprint 14 / VP6 Phase C — claim semantics + case-visibility helper.
+// Cases.razor consults CaseVisibilityService for the access-list under
+// the tenant's CaseVisibilityModel; CaseDetail.razor consults
+// CaseClaimService for the active-claim badge + acquire/release flow.
+builder.Services.AddCaseClaimAndVisibility();
+
 // Inspection's own DbContext. Phase F1 — wires the tenancy interceptors
 // (push app.tenant_id to Postgres for RLS + stamp TenantId on inserts).
 // Sprint 14 / VP6 Phase A.5 — also wires the AnalysisServiceLocation

@@ -390,9 +390,10 @@ public sealed class MultiLocationFederationTests
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
-        // Location assignment — the row that makes federation real.
-        // Cases.razor filters cases by (assignment.LocationId IN
-        // accessible) — without this the analyst sees nothing.
+        // Location assignment — kept for backwards compat (LocationAssignments.razor
+        // still surfaces this table for raw user-to-location admin),
+        // but no longer the access source for the cases list (VP6 Phase C
+        // moved that to AnalysisServiceUser membership).
         await using (var cmd = new NpgsqlCommand(
             @"INSERT INTO inspection.location_assignments
                 (""Id"", ""IdentityUserId"", ""LocationId"", ""Roles"",
@@ -403,6 +404,60 @@ public sealed class MultiLocationFederationTests
             cmd.Parameters.AddWithValue("id", assignmentId);
             cmd.Parameters.AddWithValue("userId", analystUserId);
             cmd.Parameters.AddWithValue("locId", locationId);
+            cmd.Parameters.AddWithValue("now", now);
+            cmd.Parameters.AddWithValue("tenant", tenantId);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        // Sprint 14 / VP6 Phase C — seed the AnalysisService membership
+        // graph that Cases.razor's CaseVisibilityService now reads.
+        // The federation-by-location proof requires each analyst to see
+        // ONLY their own location's case, so we create a per-location
+        // AnalysisService (e.g., "Tema-1 service") covering only this
+        // location and grant the analyst membership in just that one.
+        // The tenant's built-in "All Locations" service is auto-joined
+        // by Phase A's bootstrap migration on existing data — for
+        // tenants created in this test (Tenant 2), it's absent. The
+        // visibility helper doesn't need it because the analyst's
+        // membership is in the per-location service. A separate test
+        // can exercise the universal-access path explicitly.
+        var perLocationServiceId = Guid.NewGuid();
+        await using (var cmd = new NpgsqlCommand(
+            @"INSERT INTO inspection.analysis_services
+                (""Id"", ""Name"", ""Description"", ""IsBuiltInAllLocations"",
+                 ""CreatedAt"", ""CreatedByUserId"", ""UpdatedAt"", ""TenantId"")
+              VALUES (@svcId, @svcName,
+                      'E2E test per-location scope', FALSE, @now, NULL, @now, @tenant);", conn))
+        {
+            cmd.Parameters.AddWithValue("svcId", perLocationServiceId);
+            cmd.Parameters.AddWithValue("svcName", $"{code} service (T{tenantId})");
+            cmd.Parameters.AddWithValue("now", now);
+            cmd.Parameters.AddWithValue("tenant", tenantId);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var cmd = new NpgsqlCommand(
+            @"INSERT INTO inspection.analysis_service_locations
+                (""AnalysisServiceId"", ""LocationId"", ""AddedAt"", ""TenantId"")
+              VALUES (@svcId, @locId, @now, @tenant)
+              ON CONFLICT DO NOTHING;", conn))
+        {
+            cmd.Parameters.AddWithValue("svcId", perLocationServiceId);
+            cmd.Parameters.AddWithValue("locId", locationId);
+            cmd.Parameters.AddWithValue("now", now);
+            cmd.Parameters.AddWithValue("tenant", tenantId);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var cmd = new NpgsqlCommand(
+            @"INSERT INTO inspection.analysis_service_users
+                (""AnalysisServiceId"", ""UserId"", ""AssignedAt"",
+                 ""AssignedByUserId"", ""TenantId"")
+              VALUES (@svcId, @userId, @now, NULL, @tenant)
+              ON CONFLICT DO NOTHING;", conn))
+        {
+            cmd.Parameters.AddWithValue("svcId", perLocationServiceId);
+            cmd.Parameters.AddWithValue("userId", analystUserId);
             cmd.Parameters.AddWithValue("now", now);
             cmd.Parameters.AddWithValue("tenant", tenantId);
             await cmd.ExecuteNonQueryAsync(ct);

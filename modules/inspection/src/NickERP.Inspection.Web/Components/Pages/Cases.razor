@@ -1,10 +1,12 @@
 @page "/cases"
 @attribute [Authorize]
 @using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.AnalysisServices
 @using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
 @inject InspectionDbContext Db
 @inject AuthenticationStateProvider AuthState
+@inject CaseVisibilityService Visibility
 
 <PageTitle>Cases — Inspection v2</PageTitle>
 
@@ -112,21 +114,22 @@
                    || state.User?.HasClaim("nickerp:scope", "Identity.Admin") == true
                    || state.User?.HasClaim("nickerp:scope", "platform.admin") == true;
 
-        // Locations the current user is allowed to see (or all locations for admins).
+        // VP6 Phase C — locations the user can reach are the union of
+        // their AnalysisServiceUser memberships joined through
+        // AnalysisServiceLocation. Admins see every location in the
+        // tenant (RLS narrowed). The legacy LocationAssignment table is
+        // no longer the access source for the cases list — VP6
+        // membership replaces it.
         if (_isAdmin)
         {
             _accessibleLocations = await Db.Locations.AsNoTracking().OrderBy(l => l.Code).ToListAsync();
         }
         else
         {
-            var assigned = await Db.LocationAssignments.AsNoTracking()
-                .Where(a => a.IdentityUserId == _userId && a.IsActive
-                            && (a.ExpiresAt == null || a.ExpiresAt > DateTimeOffset.UtcNow))
-                .Select(a => a.LocationId)
-                .ToListAsync();
-            _assignmentsCount = assigned.Count;
+            var accessibleIds = await Visibility.GetAccessibleLocationIdsAsync(_userId);
+            _assignmentsCount = accessibleIds.Count;
             _accessibleLocations = await Db.Locations.AsNoTracking()
-                .Where(l => assigned.Contains(l.Id))
+                .Where(l => accessibleIds.Contains(l.Id))
                 .OrderBy(l => l.Code)
                 .ToListAsync();
         }
@@ -142,11 +145,28 @@
             _thumbArtifactByCase = new();
             return;
         }
-        var allowedIds = _accessibleLocations.Select(l => l.Id).ToList();
-        var q = Db.Cases.AsNoTracking().Where(c => allowedIds.Contains(c.LocationId));
-        if (Guid.TryParse(_locationFilter, out var locId)) q = q.Where(c => c.LocationId == locId);
-        if (Enum.TryParse<InspectionWorkflowState>(_stateFilter, out var st)) q = q.Where(c => c.State == st);
-        _rows = await q.OrderByDescending(c => c.OpenedAt).Take(100).ToListAsync();
+
+        Guid? locFilter = Guid.TryParse(_locationFilter, out var lid) ? lid : (Guid?)null;
+        InspectionWorkflowState? stateFilter = Enum.TryParse<InspectionWorkflowState>(_stateFilter, out var st)
+            ? st : (InspectionWorkflowState?)null;
+
+        if (_isAdmin)
+        {
+            // Admins see every case in the tenant; RLS already narrows
+            // by tenant. No service-membership routing applies.
+            var allowedIds = _accessibleLocations.Select(l => l.Id).ToList();
+            var q = Db.Cases.AsNoTracking().Where(c => allowedIds.Contains(c.LocationId));
+            if (locFilter is { } lf) q = q.Where(c => c.LocationId == lf);
+            if (stateFilter is { } sf) q = q.Where(c => c.State == sf);
+            _rows = await q.OrderByDescending(c => c.OpenedAt).Take(100).ToListAsync();
+        }
+        else
+        {
+            // Non-admin path goes through the visibility helper, which
+            // honours the tenant's Shared / Exclusive routing model.
+            _rows = await Visibility.GetVisibleCasesAsync(
+                _userId, take: 100, locationFilter: locFilter, stateFilter: stateFilter);
+        }
 
         await LoadThumbnailsAsync();
     }
