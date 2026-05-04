@@ -16,6 +16,13 @@ public sealed class TenancyDbContext : DbContext
 
     public DbSet<Tenant> Tenants => Set<Tenant>();
 
+    /// <summary>
+    /// Sprint 18 — append-only log of hard-purge operations. Survives
+    /// the tenant rows it describes. Not tenant-scoped (cross-tenant by
+    /// design); not under RLS.
+    /// </summary>
+    public DbSet<TenantPurgeLog> TenantPurgeLog => Set<TenantPurgeLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -31,17 +38,44 @@ public sealed class TenancyDbContext : DbContext
             e.Property(x => x.TimeZone).IsRequired().HasMaxLength(64).HasDefaultValue("Africa/Accra");
             e.Property(x => x.Locale).IsRequired().HasMaxLength(20).HasDefaultValue("en-GH");
             e.Property(x => x.Currency).IsRequired().HasMaxLength(3).HasDefaultValue("GHS");
-            e.Property(x => x.IsActive).HasDefaultValue(true);
+
+            // Sprint 18 — lifecycle state. Default Active so brand-new
+            // tenants are reachable without an explicit transition.
+            e.Property(x => x.State)
+                .HasConversion<int>()
+                .HasDefaultValue(TenantState.Active);
+            e.Property(x => x.DeletedAt);
+            e.Property(x => x.DeletedByUserId);
+            e.Property(x => x.DeletionReason).HasMaxLength(500);
+            e.Property(x => x.RetentionDays).HasDefaultValue(90);
+            e.Property(x => x.HardPurgeAfter);
+
+            // Computed property — not mapped to a column.
+            e.Ignore(x => x.IsActive);
+
             e.Property(x => x.CaseVisibilityModel).HasConversion<int>().HasDefaultValue(CaseVisibilityModel.Shared);
             e.Property(x => x.AllowMultiServiceMembership).HasDefaultValue(true);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             e.HasIndex(x => x.Code).IsUnique().HasDatabaseName("ux_tenants_code");
+            // Sprint 18 — supports the "active tenants" filter query and
+            // the "all soft-deleted tenants pending purge" admin view.
+            e.HasIndex(x => x.State).HasDatabaseName("ix_tenants_state");
+
+            // Sprint 18 — global query filter hides SoftDeleted +
+            // PendingHardPurge tenants from default queries. Admin pages
+            // override via IgnoreQueryFilters() to surface them.
+            // Suspended is intentionally NOT filtered out — a suspended
+            // tenant still exists for ops listings; only deleted-but-
+            // retained tenants are hidden by default.
+            e.HasQueryFilter(t =>
+                t.State != TenantState.SoftDeleted
+                && t.State != TenantState.PendingHardPurge);
 
             // Seed the default tenant. Stable id 1; matches the DefaultTenantId
             // constant so business-data DEFAULTs and seed migrations on other
             // schemas can reference it directly.
-            e.HasData(new Tenant
+            e.HasData(new
             {
                 Id = Tenant.DefaultTenantId,
                 Code = Tenant.DefaultTenantCode,
@@ -50,9 +84,31 @@ public sealed class TenancyDbContext : DbContext
                 TimeZone = "Africa/Accra",
                 Locale = "en-GH",
                 Currency = "GHS",
-                IsActive = true,
+                State = TenantState.Active,
+                RetentionDays = 90,
+                CaseVisibilityModel = CaseVisibilityModel.Shared,
+                AllowMultiServiceMembership = true,
                 CreatedAt = new DateTimeOffset(2026, 4, 26, 0, 0, 0, TimeSpan.Zero)
             });
+        });
+
+        modelBuilder.Entity<TenantPurgeLog>(e =>
+        {
+            e.ToTable("tenant_purge_log");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.TenantCode).IsRequired().HasMaxLength(64);
+            e.Property(x => x.TenantName).IsRequired().HasMaxLength(200);
+            e.Property(x => x.PurgedAt).IsRequired();
+            e.Property(x => x.PurgedByUserId).IsRequired();
+            e.Property(x => x.DeletionReason).HasMaxLength(500);
+            e.Property(x => x.SoftDeletedAt);
+            e.Property(x => x.RowCounts).HasColumnType("jsonb");
+            e.Property(x => x.Outcome).IsRequired().HasMaxLength(32);
+            e.Property(x => x.FailureNote).HasMaxLength(1000);
+
+            e.HasIndex(x => x.PurgedAt).HasDatabaseName("ix_tenant_purge_log_purgedat");
         });
     }
 }
