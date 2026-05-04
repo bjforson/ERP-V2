@@ -1,0 +1,108 @@
+@page "/admin/rules/{RuleId}"
+@* Sprint 28 / B4 Phase C — drill-down for one validation rule. Shows the
+   recent failures for THIS rule on THIS tenant by querying audit.events
+   where EventType='inspection.validation.failed' AND Payload->>'ruleId' =
+   {RuleId}. Each row hyperlinks to the case detail so the analyst can hop
+   from a failure straight to the case. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject RulesAdminService AdminService
+@inject ITenantContext Tenant
+
+<PageTitle>Rule @RuleId — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <p><a href="/admin/rules">&larr; Back to rules</a></p>
+        <h1>Rule <code>@RuleId</code></h1>
+        @if (_summary is not null)
+        {
+            <p class="inspection-page-subtitle">@_summary.Description</p>
+        }
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_summary is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <section class="inspection-section">
+        <table class="inspection-table">
+            <tbody>
+                <tr><th>Enabled</th><td>
+                    @if (_summary.Enabled)
+                    {
+                        <span class="inspection-badge inspection-badge-good">Enabled</span>
+                    }
+                    else
+                    {
+                        <span class="inspection-badge inspection-badge-warning">Disabled</span>
+                    }
+                </td></tr>
+                <tr><th>Per-tenant override</th><td>@(_summary.HasOverride ? "yes" : "no (default)")</td></tr>
+                <tr><th>Recent failures (7d)</th><td>@_summary.RecentFailureCount</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section class="inspection-section">
+        <h2>Recent failures</h2>
+        @if (_failures is null)
+        {
+            <p>Loading failures…</p>
+        }
+        else if (_failures.Count == 0)
+        {
+            <p class="inspection-empty">No failures recorded for this rule in the last 7 days.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>Severity</th>
+                        <th>Case</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var f in _failures)
+                    {
+                        <tr>
+                            <td title="@f.OccurredAt.ToString("O")">@f.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td>@f.Severity</td>
+                            <td><a href="/cases/@f.CaseId"><code>@f.CaseId</code></a></td>
+                            <td>@f.Message</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public string RuleId { get; set; } = string.Empty;
+
+    private RuleAdminRow? _summary;
+    private List<RuleFailureSnapshot>? _failures;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        var rows = await AdminService.ListRulesAsync(Tenant.TenantId);
+        _summary = rows.FirstOrDefault(r =>
+            string.Equals(r.RuleId, RuleId, StringComparison.OrdinalIgnoreCase));
+        if (_summary is null) return;
+        var failures = await AdminService.RecentFailuresAsync(Tenant.TenantId, RuleId, take: 50);
+        _failures = failures.ToList();
+    }
+}

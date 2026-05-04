@@ -1,0 +1,156 @@
+@page "/admin/rules"
+@* Sprint 28 / B4 Phase C — admin index for vendor-neutral validation rules.
+   Lists every registered IValidationRule with the current tenant's enabled
+   flag + recent failure counts. Toggling Enabled persists to
+   tenancy.tenant_validation_rule_settings via RulesAdminService and emits
+   an inspection.validation_rule.toggled audit event so the trail of
+   who-disabled-what survives.
+
+   TODO(team-A): replace `Inspection.Admin` with the dedicated
+   `inspection.rules_admin` role once it's added to the v2 identity role
+   list. Until then, fall back to the most-restrictive existing admin
+   role. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using System.Security.Claims
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject RulesAdminService AdminService
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Validation rules — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Validation rules</h1>
+        <p class="inspection-page-subtitle">
+            Vendor-neutral validation engine (Sprint 28 / B4). Toggle a rule
+            off to silence it for this tenant. Drill into a row to see
+            recent failures.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_rows is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <section class="inspection-section">
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="inspection-form-message">@_message</p>
+        }
+
+        @if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No validation rules are registered. Confirm <code>AddNickErpInspectionValidation()</code> ran during host startup.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Rule</th>
+                        <th>Description</th>
+                        <th>Enabled</th>
+                        <th>Recent failures (7d)</th>
+                        <th>Last toggled</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr>
+                            <td><code>@r.RuleId</code></td>
+                            <td>@r.Description</td>
+                            <td>
+                                @if (r.Enabled)
+                                {
+                                    <span class="inspection-badge inspection-badge-good">Enabled</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-badge inspection-badge-warning">Disabled</span>
+                                }
+                            </td>
+                            <td>@r.RecentFailureCount</td>
+                            <td>
+                                @if (r.LastUpdatedAt is { } t)
+                                {
+                                    <span title="@t.ToString("O")">@t.ToString("yyyy-MM-dd HH:mm")</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-empty">—</span>
+                                }
+                            </td>
+                            <td>
+                                <a class="inspection-button" href="/admin/rules/@r.RuleId">Open</a>
+                                <button type="button"
+                                        class="inspection-button"
+                                        @onclick="() => ToggleAsync(r.RuleId, !r.Enabled)">
+                                    @(r.Enabled ? "Disable" : "Enable")
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private List<RuleAdminRow>? _rows;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        var rows = await AdminService.ListRulesAsync(Tenant.TenantId);
+        _rows = rows.ToList();
+    }
+
+    private async Task ToggleAsync(string ruleId, bool enabled)
+    {
+        if (!Tenant.IsResolved) return;
+        var actor = await ResolveActorAsync();
+        try
+        {
+            await AdminService.SetRuleEnabledAsync(Tenant.TenantId, ruleId, enabled, actor);
+            _message = $"Rule '{ruleId}' is now {(enabled ? "enabled" : "disabled")}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Toggle failed: {ex.Message}";
+        }
+    }
+
+    private async Task<Guid?> ResolveActorAsync()
+    {
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+            return Guid.TryParse(idClaim, out var g) ? g : null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+}

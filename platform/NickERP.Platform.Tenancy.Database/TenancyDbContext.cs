@@ -29,6 +29,15 @@ public sealed class TenancyDbContext : DbContext
     /// </summary>
     public DbSet<TenantExportRequest> TenantExportRequests => Set<TenantExportRequest>();
 
+    /// <summary>
+    /// Sprint 28 — per-tenant on/off flags for inspection
+    /// <c>IValidationRule</c>s. Sparse rows (only persists when admin
+    /// disables a rule); under tenancy RLS via the
+    /// <c>tenant_isolation_tenant_validation_rule_settings</c> policy
+    /// added in <c>Add_TenantValidationRuleSettings</c>.
+    /// </summary>
+    public DbSet<TenantValidationRuleSetting> TenantValidationRuleSettings => Set<TenantValidationRuleSetting>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -154,6 +163,29 @@ public sealed class TenancyDbContext : DbContext
             // Status = Pending ORDER BY RequestedAt ASC LIMIT N.
             e.HasIndex(x => new { x.Status, x.RequestedAt })
                 .HasDatabaseName("ix_tenant_export_requests_status_requestedat");
+        });
+
+        // Sprint 28 — per-tenant validation-rule enable flags.
+        // Tenant-scoped + RLS-enforced (see Add_TenantValidationRuleSettings
+        // migration). Sparse: a missing row implies Enabled=true so the
+        // admin only persists rows for the rules they want to disable.
+        modelBuilder.Entity<TenantValidationRuleSetting>(e =>
+        {
+            e.ToTable("tenant_validation_rule_settings");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.RuleId).IsRequired().HasMaxLength(128);
+            e.Property(x => x.Enabled).HasDefaultValue(true);
+            e.Property(x => x.UpdatedAt).IsRequired();
+            e.Property(x => x.UpdatedByUserId);
+
+            // Unique index — one row per (TenantId, RuleId). Backs the
+            // upsert path in RulesAdminService.SetRuleEnabledAsync and the
+            // bulk-disabled-rules read in DbRuleEnablementProvider.
+            e.HasIndex(x => new { x.TenantId, x.RuleId })
+                .IsUnique()
+                .HasDatabaseName("ux_tenant_validation_rule_settings_tenant_rule");
         });
     }
 }

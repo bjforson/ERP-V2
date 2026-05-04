@@ -3,6 +3,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Authorities.CustomsGh\NickERP.Inspection.Authorities.CustomsGh.csproj" />
     <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Authorities.Abstractions\NickERP.Inspection.Authorities.Abstractions.csproj" />
+    <!-- Sprint 28 / B4 — IValidationRule + ValidationContext primitives + Core entities for fixtures. -->
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
   </ItemGroup>
 
 </Project>

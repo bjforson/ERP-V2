@@ -20,8 +20,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
     <ProjectReference Include="..\..\src\NickERP.Inspection.Authorities.Abstractions\NickERP.Inspection.Authorities.Abstractions.csproj" />
+    <!-- Sprint 28 / B4 — IValidationRule + ValidationContext primitives. -->
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
   </ItemGroup>
 
 </Project>
