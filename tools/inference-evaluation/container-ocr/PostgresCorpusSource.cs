@@ -18,12 +18,25 @@ namespace NickERP.Tools.OcrEvaluation;
 /// with <c>default_transaction_read_only = on</c> so accidental DDL
 /// would be denied at the server level even if the harness were buggy.
 ///
-/// SQL contract is the §12 Phase 3 cut: <c>fs6000images</c> JOIN
-/// <c>fs6000scans</c> for <c>containernumber</c> + LEFT JOIN
-/// <c>containerannotations</c> filtered for <c>type='ocr_correction'</c>
-/// (the gold-label table). Image bytes live inline on
-/// <c>fs6000images.imagedata</c> so the streaming side carries a real
-/// byte[] per row.
+/// SQL contract — joins <c>fs6000images</c> (image bytes inline on
+/// <c>imagedata</c>) to <c>fs6000scans</c> for the scanner-supplied
+/// <c>containernumber</c>. That field is the FS6000 vendor XML
+/// manifest's <c>container_no</c> element (see v1
+/// <c>NickScanCentralImagingPortal.Services.FS6000.XmlParsingService.cs</c>
+/// line 534) — ie. it's external scanner truth, NOT v1's Tesseract
+/// output. v1's Tesseract path runs against the rendered LUT image and
+/// produces an extracted candidate that's compared to this expected
+/// truth, but the truth itself is independent of any OCR.
+///
+/// Note: the harvester at
+/// <c>tools/inference-training/container-ocr/harvest_plates.py</c>
+/// describes a <c>containerannotations</c> table with
+/// <c>type='ocr_correction'</c> for analyst-corrected gold labels.
+/// On this production box (probed 2026-05-04) that table holds 74 rows,
+/// all <c>type='Rectangle'</c> bbox annotations — there are NO
+/// OCR-correction rows. So the only available truth source is
+/// <c>fs6000scans.containernumber</c>. We accept that and document
+/// the caveat in the runbook.
 /// </summary>
 internal sealed class PostgresCorpusSource : ICorpusSource
 {
@@ -32,11 +45,18 @@ internal sealed class PostgresCorpusSource : ICorpusSource
     private readonly NpgsqlDataSource _dataSource;
     private int _approxCount = -1;
 
+    // imagetype = 'Main' is the LUT-rendered 8-bit JPEG composite — the
+    // exact input v1's ContainerNumberOcrService receives via
+    // FS6000ImagePipeline.GetCompleteContainerDataAsync. The other types
+    // (HighEnergy / LowEnergy / Material) are raw 16-bit channels never
+    // fed to v1's Tesseract path; running OCR over them would inflate
+    // the miss rate without measuring v1's reality.
     private const string SqlCount = """
         SELECT COUNT(*)
         FROM public.fs6000images i
         JOIN public.fs6000scans s ON s.id = i.scanid
         WHERE i.imagedata IS NOT NULL
+          AND i.imagetype = 'Main'
           AND ($1 = false OR (s.containernumber IS NOT NULL AND length(trim(s.containernumber)) > 0))
     """;
 
@@ -45,16 +65,12 @@ internal sealed class PostgresCorpusSource : ICorpusSource
             i.id::text                              AS image_id,
             i.imagedata                             AS image_bytes,
             i.imagetype                             AS image_type,
-            s.containernumber                       AS v1_predicted,
-            a.text                                  AS analyst_corrected,
+            s.containernumber                       AS scanner_truth,
             'FS6000'                                AS scanner_type
         FROM public.fs6000images i
         JOIN public.fs6000scans s ON s.id = i.scanid
-        LEFT JOIN public.containerannotations a
-            ON a.containernumber = s.containernumber
-           AND a.type = 'ocr_correction'
-           AND a.isdeleted IS NOT TRUE
         WHERE i.imagedata IS NOT NULL
+          AND i.imagetype = 'Main'
           AND ($1 = false OR (s.containernumber IS NOT NULL AND length(trim(s.containernumber)) > 0))
         ORDER BY i.createdat NULLS LAST, i.id
         LIMIT $2
@@ -104,44 +120,37 @@ internal sealed class PostgresCorpusSource : ICorpusSource
             var id = reader.GetString(0);
             var bytes = (byte[])reader.GetValue(1);
             var imageType = reader.IsDBNull(2) ? null : reader.GetString(2);
-            var v1Predicted = reader.IsDBNull(3) ? null : reader.GetString(3)?.Trim();
-            var analyst = reader.IsDBNull(4) ? null : reader.GetString(4)?.Trim();
-            var scannerType = reader.IsDBNull(5) ? null : reader.GetString(5);
+            var scannerTruth = reader.IsDBNull(3) ? null : reader.GetString(3)?.Trim();
+            var scannerType = reader.IsDBNull(4) ? null : reader.GetString(4);
 
-            // Truth precedence: analyst-corrected (gold) > v1 prediction
-            // when it passes the ISO 6346 check (silver) > none.
+            // Truth selection on this corpus: fs6000scans.containernumber
+            // is the FS6000 vendor manifest's container_no — independent of
+            // any Tesseract pass. We accept it as truth when it passes the
+            // ISO 6346 mod-11 check digit (filters out manual-entry typos
+            // and edge cases). Below the gate, we set truth=null so the
+            // row is excluded from scoring rather than producing a
+            // false negative against bad data.
             string? truth = null;
-            if (!string.IsNullOrEmpty(analyst) && Iso6346Gate.IsValid(analyst))
+            if (!string.IsNullOrEmpty(scannerTruth) && Iso6346Gate.IsValid(scannerTruth))
             {
-                truth = analyst;
-            }
-            else if (!string.IsNullOrEmpty(v1Predicted) && Iso6346Gate.IsValid(v1Predicted))
-            {
-                // SILVER: v1's Tesseract output that passed the check digit.
-                // Including these as "truth" would be circular for a Tesseract
-                // baseline measurement. We deliberately exclude silver from
-                // the truth set when scoring the Tesseract engine — the
-                // orchestrator decides per-engine whether to honour silver.
-                // Emit it under V1Prediction so the orchestrator can branch.
-                truth = null;
+                truth = scannerTruth;
             }
 
-            // Owner-prefix detection from the strongest available source.
             string? ownerPrefix = null;
             if (!string.IsNullOrEmpty(truth) && truth!.Length >= 4)
             {
                 ownerPrefix = truth[..4];
-            }
-            else if (!string.IsNullOrEmpty(v1Predicted) && v1Predicted!.Length >= 4)
-            {
-                ownerPrefix = v1Predicted[..4];
             }
 
             yield return new CorpusRow(
                 Id: id,
                 ImageBytes: bytes,
                 Truth: truth,
-                V1Prediction: v1Predicted,
+                // V1Prediction stays null — we don't have a stored Tesseract
+                // output column on this corpus. The Tesseract baseline IS
+                // this harness's run; v1's run isn't persisted anywhere
+                // queryable.
+                V1Prediction: null,
                 OwnerPrefix: ownerPrefix,
                 ImageType: imageType,
                 ScannerType: scannerType);
