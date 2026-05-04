@@ -9,6 +9,7 @@ using NickERP.Inspection.Application.Icums;
 using NickERP.Inspection.Application.PostHocOutcomes;
 using NickERP.Inspection.Application.Submissions;
 using NickERP.Inspection.Application.Thresholds;
+using NickERP.Inspection.Application.Workers;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Web.Components;
@@ -251,6 +252,100 @@ builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutcomePullWorker>());
 builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutcomePullWorker>());
+
+// ---------------------------------------------------------------------------
+// Sprint 24 / B3.1 — Specialised scanner workers. Both default-disabled
+// per the Sprint 24 architectural decision; opt-in per environment via
+// the corresponding Inspection:Workers:<Name>:Enabled flag.
+//
+// ScannerHealthSweepWorker — periodic IScannerAdapter.TestAsync sweep
+// across every active scanner. Surfaces vendor connectivity loss
+// without waiting for an inbound scan. Vendor-neutral.
+//
+// AseSyncWorker — periodic cursor pull for any scanner whose plugin
+// implements IScannerCursorSyncAdapter (replaces v1's
+// AseBackgroundService; vendor-neutralised).
+// ---------------------------------------------------------------------------
+builder.Services.Configure<ScannerHealthSweepOptions>(
+    builder.Configuration.GetSection(ScannerHealthSweepOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.ScannerHealthSweepWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerHealthSweepWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.ScannerHealthSweepWorker>());
+
+builder.Services.Configure<AseSyncOptions>(
+    builder.Configuration.GetSection(AseSyncOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.AseSyncWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AseSyncWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AseSyncWorker>());
+
+// ---------------------------------------------------------------------------
+// Sprint 24 / B3.2 — ICUMS pipeline workers (vendor-neutralised). All
+// default-disabled per Sprint 24 architectural decision; opt-in per
+// environment via the corresponding Inspection:Workers:<Name>:Enabled
+// flag.
+//
+// AuthorityDocumentBackfillWorker — periodic per-tenant fetch of
+// authority documents via IExternalSystemAdapter.FetchDocumentsAsync.
+// Replaces v1 IcumBackgroundService.
+//
+// AuthorityDocumentInboxWorker — watches a configurable filesystem
+// drop folder for adapter-shaped JSON exports. Replaces v1
+// IcumFileScannerService.
+//
+// OutboundSubmissionDispatchWorker — dispatches OutboundSubmission
+// rows in 'pending' status. Replaces v1 ICUMSSubmissionService.
+//
+// OutboundSubmissionResultPollerWorker — re-polls in-flight
+// submissions for deferred outcomes. Replaces v1
+// ICUMSDownloadBackgroundService.
+//
+// AuthorityDocumentMatcherWorker — matches Scan rows to
+// AuthorityDocument rows by container number + capture window.
+// Replaces v1 ContainerDataMapperService.
+// ---------------------------------------------------------------------------
+builder.Services.Configure<IcumsApiPullOptions>(
+    builder.Configuration.GetSection(IcumsApiPullOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.AuthorityDocumentBackfillWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentBackfillWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentBackfillWorker>());
+
+builder.Services.Configure<IcumsFileScannerOptions>(
+    builder.Configuration.GetSection(IcumsFileScannerOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.AuthorityDocumentInboxWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentInboxWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentInboxWorker>());
+
+builder.Services.Configure<IcumsSubmissionDispatchOptions>(
+    builder.Configuration.GetSection(IcumsSubmissionDispatchOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker>());
+
+builder.Services.Configure<IcumsSubmissionResultPollerOptions>(
+    builder.Configuration.GetSection(IcumsSubmissionResultPollerOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.OutboundSubmissionResultPollerWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutboundSubmissionResultPollerWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutboundSubmissionResultPollerWorker>());
+
+builder.Services.Configure<ContainerDataMatcherOptions>(
+    builder.Configuration.GetSection(ContainerDataMatcherOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
