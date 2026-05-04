@@ -3,8 +3,10 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Application.Validation;
 using NickERP.Inspection.Authorities.Abstractions;
 using NickERP.Inspection.Core.Entities;
+using NickERP.Inspection.Core.Validation;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.ExternalSystems.Abstractions;
 using NickERP.Inspection.Imaging;
@@ -33,6 +35,11 @@ public sealed class CaseWorkflowService
     private readonly AuthenticationStateProvider _auth;
     private readonly IImageStore _imageStore;
     private readonly ILogger<CaseWorkflowService> _logger;
+    // Sprint 28 — vendor-neutral validation engine hook. Optional in DI so
+    // existing tests that wire CaseWorkflowService minimally don't have to
+    // register the engine; production wires it through
+    // AddNickErpInspectionValidation() in Program.cs.
+    private readonly ValidationEngine? _validationEngine;
 
     public CaseWorkflowService(
         InspectionDbContext db,
@@ -42,7 +49,8 @@ public sealed class CaseWorkflowService
         ITenantContext tenant,
         AuthenticationStateProvider auth,
         IImageStore imageStore,
-        ILogger<CaseWorkflowService> logger)
+        ILogger<CaseWorkflowService> logger,
+        ValidationEngine? validationEngine = null)
     {
         _db = db;
         _events = events;
@@ -52,6 +60,7 @@ public sealed class CaseWorkflowService
         _auth = auth;
         _imageStore = imageStore;
         _logger = logger;
+        _validationEngine = validationEngine;
     }
 
     private async Task<(Guid? UserId, long TenantId)> CurrentActorAsync()
@@ -499,7 +508,47 @@ public sealed class CaseWorkflowService
                 caseId);
         }
 
+        // Sprint 28 — auto-fire the vendor-neutral validation engine when
+        // the transition into Validated has just happened. Independent of
+        // the authority-rules pack above (they run in series; the
+        // engine's results persist as Findings, the authority-rules
+        // results persist as RuleEvaluation rows). Engine is optional in
+        // DI so missing wiring in tests doesn't break the existing flow.
+        if (_validationEngine is not null && c.State == InspectionWorkflowState.Validated)
+        {
+            try
+            {
+                await _validationEngine.EvaluateAsync(caseId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "Validation engine threw for case {CaseId}; analyst can re-run via EvaluateValidationRulesAsync.",
+                    caseId);
+            }
+        }
+
         return new FetchDocumentsResult(emitted, rules);
+    }
+
+    // ---------------------------------------------------------------------
+    // Sprint 28 — manually re-run the vendor-neutral validation engine for
+    // a case. The auto-fire path runs once during FetchDocumentsAsync
+    // (when the case enters Validated); this entry-point lets the analyst
+    // re-evaluate after editing a case (new scan, new document, manual
+    // mutation) without round-tripping the document-fetch flow.
+    // ---------------------------------------------------------------------
+    public async Task<ValidationEngineResult?> EvaluateValidationRulesAsync(
+        Guid caseId,
+        CancellationToken ct = default)
+    {
+        if (_validationEngine is null)
+        {
+            _logger.LogDebug(
+                "EvaluateValidationRulesAsync called but no ValidationEngine is registered; returning null.");
+            return null;
+        }
+        return await _validationEngine.EvaluateAsync(caseId, ct);
     }
 
     // ---------------------------------------------------------------------

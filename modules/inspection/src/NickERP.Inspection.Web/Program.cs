@@ -9,6 +9,7 @@ using NickERP.Inspection.Application.Icums;
 using NickERP.Inspection.Application.PostHocOutcomes;
 using NickERP.Inspection.Application.Submissions;
 using NickERP.Inspection.Application.Thresholds;
+using NickERP.Inspection.Application.Validation;
 using NickERP.Inspection.Application.Workers;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
@@ -187,6 +188,25 @@ builder.Services.AddCascadingAuthenticationState();
 // DomainEvent emission happen. Pages call this; pages don't open the
 // DbContext directly for workflow operations.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.CaseWorkflowService>();
+
+// Sprint 28 / B4 — vendor-neutral validation engine + per-tenant rule
+// enable flags (DbRuleEnablementProvider reads
+// tenancy.tenant_validation_rule_settings via TenancyDbContext). The
+// engine fires automatically inside CaseWorkflowService.FetchDocumentsAsync
+// when the case enters Validated; pages can also call
+// CaseWorkflowService.EvaluateValidationRulesAsync to re-run on demand.
+//
+// Built-in rules (vendor-neutral) ship via AddNickErpInspectionValidation.
+// Plugin-shipped rules (e.g. CustomsGh) live in plugin DLLs loaded by
+// AddNickErpPluginsEager above; we reflect over the registered plugin
+// concretes to register any IValidationRule implementations as scoped
+// IEnumerable<IValidationRule> contributions, so the engine picks them
+// up transparently without the host project taking a hard reference on
+// the plugin assembly.
+builder.Services.AddNickErpInspectionValidation();
+builder.Services.AddNickErpInspectionValidationDbProvider();
+NickERP.Inspection.Application.Validation.PluginValidationRuleRegistration
+    .RegisterPluginValidationRules(builder.Services, pluginsDir);
 
 // §6.5 admin actions — Approve / Reject for ScannerThresholdProfile.
 // Mirrors CaseWorkflowService — pages call this so the audit emission
