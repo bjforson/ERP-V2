@@ -2,22 +2,22 @@
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
   "currentSprint": null,
-  "currentSprintNote": "Sprints 20 + 21 SHIPPED 2026-05-04 (parallel master pattern). Sprint 20 (B1 case detail tabs + analyst image viewer + multi-scan nav): main a8387a9 (3 commits, +8 tests). Sprint 21 (Tenant lifecycle Pt 2 — IEmailSender + InviteToken + first-user invite): main 89cd6b78 (5 commits, +27 tests) + fix-forward aaa32687 (MailKit 4.9->4.16 NU1902 CVE + null-coalesce). Add_InviteTokens migration applied to live identity schema. PortalBaseUrl service env var added; portal redeployed. Tests grew 336 -> 371 (+35 across both sprints + null-coalesce fix). Followup FU-tenant-lifecycle now Pt 1+2 shipped (Pt 3 export tooling still queued). Next per plan §10.3: Sprint 19 (OCR eval harness offline + v1 Tesseract baseline) + Sprint 22+ (Inspection v1 parity Batch B2 — ICUMS queue UIs).",
+  "currentSprintNote": "Sprint 22 SHIPPED 2026-05-04 (parallel-master partner of Sprint 19, still in flight). Inspection v1 parity B2 — ICUMS submission queue + download queue + dashboard + loose cargo + BOE lookup + manual pull + JsonPayloadViewer. Branch plan/sprint-22-inspection-parity-b2 (4 commits dccef113/67e54ff6/1733dfbe/579d1d1a). Migration 20260504160000_Add_OutboundSubmissionPriority applied to live nickerp_inspection (also caught up 20260504113030_Add_ExternalSystemSubsetScope marker). Tests grew 371 -> 396 (+25). Sprint 19 (OCR eval harness + v1 Tesseract baseline) running in parallel on plan/sprint-19-ocr-eval — tools/ scope only.",
   "prePilotProgress": {
     "asOf": "2026-05-04",
     "deadlineMonthsLow": 6,
     "deadlineMonthsHigh": 9,
-    "shippedSprints": 11,
+    "shippedSprints": 13,
     "totalEstimateLow": 31,
     "totalEstimateHigh": 47,
-    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 11 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprints 20+21 shipped in parallel). Inspection v1 parity (13-18 sprints) now in-progress — B1 done, B2-B8 remaining. Tenant lifecycle Pt 1+2 done (Pt 3 export queued). Pace at 1.5 sprints/week sustained = 13-24 weeks remaining.",
+    "note": "Pre-pilot scope per plan-file §5 (~/.claude/plans/tingly-launching-quasar.md). 13 sprint-equivalents shipped against an estimated 31-47 sprint pre-pilot scope (Sprint 22 added 2 — full B2 ICUMS queue UIs). Inspection v1 parity (13-18 sprints) advancing — B1+B2 done (4 of 13-18); B3-B8 remaining. Tenant lifecycle Pt 1+2 done (Pt 3 export queued). Pace at 1.5 sprints/week sustained = 12-23 weeks remaining.",
     "workstreams": [
       { "name": "AnalysisService VP6", "estimateLow": 2, "estimateHigh": 3, "shipped": 3, "status": "done", "note": "Sprint 14 (5 phases): storage + bootstrap + admin + claim + tests" },
       { "name": "ExternalSystemInstance subset junction", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 16" },
       { "name": "P2-FU-multi-event-types (edge fan-out)", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 17" },
       { "name": "NickHR v1->v2 clone", "estimateLow": 1, "estimateHigh": 2, "shipped": 1, "status": "done", "note": "Sprint 15. Refactor to v2-native is post-pilot (~6-10 sprints)." },
       { "name": "Tenant lifecycle (Pt 1+2+3)", "estimateLow": 3, "estimateHigh": 5, "shipped": 2, "status": "in-progress", "note": "Pt 1 shipped Sprint 18 (state + soft-delete + hard-purge). Pt 2 shipped Sprint 21 (IEmailSender + InviteToken + first-user invite + AcceptInvite page). Pt 3 (scoped export) still queued." },
-      { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 2, "status": "in-progress", "note": "Long pole. Per plan §11 — case viewing (B1 SHIPPED Sprint 20: tabs + analyst viewer + multi-scan nav), ICUMS UIs (B2), BG services (B3), validation rules (B4), completeness (B5), specialised review (B6), monitoring (B7), admin (B8)." },
+      { "name": "Inspection v1 parity (Batches B1-B8)", "estimateLow": 13, "estimateHigh": 18, "shipped": 4, "status": "in-progress", "note": "Long pole. Per plan §11 — case viewing (B1 SHIPPED Sprint 20: tabs + analyst viewer + multi-scan nav), ICUMS UIs (B2 SHIPPED Sprint 22: submission/download queues + dashboard + loose cargo + BOE lookup + manual pull), BG services (B3), validation rules (B4), completeness (B5), specialised review (B6), monitoring (B7), admin (B8)." },
       { "name": "HA + pgbackrest + PG17 ops", "estimateLow": 2, "estimateHigh": 3, "shipped": 0, "status": "not-started", "note": "Per locked answer 3 — primary + standby + manual failover; pgbackrest backups; locked to PG17." },
       { "name": "Three-module co-deploy navigation", "estimateLow": 1, "estimateHigh": 1, "shipped": 0, "status": "not-started", "note": "Portal links to inspection.web + finance.web + hr.web with shared auth + chrome." },
       { "name": "§6.1 OCR eval + Florence-2", "estimateLow": 4, "estimateHigh": 6, "shipped": 0, "status": "not-started", "note": "Gated on GPU box availability. Per plan §12 — eval harness + v1 baseline + GPU training (out-of-band) + integration + drift monitor." },
@@ -52,6 +52,25 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 22",
+      "name": "Inspection v1 parity Batch B2 — ICUMS submission/download queues + dashboard + loose cargo + BOE lookup + manual pull",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "3a32852b",
+      "itemCount": 4,
+      "items": [
+        { "id": "Sprint22-B2.1", "title": "ICUMS submission queue UI at /admin/icums/submission-queue + IcumsSubmissionQueueAdminService (paged list with status/system/date/search filters; single + bulk requeue bounded at 1000 rows; payload fetch). OutboundSubmission gains Priority + LastAttemptAt + composite index ix_outbound_tenant_status_priority_time. JsonPayloadViewer reusable component lands in Components/Shared/.", "commit": "dccef113" },
+        { "id": "Sprint22-B2.2", "title": "ICUMS download queue UI at /admin/icums/download-queue + IcumsDownloadQueueAdminService (reads AuthorityDocument; doc-type/source/match-status filters; admin re-link override). OutcomePullCursor table renders with lag-time chips (≤1h/≤6h/≤24h/>24h thresholds).", "commit": "67e54ff6" },
+        { "id": "Sprint22-B2.3", "title": "ICUMS dashboard at /admin/icums + sub-pages: loose-cargo (cases > 4h with zero AuthorityDocuments), boe-lookup (search by reference/container/date), manual-pull (admin-triggered IInboundOutcomeAdapter.FetchOutcomesAsync via IPluginRegistry; routes through PostHocOutcomeWriter; cursor not advanced).", "commit": "1733dfbe" },
+        { "id": "Sprint22-Phase-D", "title": "+25 unit tests across submission/download admin services + dashboard suite + manual pull (193 in NickERP.Inspection.Web.Tests).", "commit": "579d1d1a" }
+      ],
+      "ratifications": [
+        { "id": "Sprint22-vendor-shaped-routes", "title": "ICUMS appears in /admin/icums/... URLs + UI text only (operationally meaningful to operators); underlying queries hit vendor-neutral entities (OutboundSubmission, AuthorityDocument, OutcomePullCursor)." },
+        { "id": "Sprint22-bulk-requeue-bounded", "title": "MaxBulkRequeueRows = 1000; bulk requeue requires explicit status filter; emits single inspection.icums.submission_bulk_requeued audit event per batch (not per-row)." },
+        { "id": "Sprint22-manual-pull-cursor-untouched", "title": "Manual pull does NOT advance OutcomePullCursor — manual pulls coexist with the periodic OutcomePullWorker; idempotency dedup makes overlapping windows harmless." },
+        { "id": "Sprint22-em-navigation-workaround", "title": "EF in-memory provider drops rows when FK is Guid.Empty in Select projections (effectively INNER JOIN). Two-step projection (scalars + in-memory dictionary lookup) added to IcumsDownloadQueueAdminService.ListAsync + GetPullCursorsAsync + IcumsBoeLookupService.SearchAsync. Postgres tolerates the original LEFT JOIN; rewrite keeps test parity clean. Followup: Testcontainers-Postgres tests would unlock the cleaner LEFT JOIN." }
+      ]
+    },
     {
       "id": "Sprint 21",
       "name": "Tenant lifecycle Pt 2 — email service + invite tokens + first-user invite flow",
