@@ -1,16 +1,8 @@
 {
   "$schema-version": "1.0",
   "$source-of-truth": "docs/sprint-progress.json. Updated as agents return + commit. Read by apps/portal/Components/Pages/Sprint.razor.",
-  "currentSprint": {
-    "id": "Sprint 15",
-    "name": "NickHR v1->v2 clone (three-module pilot prep)",
-    "dispatchedAt": "2026-05-04",
-    "items": [
-      { "id": "Sprint15-clone", "title": "Robocopy v1 NickHR/{src,test,deploy,scripts,certs,data,uploads,NuGet.config,NickHR.sln} into v2 v1-clone/nickhr/ (source-only; bin/obj/*.user/build.log excluded). Also clone the missing strict transitive platform dep NickERP.Platform.Tenancy into v1-clone/platform/ (NickFinance precedent already cloned Core/Identity/Observability/Web.Shared). Build verifies clean against the cloned platform deps — 240 pre-existing MUD0002 lint warnings carry over from v1, 0 errors. NickHR.WebApp.Tests fail identically in v1 + clone due to NICKFINANCE_TEST_DB env var requirement (integration tests, not regressions).", "status": "done" },
-      { "id": "Sprint15-banners", "title": "Banners landed: v1-clone/nickhr/V2_BANNER.md (full clone-day context, ProjectReference resolution, editing flow, post-pilot refactor plan, two-Tenancy-flavours note) + NSCIM_PRODUCTION/NickHR/V1_BANNER.md (read-this-before-editing on v1 deploy-staging side; same exception NickFinance got 2026-04-30). v1-clone/README.md updated with NickHR row + Tenancy row added 2026-05-04.", "status": "done" }
-    ]
-  },
-  "currentSprintNote": "Sprint 14 SHIPPED 2026-05-04 (A 5ec12be / A.5 ceea095 / B 5962835 / C b309f6d / D 2a84b0b). Tests grew 253 -> 286 (+33). Sprint 15 (NickHR clone) shipped 2026-05-04: v1-clone/nickhr/ (8 src + 1 test project) + v1-clone/platform/NickERP.Platform.Tenancy/ + V2_BANNER + V1_BANNER. Clone builds clean against v2 v1-clone platform deps (0 errors).",
+  "currentSprint": null,
+  "currentSprintNote": "Sprints 14 + 15 SHIPPED 2026-05-04. Sprint 14 (VP6 storage + bootstrap + admin UI + claim/visibility + tests): 5ec12be -> ceea095 -> 5962835 -> b309f6d -> 2a84b0b. Sprint 15 (NickHR v1->v2 clone): 60fb0e1 (v2) + ff514d7 (V1_BANNER on v1 origin). Tests grew 253 -> 286 (+33). Next dispatch: Sprint 16 (ExternalSystemInstance subset junction) or Sprint 17 (P2-FU-multi-event-types) per plan-file §10.3.",
   "decisionsNeeded": [],
   "resolvedDecisions": [
     {
@@ -33,6 +25,21 @@
     ]
   },
   "history": [
+    {
+      "id": "Sprint 15",
+      "name": "NickHR v1->v2 clone (three-module pilot prep)",
+      "shippedAt": "2026-05-04",
+      "mainCommit": "60fb0e1",
+      "itemCount": 2,
+      "items": [
+        { "id": "Sprint15-clone", "title": "Cloned v1 NickHR (8 src + 1 test project) + missing strict transitive platform dep NickERP.Platform.Tenancy into v2 v1-clone/. Source-only; bin/obj/*.user/build.log excluded. Build verifies clean — 0 errors, 240 pre-existing MUD0002 warnings from MudBlazor lints. Integration tests fail identically in v1 + clone (NICKFINANCE_TEST_DB env var; not a defect).", "commit": "60fb0e1" },
+        { "id": "Sprint15-banners", "title": "v1-clone/nickhr/V2_BANNER.md (clone-day context, ProjectReference resolution, editing flow, post-pilot refactor plan, two-Tenancy-flavours note). NSCIM_PRODUCTION/NickHR/V1_BANNER.md (committed to v1 origin at ff514d7 — same exception NickFinance got 2026-04-30). v1-clone/README.md updated with NickHR + Tenancy rows.", "commit": "60fb0e1", "v1Commit": "ff514d7" }
+      ],
+      "ratifications": [
+        { "id": "Sprint15-tenancy-clone-needed", "title": "NickFinance precedent already cloned Core / Identity / Observability / Web.Shared in 2026-04-30; NickHR's strict transitive dep set adds NickERP.Platform.Tenancy which had to be cloned 2026-05-04. The other three already-cloned deps are reused." },
+        { "id": "Sprint15-no-csproj-edits", "title": "Cloned NickHR's csproj files use ..\\..\\..\\platform\\<dep>\\<dep>.csproj relative paths that resolve correctly inside v1-clone/ as long as nickhr/ and platform/ stay siblings. No csproj rewrites were needed." }
+      ]
+    },
     {
       "id": "Sprint 14",
       "name": "VP6 — AnalysisService N:N storage + admin + claim semantics + tests",
