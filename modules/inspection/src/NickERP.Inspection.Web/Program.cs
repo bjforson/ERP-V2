@@ -5,6 +5,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Application.AnalysisServices;
 using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Application.PostHocOutcomes;
+using NickERP.Inspection.Application.Submissions;
 using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.Imaging;
@@ -72,6 +73,11 @@ builder.Services.AddAnalysisServiceAdmin();
 // page. Centralises the per-scope (PerLocation/SubsetOfLocations/Shared)
 // validation + binding writes so the page doesn't have to. Scoped.
 builder.Services.AddExternalSystemAdmin();
+
+// Sprint 22 / B2.1 — ICUMS submission queue admin service for the
+// /admin/icums/submission-queue Razor page. Scoped; idempotent
+// (TryAddScoped under the hood).
+builder.Services.AddIcumsSubmissionQueueAdmin();
 
 // Sprint 14 / VP6 Phase C — claim semantics + case-visibility helper.
 // Cases.razor consults CaseVisibilityService for the access-list under

@@ -1,0 +1,387 @@
+@page "/admin/icums/submission-queue"
+@page "/admin/icums/submission-queue/{SelectedId:guid}"
+@* Sprint 22 / B2.1 — ICUMS submission queue admin UI. v1 parity port:
+   list pending / sent / accepted / rejected / error rows with filters,
+   per-row requeue + payload-view, and a bounded "requeue all matching"
+   bulk action.
+
+   Vendor-neutral entity, vendor-shaped page. The route + UI text say
+   "ICUMS" because that's what operators recognise, but the underlying
+   IcumsSubmissionQueueAdminService queries OutboundSubmission rows
+   (vendor-neutral). Filtering by ExternalSystemInstance gates which
+   adapter the page is showing.
+
+   Authorization mirrors AnalysisServicesAdmin.razor — Inspection.Admin
+   is the most-restrictive existing admin role. A dedicated
+   inspection.icums_admin role is a follow-up. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.Submissions
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+@inject IcumsSubmissionQueueAdminService Admin
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<PageTitle>ICUMS submission queue — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>ICUMS submission queue</h1>
+        <p class="inspection-page-subtitle">
+            Verdict dispatches to ICUMS-flavoured external systems. Filter, requeue, view payload, drill into the originating case.
+        </p>
+    </div>
+    <div class="inspection-page-actions">
+        <a class="inspection-button" href="/admin/icums">Back to ICUMS dashboard</a>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Filters</h2>
+            <EditForm Model="_filterForm" OnValidSubmit="ApplyFiltersAsync" FormName="filter-submissions" class="inspection-form">
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Statuses</span>
+                        <span class="inspection-form-help">Multi-select; defaults to error + pending on first load.</span>
+                        <div class="inspection-checkbox-group">
+                            @foreach (var status in AllStatuses)
+                            {
+                                var checkedNow = _filterForm.SelectedStatuses.Contains(status);
+                                <label class="inspection-checkbox-label">
+                                    <input type="checkbox" name="statuses" value="@status" checked="@checkedNow"
+                                           @onchange="e => ToggleStatus(status, e.Value as bool? ?? false)" />
+                                    <span>@status</span>
+                                </label>
+                            }
+                        </div>
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>External system</span>
+                        <InputSelect class="inspection-input" @bind-Value="_filterForm.ExternalSystemInstanceId">
+                            <option value="">— all —</option>
+                            @foreach (var esi in _externalSystems)
+                            {
+                                <option value="@esi.Id">@esi.DisplayName (@esi.TypeCode)</option>
+                            }
+                        </InputSelect>
+                    </label>
+                    <label>
+                        <span>Search</span>
+                        <span class="inspection-form-help">Idempotency key or subject identifier.</span>
+                        <InputText class="inspection-input" @bind-Value="_filterForm.SearchText" placeholder="MSCU1234567 or ICUMS-AB12-..." />
+                    </label>
+                </div>
+                <div class="inspection-form-row">
+                    <label>
+                        <span>Submitted from (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_filterForm.FromUtc" />
+                    </label>
+                    <label>
+                        <span>Submitted to (UTC)</span>
+                        <InputDate Type="InputDateType.DateTimeLocal" class="inspection-input" @bind-Value="_filterForm.ToUtc" />
+                    </label>
+                </div>
+                <div class="inspection-form-actions">
+                    <button type="submit" class="inspection-button inspection-button-primary">Apply filters</button>
+                    <button type="button" class="inspection-button" @onclick="ResetFiltersAsync">Reset</button>
+                    <button type="button" class="inspection-button"
+                            @onclick="RequeueBulkAsync"
+                            disabled="@(_loading || _filterForm.SelectedStatuses.Count == 0 || (_filterForm.SelectedStatuses.Count == 1 && _filterForm.SelectedStatuses.Contains("pending")))">
+                        Requeue all matching (max @IcumsSubmissionQueueAdminService.MaxBulkRequeueRows)
+                    </button>
+                    @if (!string.IsNullOrEmpty(_message))
+                    {
+                        <span class="inspection-form-message">@_message</span>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        @if (_page is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (_page.Rows.Count == 0)
+        {
+            <p class="inspection-empty">No submissions match the current filter.</p>
+        }
+        else
+        {
+            <div class="inspection-table-meta">
+                <span>Showing @_page.Rows.Count of @_page.TotalCount rows.</span>
+                <span>Page @_page.Page of @TotalPages</span>
+            </div>
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Subject</th>
+                        <th>External system</th>
+                        <th>Idempotency key</th>
+                        <th>Submitted</th>
+                        <th>Last attempt</th>
+                        <th>Error</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _page.Rows)
+                    {
+                        <tr class="@(SelectedId == r.Id ? "is-selected" : null)">
+                            <td><span class="inspection-badge inspection-badge-@StatusBadgeClass(r.Status)">@r.Status</span></td>
+                            <td>@r.Priority</td>
+                            <td><code>@(r.CaseSubjectIdentifier ?? "(unknown)")</code></td>
+                            <td>@(r.ExternalSystemDisplayName ?? r.ExternalSystemTypeCode ?? "—")</td>
+                            <td><code class="inspection-monospace-small">@TruncateMiddle(r.IdempotencyKey, 32)</code></td>
+                            <td>@r.SubmittedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@(r.LastAttemptAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                            <td>@(string.IsNullOrEmpty(r.ErrorMessage) ? "—" : Truncate(r.ErrorMessage, 80))</td>
+                            <td class="inspection-table-actions">
+                                <a class="inspection-button" href="/admin/icums/submission-queue/@r.Id">View</a>
+                                <a class="inspection-button" href="/cases/@r.CaseId">Case</a>
+                                <button type="button" class="inspection-button inspection-button-primary"
+                                        @onclick="() => RequeueOneAsync(r.Id)"
+                                        disabled="@(_loading || string.Equals(r.Status, "pending", StringComparison.OrdinalIgnoreCase))">
+                                    Requeue
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div class="inspection-button-row">
+                <button type="button" class="inspection-button"
+                        @onclick="() => GoToPage(_page.Page - 1)"
+                        disabled="@(_page.Page <= 1)">Previous</button>
+                <button type="button" class="inspection-button"
+                        @onclick="() => GoToPage(_page.Page + 1)"
+                        disabled="@(_page.Page >= TotalPages)">Next</button>
+            </div>
+        }
+    </section>
+
+    @if (SelectedId is Guid sid && _payload is not null)
+    {
+        <section class="inspection-section inspection-detail-panel">
+            <header class="inspection-card-title">
+                <h2>Submission @sid</h2>
+                <a class="inspection-button" href="/admin/icums/submission-queue">Close</a>
+            </header>
+            <dl class="inspection-detail-grid">
+                <dt>Status</dt>
+                <dd><span class="inspection-badge inspection-badge-@StatusBadgeClass(_payload.Status)">@_payload.Status</span></dd>
+                <dt>Idempotency key</dt>
+                <dd><code class="inspection-monospace-small">@_payload.IdempotencyKey</code></dd>
+                <dt>Submitted</dt>
+                <dd>@_payload.SubmittedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC</dd>
+                <dt>Last attempt</dt>
+                <dd>@(_payload.LastAttemptAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "(never)")</dd>
+                <dt>Responded</dt>
+                <dd>@(_payload.RespondedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "(no response)")</dd>
+                @if (!string.IsNullOrEmpty(_payload.ErrorMessage))
+                {
+                    <dt>Error</dt>
+                    <dd class="inspection-error-text">@_payload.ErrorMessage</dd>
+                }
+            </dl>
+            <JsonPayloadViewer Title="Request payload" Json="@_payload.PayloadJson" />
+            <JsonPayloadViewer Title="Response" Json="@_payload.ResponseJson" EmptyMessage="(no response captured yet)" />
+        </section>
+    }
+}
+
+@code {
+    /// <summary>The status values the v2 OutboundSubmission entity allows. v1 uses a richer set; v2 collapses to four canonical buckets.</summary>
+    private static readonly string[] AllStatuses = new[] { "pending", "accepted", "rejected", "error" };
+    private const int PageSize = 50;
+
+    [Parameter] public Guid? SelectedId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "page")] public int? PageQuery { get; set; }
+
+    private int _currentPage = 1;
+    private SubmissionPage? _page;
+    private SubmissionPayload? _payload;
+    private List<ExternalSystemRow> _externalSystems = new();
+    private FilterFormModel _filterForm = new();
+    private string _message = string.Empty;
+    private bool _loading;
+
+    private int TotalPages => _page is null
+        ? 0
+        : Math.Max(1, (int)Math.Ceiling(_page.TotalCount / (double)PageSize));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+
+        _externalSystems = await Db.ExternalSystemInstances.AsNoTracking()
+            .OrderBy(e => e.DisplayName)
+            .Select(e => new ExternalSystemRow(e.Id, e.TypeCode, e.DisplayName))
+            .ToListAsync();
+
+        // Default the first load to "needs operator attention" (error +
+        // pending). Operators can clear / extend from the filters card.
+        _filterForm.SelectedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "error", "pending" };
+        _currentPage = PageQuery is int p && p > 0 ? p : 1;
+        await ReloadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        if (SelectedId is Guid sid)
+        {
+            _payload = await Admin.GetPayloadAsync(sid);
+        }
+        else
+        {
+            _payload = null;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _page = await Admin.ListAsync(BuildFilter(), _currentPage, PageSize);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private SubmissionQueueFilter BuildFilter() => new()
+    {
+        Statuses = _filterForm.SelectedStatuses.ToArray(),
+        ExternalSystemInstanceId = Guid.TryParse(_filterForm.ExternalSystemInstanceId, out var g) ? g : null,
+        SubmittedFromUtc = _filterForm.FromUtc is DateTime f
+            ? new DateTimeOffset(DateTime.SpecifyKind(f, DateTimeKind.Utc))
+            : null,
+        SubmittedToUtc = _filterForm.ToUtc is DateTime t
+            ? new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Utc))
+            : null,
+        SearchText = _filterForm.SearchText,
+    };
+
+    private void ToggleStatus(string status, bool isChecked)
+    {
+        if (isChecked) _filterForm.SelectedStatuses.Add(status);
+        else _filterForm.SelectedStatuses.Remove(status);
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _currentPage = 1;
+        _message = string.Empty;
+        await ReloadAsync();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _filterForm = new FilterFormModel
+        {
+            SelectedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "error", "pending" },
+        };
+        _currentPage = 1;
+        await ReloadAsync();
+    }
+
+    private async Task GoToPage(int page)
+    {
+        if (page < 1) page = 1;
+        if (page > TotalPages) page = TotalPages;
+        _currentPage = page;
+        await ReloadAsync();
+    }
+
+    private async Task RequeueOneAsync(Guid id)
+    {
+        _loading = true;
+        try
+        {
+            var actor = await GetActorIdAsync();
+            var result = await Admin.RequeueAsync(id, actor);
+            _message = result.Notice ?? (result.Success ? "Requeued." : "Requeue failed.");
+            await ReloadAsync();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RequeueBulkAsync()
+    {
+        _loading = true;
+        try
+        {
+            var actor = await GetActorIdAsync();
+            var result = await Admin.RequeueBulkAsync(BuildFilter(), actor);
+            _message = result.Notice ?? (result.Success ? "Requeue completed." : "Bulk requeue failed.");
+            await ReloadAsync();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task<Guid> GetActorIdAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var raw = auth.User?.FindFirst("nickerp:id")?.Value;
+        return Guid.TryParse(raw, out var g) ? g : Guid.Empty;
+    }
+
+    private static string StatusBadgeClass(string status) => status?.ToLowerInvariant() switch
+    {
+        "pending" => "info",
+        "accepted" => "success",
+        "rejected" => "warning",
+        "error" => "error",
+        _ => "neutral",
+    };
+
+    private static string Truncate(string s, int max) =>
+        string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : s[..max] + "…");
+
+    private static string TruncateMiddle(string s, int max)
+    {
+        if (string.IsNullOrEmpty(s) || s.Length <= max) return s ?? string.Empty;
+        var head = max / 2;
+        var tail = max - head - 1;
+        return s[..head] + "…" + s[^tail..];
+    }
+
+    private sealed record ExternalSystemRow(Guid Id, string TypeCode, string DisplayName);
+
+    public sealed class FilterFormModel
+    {
+        public HashSet<string> SelectedStatuses { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public string? ExternalSystemInstanceId { get; set; }
+        public string? SearchText { get; set; }
+        public DateTime? FromUtc { get; set; }
+        public DateTime? ToUtc { get; set; }
+    }
+}

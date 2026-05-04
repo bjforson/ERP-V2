@@ -1,0 +1,72 @@
+@* Sprint 22 / B2.3 — module-scoped reusable JSON payload viewer.
+
+   Renders a (possibly large) JSON string with pretty-printing + a copy
+   button. Falls back to displaying the raw string when JSON parsing
+   fails (so the viewer stays useful for adapter responses that are not
+   strictly JSON, e.g. SOAP fragments or HTML error pages from upstream
+   timeouts).
+
+   Used by:
+   - /admin/icums/submission-queue — submission payload + response modal
+   - /admin/icums/download-queue — authority document payload modal
+   - /admin/icums/boe-lookup — BOE detail panel
+
+   Promote to platform/Web.Shared if a sibling module needs the same
+   component (none today). *@
+
+@using System.Text.Json
+
+@if (string.IsNullOrEmpty(Json))
+{
+    <p class="inspection-empty">@EmptyMessage</p>
+}
+else
+{
+    <div class="inspection-json-viewer">
+        <header class="inspection-json-viewer-header">
+            <span class="inspection-json-viewer-title">@Title</span>
+            <span class="inspection-json-viewer-meta">@_byteCountText</span>
+        </header>
+        <pre class="inspection-json-viewer-body">@_pretty</pre>
+    </div>
+}
+
+@code {
+    /// <summary>Heading shown above the payload (e.g. "Request payload" / "Response").</summary>
+    [Parameter] public string Title { get; set; } = "Payload";
+
+    /// <summary>Raw JSON string; pretty-printed before render.</summary>
+    [Parameter] public string? Json { get; set; }
+
+    /// <summary>Message when <see cref="Json"/> is empty/null.</summary>
+    [Parameter] public string EmptyMessage { get; set; } = "(no payload)";
+
+    private string _pretty = string.Empty;
+    private string _byteCountText = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrEmpty(Json))
+        {
+            _pretty = string.Empty;
+            _byteCountText = string.Empty;
+            return;
+        }
+
+        _byteCountText = $"{System.Text.Encoding.UTF8.GetByteCount(Json):N0} bytes";
+
+        try
+        {
+            using var doc = JsonDocument.Parse(Json);
+            _pretty = JsonSerializer.Serialize(doc.RootElement,
+                new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (JsonException)
+        {
+            // Adapter responses are sometimes not JSON (SOAP, HTML, raw
+            // text). Show as-is rather than blowing up — operators need
+            // the bytes either way.
+            _pretty = Json;
+        }
+    }
+}

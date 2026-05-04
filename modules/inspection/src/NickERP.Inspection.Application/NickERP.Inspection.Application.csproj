@@ -32,6 +32,9 @@
          Tenant.CaseVisibilityModel via TenancyDbContext to pick the
          shared/exclusive routing path. -->
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy.Database\NickERP.Platform.Tenancy.Database.csproj" />
+    <!-- Sprint 22 / B2.1 — IcumsSubmissionQueueAdminService emits
+         DomainEvents via IEventPublisher when admins requeue submissions. -->
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
   </ItemGroup>
 
 </Project>
