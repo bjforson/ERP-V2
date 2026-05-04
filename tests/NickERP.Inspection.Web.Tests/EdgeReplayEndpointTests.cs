@@ -284,9 +284,13 @@ public sealed class EdgeReplayEndpointTests
         var http = NewAuthedHttp();
         var auth = BuildAuthHandler(db, BuildConfig());
 
+        // Sprint 17 — the three supported hints are audit.event.replay,
+        // inspection.scan.captured, inspection.scanner.status.changed.
+        // Use a future-tense voucher.disbursed to exercise the unsupported
+        // path (callout in plan-mode walk: voucher payments are post-pilot).
         var body = new EdgeReplayRequestDto("edge-1", new List<EdgeReplayEventDto>
         {
-            new("inspection.scan.captured", 17, DateTimeOffset.UtcNow.AddMinutes(-1),
+            new("voucher.disbursed", 17, DateTimeOffset.UtcNow.AddMinutes(-1),
                 JsonSerializer.SerializeToElement(new { x = 1 }))
         });
 
