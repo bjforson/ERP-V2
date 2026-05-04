@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Application.AnalysisServices;
+using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Application.PostHocOutcomes;
 using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Database;
@@ -66,6 +67,11 @@ builder.Services.AddAnalysisServiceLocationAutoJoinInterceptor();
 // Sprint 14 / VP6 Phase B — admin service for the /admin/analysis-services
 // list + detail Razor pages. Scoped (mirrors the Phase A.5 bootstrap).
 builder.Services.AddAnalysisServiceAdmin();
+
+// Sprint 16 / LA1 extension — admin service for /external-systems Razor
+// page. Centralises the per-scope (PerLocation/SubsetOfLocations/Shared)
+// validation + binding writes so the page doesn't have to. Scoped.
+builder.Services.AddExternalSystemAdmin();
 
 // Sprint 14 / VP6 Phase C — claim semantics + case-visibility helper.
 // Cases.razor consults CaseVisibilityService for the access-list under
