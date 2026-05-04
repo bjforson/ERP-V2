@@ -8,6 +8,7 @@ using NickERP.Inspection.Database;
 using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
+using NickERP.Platform.Tenancy.Entities;
 
 namespace NickERP.Inspection.Imaging;
 
@@ -135,9 +136,11 @@ public sealed class SourceJanitorWorker : BackgroundService, IBackgroundServiceP
 
         // tenancy.tenants is intentionally NOT under RLS — root of the
         // tenancy graph — so this read works at app.tenant_id='0'.
+        // Sprint 18 — IsActive is a computed property over State; query
+        // directly against the column so EF can translate.
         var activeTenantIds = await tenancy.Tenants
             .AsNoTracking()
-            .Where(t => t.IsActive)
+            .Where(t => t.State == TenantState.Active)
             .Select(t => t.Id)
             .ToListAsync(ct);
 

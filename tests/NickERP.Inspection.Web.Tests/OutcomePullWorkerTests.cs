@@ -324,7 +324,7 @@ public sealed class OutcomePullWorkerTests : IDisposable
             Id = _tenantId,
             Code = "t1",
             Name = "Test Tenant",
-            IsActive = true,
+            State = TenantState.Active,
             BillingPlan = "internal",
             TimeZone = "UTC",
             Locale = "en",

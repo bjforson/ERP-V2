@@ -42,8 +42,58 @@ public sealed class Tenant
     /// <summary>Default currency for invoices, journal entries, payroll. ISO 4217.</summary>
     public string Currency { get; set; } = "GHS";
 
-    /// <summary><c>false</c> = tenant suspended. Resolver rejects requests for suspended tenants.</summary>
-    public bool IsActive { get; set; } = true;
+    /// <summary>
+    /// Sprint 18 — tenant lifecycle state. Replaces the prior <c>IsActive</c>
+    /// bool with a richer enum that distinguishes Active / Suspended /
+    /// SoftDeleted / PendingHardPurge. Resolver still gates on
+    /// <see cref="IsActive"/> (see below) which is now a computed property
+    /// over <see cref="State"/>.
+    /// </summary>
+    public TenantState State { get; set; } = TenantState.Active;
+
+    /// <summary>
+    /// Sprint 18 — when the tenant was soft-deleted. Null while
+    /// <see cref="State"/> is Active or Suspended; populated by
+    /// <c>TenantLifecycleService.SoftDeleteTenantAsync</c>; cleared by
+    /// <c>RestoreTenantAsync</c>.
+    /// </summary>
+    public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <summary>
+    /// Sprint 18 — Identity user id of the operator who triggered the
+    /// soft-delete. Carried into the audit trail and the
+    /// <c>tenancy.tenant_purge_log</c> entry on hard-purge.
+    /// </summary>
+    public Guid? DeletedByUserId { get; set; }
+
+    /// <summary>
+    /// Sprint 18 — free-text reason captured at soft-delete time
+    /// (e.g. "customer churned", "test tenant"). Bounded to 500 chars.
+    /// </summary>
+    public string? DeletionReason { get; set; }
+
+    /// <summary>
+    /// Sprint 18 — per-tenant retention window in days before a
+    /// SoftDeleted tenant flips to PendingHardPurge. Default 90.
+    /// Persisted explicitly so the platform default can rotate without
+    /// changing previously-deleted tenants' contracts.
+    /// </summary>
+    public int RetentionDays { get; set; } = 90;
+
+    /// <summary>
+    /// Sprint 18 — wallclock at which the soft-deleted tenant becomes
+    /// eligible for hard-purge. Computed at soft-delete as
+    /// <c>DeletedAt + RetentionDays</c>. Stored explicitly so admin
+    /// queries don't need date math.
+    /// </summary>
+    public DateTimeOffset? HardPurgeAfter { get; set; }
+
+    /// <summary>
+    /// Sprint 18 — backwards-compatible computed property. Resolvers
+    /// and UI that previously branched on <c>IsActive</c> get the same
+    /// truthiness as before (Active = true, anything else = false).
+    /// </summary>
+    public bool IsActive => State == TenantState.Active;
 
     /// <summary>
     /// VP6 (locked 2026-05-02): how cases route through AnalysisServices that
@@ -103,4 +153,31 @@ public enum CaseVisibilityModel
     /// it.
     /// </summary>
     Exclusive = 10
+}
+
+/// <summary>
+/// Sprint 18 — tenant lifecycle state. Backed by an integer column with
+/// gaps in the values so future intermediate states can be inserted
+/// without renumbering. Replaces the prior <c>IsActive</c> bool.
+/// </summary>
+public enum TenantState
+{
+    /// <summary>Default. Resolver lets requests through. Business
+    /// queries see the tenant via the global query filter.</summary>
+    Active = 0,
+
+    /// <summary>Admin-paused. Data is intact; resolver rejects with 403.
+    /// Reversible via <c>TenantLifecycleService.ResumeTenantAsync</c>.</summary>
+    Suspended = 10,
+
+    /// <summary>Admin marked for deletion. Data retained for the retention
+    /// window. Resolver returns 404. Reversible via
+    /// <c>TenantLifecycleService.RestoreTenantAsync</c> until
+    /// <see cref="Tenant.HardPurgeAfter"/>.</summary>
+    SoftDeleted = 20,
+
+    /// <summary>Retention window expired. Awaiting an explicit operator
+    /// confirmation to actually delete the data via
+    /// <c>TenantLifecycleService.HardPurgeTenantAsync</c>.</summary>
+    PendingHardPurge = 30
 }

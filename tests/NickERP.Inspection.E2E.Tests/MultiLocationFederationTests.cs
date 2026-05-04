@@ -221,12 +221,15 @@ public sealed class MultiLocationFederationTests
         await using (var conn = new NpgsqlConnection(platformAdminConn))
         {
             await conn.OpenAsync(ct);
+            // Sprint 18 — IsActive bool is gone; State enum int replaces
+            // it (0 = Active). RetentionDays defaults but we set it
+            // explicitly so the seed is stable across env changes.
             await using var cmd = new NpgsqlCommand(
                 @"INSERT INTO tenancy.tenants
                     (""Code"", ""Name"", ""BillingPlan"", ""TimeZone"", ""Locale"",
-                     ""Currency"", ""IsActive"", ""CreatedAt"")
+                     ""Currency"", ""State"", ""RetentionDays"", ""CreatedAt"")
                   VALUES ('other-customer', 'Other Customer', 'internal',
-                          'Africa/Accra', 'en-GH', 'GHS', true, @now)
+                          'Africa/Accra', 'en-GH', 'GHS', 0, 90, @now)
                   RETURNING ""Id"";",
                 conn);
             cmd.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);

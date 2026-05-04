@@ -6,6 +6,8 @@
     <ProjectReference Include="..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Identity.Api\NickERP.Platform.Identity.Api.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <!-- Sprint 18 — TenantLifecycleService + TenantPurgeOrchestrator tests. -->
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy.Database\NickERP.Platform.Tenancy.Database.csproj" />
   </ItemGroup>
 
   <ItemGroup>

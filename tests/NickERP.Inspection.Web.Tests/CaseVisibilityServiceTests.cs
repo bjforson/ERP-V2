@@ -66,7 +66,7 @@ public sealed class CaseVisibilityServiceTests : IDisposable
                 Name = "Test",
                 CaseVisibilityModel = model,
                 AllowMultiServiceMembership = allowMulti,
-                IsActive = true,
+                State = TenantState.Active,
                 CreatedAt = DateTimeOffset.UtcNow,
             });
             await db.SaveChangesAsync();

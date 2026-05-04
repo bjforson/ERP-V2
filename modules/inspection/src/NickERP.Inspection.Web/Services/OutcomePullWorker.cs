@@ -11,6 +11,7 @@ using NickERP.Platform.Plugins;
 using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
+using NickERP.Platform.Tenancy.Entities;
 
 namespace NickERP.Inspection.Web.Services;
 
@@ -200,9 +201,11 @@ public sealed class OutcomePullWorker : BackgroundService, IBackgroundServicePro
         var tenant = sp.GetRequiredService<ITenantContext>();
         var inspectionDb = sp.GetRequiredService<InspectionDbContext>();
 
+        // Sprint 18 — IsActive is now a computed property; query the
+        // backing State column so EF can translate.
         var activeTenantIds = await tenantsDb.Tenants
             .AsNoTracking()
-            .Where(t => t.IsActive)
+            .Where(t => t.State == TenantState.Active)
             .Select(t => t.Id)
             .ToListAsync(ct);
 

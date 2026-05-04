@@ -24,6 +24,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <!-- Sprint 18 — TenantLifecycleService emits DomainEvents via IEventPublisher,
+         and uses IdempotencyKey to build deterministic keys. Both live in
+         NickERP.Platform.Audit (the in-process abstraction; no DB dep). -->
+    <ProjectReference Include="..\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
   </ItemGroup>
 
 </Project>

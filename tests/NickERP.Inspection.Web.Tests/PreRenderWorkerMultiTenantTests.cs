@@ -67,13 +67,13 @@ public sealed class PreRenderWorkerMultiTenantTests
             tenancy.Tenants.AddRange(
                 new Tenant
                 {
-                    Id = 1, Code = "t1", Name = "Tenant One", IsActive = true,
+                    Id = 1, Code = "t1", Name = "Tenant One", State = TenantState.Active,
                     BillingPlan = "internal", TimeZone = "UTC", Locale = "en", Currency = "USD",
                     CreatedAt = DateTimeOffset.UtcNow
                 },
                 new Tenant
                 {
-                    Id = 2, Code = "t2", Name = "Tenant Two", IsActive = true,
+                    Id = 2, Code = "t2", Name = "Tenant Two", State = TenantState.Active,
                     BillingPlan = "internal", TimeZone = "UTC", Locale = "en", Currency = "USD",
                     CreatedAt = DateTimeOffset.UtcNow
                 });

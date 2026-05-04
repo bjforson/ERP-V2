@@ -72,7 +72,7 @@
                     <th>Plan</th>
                     <th>TZ</th>
                     <th>Currency</th>
-                    <th>Active</th>
+                    <th>State</th>
                     <th>Visibility</th>
                     <th>Multi-svc</th>
                     <th>Created</th>
@@ -89,7 +89,9 @@
                         <td>@t.BillingPlan</td>
                         <td>@t.TimeZone</td>
                         <td>@t.Currency</td>
-                        <td>@(t.IsActive ? "yes" : "no")</td>
+                        <td>
+                            <span class="portal-state-badge portal-state-@(t.State.ToString().ToLowerInvariant())">@t.State</span>
+                        </td>
                         <td>@t.CaseVisibilityModel</td>
                         <td>@(t.AllowMultiServiceMembership ? "yes" : "no")</td>
                         <td>@t.CreatedAt.ToString("yyyy-MM-dd")</td>
@@ -112,7 +114,12 @@
 
     private async Task Reload()
     {
-        _tenants = await Db.Tenants.AsNoTracking().OrderBy(t => t.Id).ToListAsync();
+        // Sprint 18 — admin must see SoftDeleted + PendingHardPurge tenants
+        // alongside Active/Suspended; the global query filter on
+        // TenancyDbContext hides the deleted-but-retained ones from
+        // business code, but the tenants admin page is exactly the place
+        // those need to surface.
+        _tenants = await Db.Tenants.IgnoreQueryFilters().AsNoTracking().OrderBy(t => t.Id).ToListAsync();
     }
 
     private async Task CreateAsync()
@@ -138,7 +145,7 @@
             TimeZone = string.IsNullOrWhiteSpace(_form.TimeZone) ? "Africa/Accra" : _form.TimeZone.Trim(),
             Locale = "en-GH",
             Currency = string.IsNullOrWhiteSpace(_form.Currency) ? "GHS" : _form.Currency.Trim().ToUpperInvariant(),
-            IsActive = true,
+            State = TenantState.Active,
             CreatedAt = DateTimeOffset.UtcNow
         };
 

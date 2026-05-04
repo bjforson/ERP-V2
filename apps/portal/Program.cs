@@ -44,6 +44,19 @@ builder.Services.AddNickErpIdentityCore(platformConn);
 builder.Services.AddNickErpTenancy();
 builder.Services.AddNickErpTenancyCore(platformConn);
 builder.Services.AddNickErpAuditCore(platformConn);
+// Sprint 18 — tenant lifecycle admin (suspend / soft-delete / hard-purge).
+// Reads downstream connection strings from env vars at runtime (the
+// orchestrator opens its own connections to nickerp_inspection /
+// nickerp_nickfinance for the cross-DB cascade).
+builder.Services.AddNickErpTenantLifecycle(opts =>
+{
+    // Prefer config-bound connection strings when present; fall back to
+    // the env-var defaults the AddNickErpTenantLifecycle helper sets up.
+    if (!string.IsNullOrWhiteSpace(platformConn))
+    {
+        opts.PlatformConnectionString = platformConn;
+    }
+});
 
 // ---------------------------------------------------------------------------
 // G2 — NickFinance Petty Cash pathfinder. Optional: AddNickErpNickFinanceWeb

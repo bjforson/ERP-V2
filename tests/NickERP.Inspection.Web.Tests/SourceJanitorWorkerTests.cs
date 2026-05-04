@@ -75,7 +75,7 @@ public sealed class SourceJanitorWorkerTests : IDisposable
             var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
             tenancy.Tenants.Add(new Tenant
             {
-                Id = 1, Code = "t1", Name = "Tenant 1", IsActive = true,
+                Id = 1, Code = "t1", Name = "Tenant 1", State = TenantState.Active,
                 BillingPlan = "internal", TimeZone = "UTC", Locale = "en", Currency = "USD",
                 CreatedAt = DateTimeOffset.UtcNow
             });
@@ -176,7 +176,7 @@ public sealed class SourceJanitorWorkerTests : IDisposable
             var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
             tenancy.Tenants.Add(new Tenant
             {
-                Id = 1, Code = "t1", Name = "Tenant 1", IsActive = true,
+                Id = 1, Code = "t1", Name = "Tenant 1", State = TenantState.Active,
                 BillingPlan = "internal", TimeZone = "UTC", Locale = "en", Currency = "USD",
                 CreatedAt = DateTimeOffset.UtcNow
             });
