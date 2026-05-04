@@ -5,18 +5,32 @@
 @using Microsoft.JSInterop
 @using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
 @inject InspectionDbContext Db
+@inject AnalystAnnotationService Annotations
 @inject IJSRuntime JS
 @inject ILogger<ScanViewer> Logger
 @implements IAsyncDisposable
 
 @*
-    Sprint V4 — analyst W/L viewer.
+    Sprint V4 — analyst W/L viewer (W/L sliders + pixel probe + ROI).
+    Sprint 20 / B1.2 — annotation tool (Finding-backed).
+    Sprint 20 / B1.3 — multi-scan navigation + predictive prefetch.
 
     Loads the scan's primary ScanArtifact, hands the pre-rendered preview
     PNG endpoint URL to the JS interop module (wwwroot/js/scan-viewer.js),
     and surfaces window/level sliders, a pixel probe, and an ROI inspector
     against the original 8-bit ImageData.
+
+    B1.2 adds an annotate tool: switching modes routes mouseup through the
+    JS finalizeAnnotation helper, the result is POSTed to
+    /api/inspection/annotations as a Finding row, and persisted
+    annotations are fetched on init + re-overlaid on every redraw.
+
+    B1.3 adds a scan-pager (prev / next within the same case) plus
+    predictive prefetch — when the operator opens scan N, we prime the
+    HTTP cache for scan N+1's preview so the next click lands without a
+    round-trip.
 
     Out of scope: 16-bit raw channel viewer (separate work item in the
     IMAGE-ANALYSIS-MODERNIZATION track). This page consumes only what
@@ -43,6 +57,28 @@ else
                 @(_scannerName ?? "?") &nbsp;•&nbsp;
                 @(_locationCode ?? "?")
             </p>
+            @if (_caseScanIds.Count > 1)
+            {
+                <p class="inspection-scan-pager">
+                    @if (_prevScanId is { } prev)
+                    {
+                        <a class="inspection-button" href="/cases/@CaseId/scans/@prev">← Prev scan</a>
+                    }
+                    else
+                    {
+                        <span class="inspection-button is-disabled">← Prev scan</span>
+                    }
+                    <span class="inspection-scan-pager-pos">Scan @_scanPosition of @_caseScanIds.Count</span>
+                    @if (_nextScanId is { } next)
+                    {
+                        <a class="inspection-button" href="/cases/@CaseId/scans/@next">Next scan →</a>
+                    }
+                    else
+                    {
+                        <span class="inspection-button is-disabled">Next scan →</span>
+                    }
+                </p>
+            }
         </div>
     </header>
 
@@ -64,7 +100,7 @@ else
                        without an IJSRuntime fully in place; the interop calls run only
                        in OnAfterRenderAsync(firstRender). *@
                     <canvas @ref="_canvasRef"
-                            class="viewer-canvas"
+                            class="viewer-canvas @(_tool == ToolMode.Annotate ? "is-annotating" : "")"
                             @onmousemove="OnMouseMove"
                             @onmousedown="OnMouseDown"
                             @onmouseup="OnMouseUp"
@@ -79,6 +115,21 @@ else
                 </div>
 
                 <aside class="viewer-controls">
+                    <div class="inspection-card">
+                        <h2 class="inspection-card-title">Tool</h2>
+                        <div class="inspection-button-row">
+                            <button class="inspection-button @(_tool == ToolMode.Inspect ? "inspection-button-primary" : "")"
+                                    @onclick="@(() => SetToolAsync(ToolMode.Inspect))">Inspect</button>
+                            <button class="inspection-button @(_tool == ToolMode.Annotate ? "inspection-button-primary" : "")"
+                                    @onclick="@(() => SetToolAsync(ToolMode.Annotate))">Annotate</button>
+                        </div>
+                        <p class="inspection-page-subtitle" style="margin-top: var(--nickerp-space-2);">
+                            @(_tool == ToolMode.Inspect
+                                ? "Drag a rectangle to compute ROI stats."
+                                : "Drag a rectangle to record an annotation finding.")
+                        </p>
+                    </div>
+
                     <div class="inspection-card">
                         <h2 class="inspection-card-title">Window / Level</h2>
                         <label class="viewer-stat">
@@ -111,35 +162,92 @@ else
                         }
                     </div>
 
-                    <div class="inspection-card">
-                        <h2 class="inspection-card-title">Region of interest</h2>
-                        @if (_roi is null)
-                        {
-                            <p class="inspection-empty">
-                                Drag a rectangle on the image to compute ROI stats. Click without
-                                dragging to clear.
+                    @if (_tool == ToolMode.Inspect)
+                    {
+                        <div class="inspection-card">
+                            <h2 class="inspection-card-title">Region of interest</h2>
+                            @if (_roi is null)
+                            {
+                                <p class="inspection-empty">
+                                    Drag a rectangle on the image to compute ROI stats. Click without
+                                    dragging to clear.
+                                </p>
+                            }
+                            else
+                            {
+                                <p class="viewer-stat">
+                                    <span class="label">size</span>
+                                    <span class="value"><code>@(_roi.W)×@(_roi.H) px</code> (n=@_roi.N)</span>
+                                </p>
+                                <p class="viewer-stat">
+                                    <span class="label">mean</span>
+                                    <span class="value"><code>@(_roi.Mean.ToString("0.0"))</code></span>
+                                </p>
+                                <p class="viewer-stat">
+                                    <span class="label">min · max</span>
+                                    <span class="value"><code>@_roi.Min</code> · <code>@_roi.Max</code></span>
+                                </p>
+                                <p class="viewer-stat">
+                                    <span class="label">stddev</span>
+                                    <span class="value"><code>@(_roi.Stddev.ToString("0.0"))</code></span>
+                                </p>
+                            }
+                        </div>
+                    }
+
+                    @if (_tool == ToolMode.Annotate)
+                    {
+                        <div class="inspection-card">
+                            <h2 class="inspection-card-title">New annotation</h2>
+                            <label class="viewer-stat">
+                                <span class="label">Severity</span>
+                                <select class="inspection-input" @bind="_pendingSeverity">
+                                    <option value="info">info</option>
+                                    <option value="warning">warning</option>
+                                    <option value="critical">critical</option>
+                                </select>
+                            </label>
+                            <label class="viewer-stat">
+                                <span class="label">Note</span>
+                                <textarea class="inspection-input" rows="2" @bind="_pendingNote"
+                                          placeholder="Optional — what did you see?"></textarea>
+                            </label>
+                            <p class="inspection-page-subtitle" style="margin-top: var(--nickerp-space-2);">
+                                Drag a rectangle on the image to attach this severity + note.
                             </p>
-                        }
-                        else
-                        {
-                            <p class="viewer-stat">
-                                <span class="label">size</span>
-                                <span class="value"><code>@(_roi.W)×@(_roi.H) px</code> (n=@_roi.N)</span>
-                            </p>
-                            <p class="viewer-stat">
-                                <span class="label">mean</span>
-                                <span class="value"><code>@(_roi.Mean.ToString("0.0"))</code></span>
-                            </p>
-                            <p class="viewer-stat">
-                                <span class="label">min · max</span>
-                                <span class="value"><code>@_roi.Min</code> · <code>@_roi.Max</code></span>
-                            </p>
-                            <p class="viewer-stat">
-                                <span class="label">stddev</span>
-                                <span class="value"><code>@(_roi.Stddev.ToString("0.0"))</code></span>
-                            </p>
-                        }
-                    </div>
+                            @if (!string.IsNullOrEmpty(_annotationMessage))
+                            {
+                                <p class="inspection-form-message">@_annotationMessage</p>
+                            }
+                        </div>
+
+                        <div class="inspection-card">
+                            <h2 class="inspection-card-title">Recorded annotations (@_annotations.Count)</h2>
+                            @if (_annotations.Count == 0)
+                            {
+                                <p class="inspection-empty">None yet.</p>
+                            }
+                            else
+                            {
+                                <table class="inspection-table">
+                                    <thead><tr><th>Severity</th><th>Note</th><th>Box</th><th></th></tr></thead>
+                                    <tbody>
+                                        @foreach (var a in _annotations)
+                                        {
+                                            <tr>
+                                                <td><span class="inspection-pill-state is-@a.Severity.ToLowerInvariant()">@a.Severity</span></td>
+                                                <td>@(string.IsNullOrEmpty(a.Note) ? "—" : a.Note)</td>
+                                                <td><code>@a.X,@a.Y @a.W×@a.H</code></td>
+                                                <td>
+                                                    <button class="inspection-button" @onclick="@(() => DeleteAnnotationAsync(a.Id))">Remove</button>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                        </div>
+                    }
 
                     <div class="inspection-card">
                         <h2 class="inspection-card-title">Source</h2>
@@ -188,6 +296,24 @@ else
     private double _dragStartX;
     private double _dragStartY;
 
+    // -------- Sprint 20 / B1.2 — annotations --------
+    private enum ToolMode { Inspect, Annotate }
+    private ToolMode _tool = ToolMode.Inspect;
+    private string _pendingSeverity = "info";
+    private string _pendingNote = string.Empty;
+    private string _annotationMessage = string.Empty;
+    private List<AnalystAnnotationService.AnnotationView> _annotations = new();
+
+    // -------- Sprint 20 / B1.3 — multi-scan pager --------
+    /// <summary>
+    /// Ordered list (oldest first) of every scan id under this case.
+    /// Drives the prev/next pager + the predictive prefetch.
+    /// </summary>
+    private List<Guid> _caseScanIds = new();
+    private int _scanPosition;       // 1-based for display
+    private Guid? _prevScanId;
+    private Guid? _nextScanId;
+
     private string PreviewUrl => _artifact is null ? "" : $"/api/images/{_artifact.Id}/preview";
 
     protected override async Task OnInitializedAsync()
@@ -212,6 +338,23 @@ else
         var location = await Db.Locations.AsNoTracking()
             .FirstOrDefaultAsync(l => l.Id == _case.LocationId);
         _locationCode = location?.Code;
+
+        // -------- Sprint 20 / B1.3 — neighbour-scan resolution --------
+        // Pull every scan id under this case in capture order; pick the
+        // current scan's index to derive prev/next. Cheap query (small
+        // cardinality per case) and only one round-trip.
+        _caseScanIds = await Db.Scans.AsNoTracking()
+            .Where(s => s.CaseId == CaseId)
+            .OrderBy(s => s.CapturedAt)
+            .Select(s => s.Id)
+            .ToListAsync();
+        var idx = _caseScanIds.IndexOf(ScanId);
+        if (idx >= 0)
+        {
+            _scanPosition = idx + 1;
+            _prevScanId = idx > 0 ? _caseScanIds[idx - 1] : null;
+            _nextScanId = idx + 1 < _caseScanIds.Count ? _caseScanIds[idx + 1] : null;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -223,6 +366,48 @@ else
         {
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/scan-viewer.js");
             await _module.InvokeAsync<object>("init", _canvasRef, PreviewUrl);
+
+            // -------- Sprint 20 / B1.2 — hydrate persisted annotations --------
+            try
+            {
+                _annotations = await Annotations.ListForArtifactAsync(_artifact.Id);
+                if (_annotations.Count > 0)
+                {
+                    await _module.InvokeVoidAsync("setAnnotations", _canvasRef,
+                        _annotations.Select(a => new
+                        {
+                            id = a.Id, x = a.X, y = a.Y, w = a.W, h = a.H, severity = a.Severity,
+                        }).ToArray());
+                }
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                // Annotation hydration failure is non-fatal — log + carry on
+                // so the analyst can still inspect the image.
+                Logger.LogWarning(ex,
+                    "Annotation hydration failed for artifact {ArtifactId}; carrying on without overlay.",
+                    _artifact?.Id);
+            }
+
+            // -------- Sprint 20 / B1.3 — predictive prefetch --------
+            // Warm the HTTP cache for the next scan's primary artifact
+            // preview so the operator's next click feels instant. We
+            // resolve the artifact id on the server (single round-trip)
+            // and hand its preview URL to the JS prefetch helper.
+            if (_nextScanId is { } next)
+            {
+                var nextArtifactId = await Db.ScanArtifacts.AsNoTracking()
+                    .Where(a => a.ScanId == next && a.ArtifactKind == "Primary")
+                    .OrderBy(a => a.CreatedAt)
+                    .Select(a => (Guid?)a.Id)
+                    .FirstOrDefaultAsync();
+                if (nextArtifactId is { } nid)
+                {
+                    try { await _module.InvokeVoidAsync("prefetchPreview", $"/api/images/{nid}/preview"); }
+                    catch (JSException) { /* prefetch is best-effort */ }
+                }
+            }
         }
         catch (JSException ex)
         {
@@ -249,6 +434,19 @@ else
         _level = 128;
         _window = 200;
         await ReapplyAsync();
+    }
+
+    private async Task SetToolAsync(ToolMode tool)
+    {
+        _tool = tool;
+        _annotationMessage = string.Empty;
+        if (_module is null) return;
+        try
+        {
+            await _module.InvokeVoidAsync("setTool", _canvasRef,
+                tool == ToolMode.Annotate ? "annotate" : "inspect");
+        }
+        catch (JSException) { /* viewer not initialised — ignore */ }
     }
 
     private async Task OnMouseMove(MouseEventArgs e)
@@ -279,6 +477,12 @@ else
         if (_module is null || !_dragging) return;
         _dragging = false;
 
+        if (_tool == ToolMode.Annotate)
+        {
+            await FinalizeAnnotationAsync(e);
+            return;
+        }
+
         try
         {
             // setRoi returns null for a sub-2px "click" — the JS side also
@@ -289,6 +493,79 @@ else
             StateHasChanged();
         }
         catch (JSException) { /* ignore */ }
+    }
+
+    private async Task FinalizeAnnotationAsync(MouseEventArgs e)
+    {
+        if (_module is null || _artifact is null) return;
+        try
+        {
+            var rect = await _module.InvokeAsync<RectInImageSpace?>(
+                "finalizeAnnotation", _canvasRef, _dragStartX, _dragStartY, e.ClientX, e.ClientY);
+            if (rect is null)
+            {
+                _annotationMessage = "Drag a larger rectangle (≥ 2 image px) to record an annotation.";
+                StateHasChanged();
+                return;
+            }
+
+            var saved = await Annotations.AddAnnotationAsync(
+                CaseId, _artifact.Id,
+                rect.X, rect.Y, rect.W, rect.H,
+                _pendingSeverity, _pendingNote);
+
+            _annotations.Insert(0, new AnalystAnnotationService.AnnotationView(
+                saved.Id, _artifact.Id, rect.X, rect.Y, rect.W, rect.H,
+                saved.Severity, saved.Note, saved.CreatedAt));
+
+            await _module.InvokeVoidAsync("setAnnotations", _canvasRef,
+                _annotations.Select(a => new
+                {
+                    id = a.Id, x = a.X, y = a.Y, w = a.W, h = a.H, severity = a.Severity,
+                }).ToArray());
+
+            _annotationMessage = $"Annotation saved (severity={saved.Severity}).";
+            _pendingNote = string.Empty;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _annotationMessage = UserFacingError.Render(Logger, ex,
+                "INSP-VIEWER-ANNOTATION-SAVE-FAILED",
+                "Failed to record annotation.");
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteAnnotationAsync(Guid findingId)
+    {
+        if (_module is null || _artifact is null) return;
+        try
+        {
+            var ok = await Annotations.DeleteAnnotationAsync(findingId);
+            if (!ok)
+            {
+                _annotationMessage = "Couldn't delete the annotation — only the analyst who created it can remove it.";
+                StateHasChanged();
+                return;
+            }
+
+            _annotations.RemoveAll(a => a.Id == findingId);
+            await _module.InvokeVoidAsync("setAnnotations", _canvasRef,
+                _annotations.Select(a => new
+                {
+                    id = a.Id, x = a.X, y = a.Y, w = a.W, h = a.H, severity = a.Severity,
+                }).ToArray());
+            _annotationMessage = "Annotation removed.";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _annotationMessage = UserFacingError.Render(Logger, ex,
+                "INSP-VIEWER-ANNOTATION-DELETE-FAILED",
+                "Failed to remove annotation.");
+            StateHasChanged();
+        }
     }
 
     private void OnMouseLeave(MouseEventArgs _)
@@ -316,4 +593,5 @@ else
 
     private sealed record ProbeResult(int X, int Y, int Value);
     private sealed record RoiResult(int X, int Y, int W, int H, double Mean, int Min, int Max, double Stddev, int N);
+    private sealed record RectInImageSpace(int X, int Y, int W, int H);
 }

@@ -177,6 +177,10 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.ThresholdAdminService
 // the same persistence + audit-emit shape as the worker.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.PostHocOutcomeManualEntryService>();
 
+// Sprint 20 / B1.2 — analyst annotation persistence (Finding-backed)
+// for the W/L viewer. Scoped because it captures InspectionDbContext.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.AnalystAnnotationService>();
+
 // Sprint A2 — in-process MeterListener powering the /perf admin page.
 // Singleton so the listener spans the host's lifetime; instruments are
 // auto-discovered via NickErpActivity.Meter (the OTel pipeline picks
@@ -359,6 +363,11 @@ app.MapIcumsKeyRotationEndpoints();
 // SetSystemContext on behalf of multiple tenants in a single batch
 // — registered in docs/system-context-audit-register.md.
 app.MapEdgeReplayEndpoint();
+
+// Sprint 20 / B1.2 — analyst annotation REST surface backing the
+// W/L viewer's markup tool. Auth required, tenant scoped via
+// AnalystAnnotationService.
+app.MapAnnotationsEndpoints();
 
 // Sprint 9 / FU-host-status — /healthz/workers aggregator over every
 // registered IBackgroundServiceProbe (PreRenderWorker, SourceJanitor,

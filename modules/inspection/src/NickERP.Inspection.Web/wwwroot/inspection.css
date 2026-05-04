@@ -453,3 +453,34 @@ code {
     line-height: 1.4;
     white-space: pre;
 }
+
+/* ---------------------------------------------------------------------
+ * Sprint 20 / B1.2 — viewer annotation tool.
+ * The annotate-mode cursor visually distinguishes the analyst's intent
+ * from inspect-mode (crosshair vs. cell) so they don't accidentally
+ * persist findings.
+ * ------------------------------------------------------------------- */
+.viewer-canvas.is-annotating {
+    cursor: cell;
+}
+
+/* ---------------------------------------------------------------------
+ * Sprint 20 / B1.3 — multi-scan pager on ScanViewer.
+ * Inline row of prev / position / next; the disabled variant matches
+ * the .inspection-button shape but is pointer-inert.
+ * ------------------------------------------------------------------- */
+.inspection-scan-pager {
+    margin: var(--nickerp-space-2) 0 0 0;
+    display: flex;
+    align-items: center;
+    gap: var(--nickerp-space-2);
+}
+.inspection-scan-pager-pos {
+    color: var(--nickerp-color-text-muted);
+    font-size: var(--nickerp-font-size-sm);
+}
+.inspection-button.is-disabled {
+    opacity: 0.45;
+    pointer-events: none;
+    cursor: default;
+}
