@@ -23,6 +23,16 @@ public sealed class IdentityDbContext : DbContext
     public DbSet<ServiceTokenIdentity> ServiceTokens => Set<ServiceTokenIdentity>();
     public DbSet<ServiceTokenScope> ServiceTokenScopes => Set<ServiceTokenScope>();
 
+    /// <summary>
+    /// Sprint 21 / Phase B — one-time invite tokens for the first-user
+    /// invite flow. Tenant-scoped, RLS-enforced via the
+    /// <c>tenant_isolation_invite_tokens</c> policy with the
+    /// system-context opt-in clause; the <c>InviteService.RedeemInviteAsync</c>
+    /// path looks up tokens BEFORE the tenant is known and runs under
+    /// <c>SetSystemContext</c>.
+    /// </summary>
+    public DbSet<InviteToken> InviteTokens => Set<InviteToken>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -120,6 +130,42 @@ public sealed class IdentityDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.ServiceTokenIdentityId, x.AppScopeCode })
                 .HasDatabaseName("ix_service_token_scopes_tenant_token_scope");
             e.HasIndex(x => x.RevokedAt).HasDatabaseName("ix_service_token_scopes_revoked_at");
+        });
+
+        // ---- Sprint 21 / Phase B — identity.invite_tokens ----------------
+        // One-time invite tokens for the first-user invite flow.
+        // RLS + system-context opt-in policy added in the migration; here
+        // we only declare the EF-side schema. Unique partial index on
+        // (TokenHash) WHERE RedeemedAt IS NULL AND RevokedAt IS NULL keeps
+        // single-use semantics race-safe via the unique constraint.
+        modelBuilder.Entity<InviteToken>(e =>
+        {
+            e.ToTable("invite_tokens");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.Email).IsRequired().HasMaxLength(320);
+            e.Property(x => x.TokenHash).IsRequired();
+            e.Property(x => x.TokenPrefix).IsRequired().HasMaxLength(8);
+            e.Property(x => x.IntendedRoles).IsRequired().HasMaxLength(500);
+            e.Property(x => x.IssuedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.ExpiresAt).IsRequired();
+            e.Property(x => x.IssuedByUserId);
+            e.Property(x => x.RedeemedAt);
+            e.Property(x => x.RedeemedByUserId);
+            e.Property(x => x.RevokedAt);
+            e.Property(x => x.RevokedByUserId);
+
+            // Operator UI: list invites for a tenant + email lookups.
+            e.HasIndex(x => new { x.TenantId, x.Email }).HasDatabaseName("ix_invite_tokens_tenant_email");
+            // Lookup-by-hash hot path. UNIQUE PARTIAL via raw SQL in the
+            // migration — EF's HasFilter uses the model snapshot but we
+            // keep the index name stable here so repeated migrations
+            // round-trip.
+            e.HasIndex(x => x.TokenHash)
+                .IsUnique()
+                .HasFilter("\"RedeemedAt\" IS NULL AND \"RevokedAt\" IS NULL")
+                .HasDatabaseName("ux_invite_tokens_active_token_hash");
         });
     }
 }

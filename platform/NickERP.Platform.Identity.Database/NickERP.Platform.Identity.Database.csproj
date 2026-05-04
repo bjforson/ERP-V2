@@ -30,6 +30,8 @@
     <ProjectReference Include="..\NickERP.Platform.Identity\NickERP.Platform.Identity.csproj" />
     <!-- Phase F1 — AddDbContext wires TenantConnectionInterceptor + TenantOwnedEntityInterceptor. -->
     <ProjectReference Include="..\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <!-- Sprint 21 / Phase B — InviteService sends invite emails via IEmailSender + IEmailTemplateProvider. -->
+    <ProjectReference Include="..\NickERP.Platform.Email\NickERP.Platform.Email.csproj" />
   </ItemGroup>
 
 </Project>

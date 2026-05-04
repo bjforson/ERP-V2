@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NickERP.Platform.Identity.Database.Services;
 using NickERP.Platform.Identity.Services;
 using NickERP.Platform.Tenancy;
@@ -49,6 +50,26 @@ public static class IdentityDatabaseServiceCollectionExtensions
         });
 
         services.AddScoped<IIdentityResolver, DbIdentityResolver>();
+        return services;
+    }
+
+    /// <summary>
+    /// Sprint 21 / Phase B — register the invite-token hasher + service.
+    /// The host MUST register an <see cref="IInviteTokenHashEnvelope"/>
+    /// before/after this call (the portal wires
+    /// <c>PortalInviteTokenHashEnvelope</c> backed by
+    /// <c>IDataProtectionProvider</c>; tests inject a deterministic
+    /// constant).
+    /// </summary>
+    /// <remarks>
+    /// Idempotent — TryAdd guards every registration so calling twice
+    /// is harmless.
+    /// </remarks>
+    public static IServiceCollection AddNickErpInviteService(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.TryAddScoped<InviteTokenHasher>();
+        services.TryAddScoped<IInviteService, InviteService>();
         return services;
     }
 }
