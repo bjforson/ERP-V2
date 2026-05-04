@@ -59,6 +59,29 @@ builder.Services.AddNickErpTenantLifecycle(opts =>
         opts.PlatformConnectionString = platformConn;
     }
 });
+// Sprint 25 — tenant scoped-export tooling. Adds ITenantExportService
+// (admin Razor page) plus the TenantExportRunner BackgroundService that
+// processes the queue. Storage path + retention configurable via
+// Tenancy:Export config section; falls back to var/tenant-exports +
+// 7 days. Connection strings prefer config over env-var.
+builder.Services.AddNickErpTenantExport(opts =>
+{
+    if (!string.IsNullOrWhiteSpace(platformConn))
+    {
+        opts.PlatformConnectionString = platformConn;
+    }
+    var inspConn = builder.Configuration.GetConnectionString("Inspection");
+    if (!string.IsNullOrWhiteSpace(inspConn))
+    {
+        opts.InspectionConnectionString = inspConn;
+    }
+    var nfConn = builder.Configuration.GetConnectionString("NickFinance");
+    if (!string.IsNullOrWhiteSpace(nfConn))
+    {
+        opts.NickFinanceConnectionString = nfConn;
+    }
+    builder.Configuration.GetSection("Tenancy:Export").Bind(opts);
+});
 
 // ---------------------------------------------------------------------------
 // G2 — NickFinance Petty Cash pathfinder. Optional: AddNickErpNickFinanceWeb
@@ -254,6 +277,48 @@ if (nickFinanceEnabled)
 {
     app.MapPettyCashEndpoints();
 }
+
+// ---------------------------------------------------------------------------
+// Sprint 25 — tenant-export bundle download. The Razor page can't stream
+// a file body directly under interactive server rendering; the table row
+// links to this endpoint and the service's DownloadExportAsync handles
+// the gating (revoked / expired / status / user). Authorize required
+// (default policy applies) — the page itself is also [Authorize] gated
+// so a hostile direct-link still requires a portal login.
+// ---------------------------------------------------------------------------
+app.MapGet("/api/tenant-exports/{exportId:guid}/download",
+    async (Guid exportId,
+        NickERP.Platform.Tenancy.Database.Services.ITenantExportService svc,
+        HttpContext http,
+        CancellationToken ct) =>
+    {
+        // Map the canonical user id claim (same one TenantDetail.razor
+        // reads) into the service. The service refuses Empty defensively.
+        var raw = http.User.FindFirst("nickerp:id")?.Value;
+        if (!Guid.TryParse(raw, out var userId))
+        {
+            return Results.Unauthorized();
+        }
+        var dl = await svc.DownloadExportAsync(exportId, userId, ct);
+        if (dl is null)
+        {
+            return Results.NotFound();
+        }
+        // Stream — the service's stream is a FileStream over the artifact.
+        // Caller (Results.Stream) disposes it after the response writes.
+        if (!string.IsNullOrEmpty(dl.Sha256Hex))
+        {
+            // Surface integrity hash for client-side re-verification.
+            // Custom header so it doesn't conflict with strong ETag semantics.
+            http.Response.Headers["X-Export-SHA256"] = dl.Sha256Hex;
+        }
+        return Results.Stream(
+            stream: dl.Stream,
+            contentType: dl.ContentType,
+            fileDownloadName: dl.FileName,
+            enableRangeProcessing: false);
+    })
+    .RequireAuthorization();
 
 // ---------------------------------------------------------------------------
 // Phase F5 — health endpoints. Anonymous (probe traffic shouldn't carry

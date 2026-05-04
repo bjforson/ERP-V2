@@ -32,6 +32,31 @@ the rolling master and at every security review by the user.
 | `audit.edge_node_api_keys` | `20260430105510_Add_EdgeNodeApiKeys` | Sprint 13 / P2-FU-edge-auth | Edge node auth runs pre-tenant-resolution: the request arrives with only an opaque API key, the row carries the `TenantId`. SetSystemContext + the OR clause is the only path to look up the row before the tenant is known. Reads under system context are limited to the auth handler's lookup-by-hash + the issuance/revocation admin flow. |
 | `identity.invite_tokens` | `20260504160000_Add_InviteTokens` | Sprint 21 / Tenant-Pt-2 | Invite redemption runs pre-tenant-resolution: the invitee is anonymous; the row carries the `TenantId`. SetSystemContext + the OR clause is the only path for `InviteService.RedeemInviteAsync` and `InviteService.MarkRedeemedAsync` to succeed. Single-use semantics enforced via the unique partial index on `(TokenHash) WHERE RedeemedAt IS NULL AND RevokedAt IS NULL`. |
 
+## Sprint 25 / Tenant-Pt-3 — non-system-context cross-tenant reads
+
+The Sprint 25 `TenantExportService` + `TenantExportRunner` +
+`TenantExportBundleBuilder` are platform-admin tooling that reads
+across tenants but **does NOT call `SetSystemContext()`**. Pattern
+mirrors `TenantPurgeOrchestrator` (Sprint 18): each per-DB read opens
+its own raw `NpgsqlConnection` and `SET app.tenant_id = '<tenantId>'`
+explicitly so the existing per-table RLS USING clauses admit reads of
+THAT tenant's rows. No new opt-in clause is required, no new register
+entry is required.
+
+The two new tables (`tenancy.tenant_export_requests`,
+`tenancy.tenant_purge_log` from Sprint 18) live in the `tenancy`
+schema and are intentionally NOT under RLS — same posture as the
+`tenancy.tenants` table itself (root of the tenant graph). Cross-tenant
+admin queries against these tables succeed without any system-context
+flip.
+
+The export download endpoint (`/api/tenant-exports/{id}/download` in
+`apps/portal/Program.cs`) gates on `Status = Completed && !Revoked &&
+!Expired` server-side via `ITenantExportService.DownloadExportAsync` —
+direct artifact paths are not exposed on disk to the client; every
+download bumps a counter and emits a `tenant_export_downloaded` audit
+event.
+
 ## Review checklist
 
 At every sprint boundary, the master coordinator confirms:

@@ -23,6 +23,12 @@ public sealed class TenancyDbContext : DbContext
     /// </summary>
     public DbSet<TenantPurgeLog> TenantPurgeLog => Set<TenantPurgeLog>();
 
+    /// <summary>
+    /// Sprint 25 — admin-initiated scoped export requests for tenant
+    /// data. Cross-tenant by design (admin tooling); not under RLS.
+    /// </summary>
+    public DbSet<TenantExportRequest> TenantExportRequests => Set<TenantExportRequest>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -109,6 +115,45 @@ public sealed class TenancyDbContext : DbContext
             e.Property(x => x.FailureNote).HasMaxLength(1000);
 
             e.HasIndex(x => x.PurgedAt).HasDatabaseName("ix_tenant_purge_log_purgedat");
+        });
+
+        // Sprint 25 — TenantExportRequest. Mirrors the TenantPurgeLog
+        // posture: cross-tenant by design, not under RLS, surfaced only
+        // through admin tooling. The (TenantId, RequestedAt DESC) index
+        // backs the per-tenant "recent exports" admin view.
+        modelBuilder.Entity<TenantExportRequest>(e =>
+        {
+            e.ToTable("tenant_export_requests");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.RequestedAt).IsRequired();
+            e.Property(x => x.RequestedByUserId).IsRequired();
+            e.Property(x => x.Format).HasConversion<int>().HasDefaultValue(TenantExportFormat.JsonBundle);
+            e.Property(x => x.Scope).HasConversion<int>().HasDefaultValue(TenantExportScope.All);
+            e.Property(x => x.Status).HasConversion<int>().HasDefaultValue(TenantExportStatus.Pending);
+            e.Property(x => x.ArtifactPath).HasMaxLength(500);
+            e.Property(x => x.ArtifactSizeBytes);
+            // SHA-256 = 32 raw bytes; pin column type so Postgres uses
+            // bytea rather than the bigint default for byte[].
+            e.Property(x => x.ArtifactSha256).HasColumnType("bytea");
+            e.Property(x => x.ExpiresAt);
+            e.Property(x => x.CompletedAt);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+            e.Property(x => x.DownloadCount).HasDefaultValue(0);
+            e.Property(x => x.LastDownloadedAt);
+            e.Property(x => x.RevokedAt);
+            e.Property(x => x.RevokedByUserId);
+
+            // Index supports the per-tenant "recent exports" view in the
+            // admin UI: SELECT ... WHERE TenantId = @t ORDER BY RequestedAt DESC.
+            e.HasIndex(x => new { x.TenantId, x.RequestedAt })
+                .HasDatabaseName("ix_tenant_export_requests_tenant_requestedat")
+                .IsDescending(false, true);
+            // Index supports the runner's pickup query: SELECT ... WHERE
+            // Status = Pending ORDER BY RequestedAt ASC LIMIT N.
+            e.HasIndex(x => new { x.Status, x.RequestedAt })
+                .HasDatabaseName("ix_tenant_export_requests_status_requestedat");
         });
     }
 }
