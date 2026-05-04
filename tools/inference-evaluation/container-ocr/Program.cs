@@ -166,18 +166,31 @@ internal static class Program
         if (em > 0.92)
         {
             log.LogWarning(
-                "Decision gate: Tesseract baseline EM={Em:P2} > 92%. Florence-2 ROI shrinks. " +
+                "Decision gate: baseline EM={Em:P2} > 92%. Florence-2 ROI shrinks. " +
                 "Surface to user before locking §6.1 in pilot scope.", em);
         }
         else if (em >= 0.60)
         {
             log.LogInformation(
-                "Decision gate: Tesseract baseline EM={Em:P2} in 60-92%. Florence-2 has clear room.", em);
+                "Decision gate: baseline EM={Em:P2} in 60-92%. Florence-2 has clear room.", em);
         }
         else if (em > 0)
         {
             log.LogInformation(
-                "Decision gate: Tesseract baseline EM={Em:P2} below 60%. Florence-2 absolutely justified.", em);
+                "Decision gate: baseline EM={Em:P2} below 60%. Florence-2 absolutely justified.", em);
+        }
+        else if (report.ScoredRows == 0)
+        {
+            log.LogWarning(
+                "Decision gate: ZERO rows scored (no truth available on the corpus). " +
+                "Cannot read the gate; investigate corpus before deciding.");
+        }
+        else
+        {
+            log.LogInformation(
+                "Decision gate: baseline EM=0.00% across {Scored} scored rows. " +
+                "Florence-2 ROI is unbounded; §6.1 absolutely justified.",
+                report.ScoredRows);
         }
 
         source.Dispose();
