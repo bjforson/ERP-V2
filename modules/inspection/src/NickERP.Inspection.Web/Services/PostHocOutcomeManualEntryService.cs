@@ -159,8 +159,9 @@ public sealed class PostHocOutcomeManualEntryService
 
     /// <summary>
     /// Find or create the per-tenant manual-entry pseudo-instance. One
-    /// row per tenant (Scope=PerLocation but bound to no specific
-    /// location); typeCode <c>"manual-entry"</c>.
+    /// row per tenant (Scope=<see cref="ExternalSystemBindingScope.Shared"/>
+    /// — covers every location implicitly, no binding rows); typeCode
+    /// <c>"manual-entry"</c>.
     /// </summary>
     private async Task<ExternalSystemInstance> EnsureManualPseudoInstanceAsync(
         long tenantId, CancellationToken ct)

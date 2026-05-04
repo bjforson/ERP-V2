@@ -1,12 +1,14 @@
 @page "/external-systems"
 @attribute [Authorize]
 @using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.ExternalSystems
 @using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
 @using NickERP.Inspection.ExternalSystems.Abstractions
 @using NickERP.Platform.Plugins
 @using NickERP.Platform.Tenancy
 @inject InspectionDbContext Db
+@inject ExternalSystemAdminService Admin
 @inject IPluginRegistry Plugins
 @inject ITenantContext Tenant
 
@@ -38,11 +40,48 @@
                 <label>
                     <span>Scope</span>
                     <InputSelect class="inspection-input" @bind-Value="_form.Scope">
-                        <option value="@ExternalSystemBindingScope.PerLocation">Per-location</option>
-                        <option value="@ExternalSystemBindingScope.Shared">Shared (national)</option>
+                        <option value="@ExternalSystemBindingScope.PerLocation">Per-location (one location)</option>
+                        <option value="@ExternalSystemBindingScope.SubsetOfLocations">Subset of locations (two or more)</option>
+                        <option value="@ExternalSystemBindingScope.Shared">Shared (every location in tenant)</option>
                     </InputSelect>
                 </label>
             </div>
+
+            @if (_form.Scope is ExternalSystemBindingScope.PerLocation or ExternalSystemBindingScope.SubsetOfLocations)
+            {
+                <div class="inspection-form-row">
+                    <fieldset class="inspection-fieldset">
+                        <legend>
+                            @if (_form.Scope == ExternalSystemBindingScope.PerLocation)
+                            {
+                                <span>Pick exactly one location</span>
+                            }
+                            else
+                            {
+                                <span>Pick two or more locations</span>
+                            }
+                        </legend>
+                        @if (_locations.Count == 0)
+                        {
+                            <p class="inspection-empty">No locations exist yet — set one up before binding an external system.</p>
+                        }
+                        else
+                        {
+                            @foreach (var loc in _locations)
+                            {
+                                var locId = loc.Id;
+                                var isChecked = _form.SelectedLocationIds.Contains(locId);
+                                <label class="inspection-checkbox-label">
+                                    <input type="checkbox" name="locationIds" value="@locId" checked="@isChecked"
+                                           @onchange="e => ToggleLocation(locId, e.Value as bool? ?? false)" />
+                                    <span>@loc.Name</span>
+                                </label>
+                            }
+                        }
+                    </fieldset>
+                </div>
+            }
+
             <div class="inspection-form-actions">
                 <button type="submit" class="inspection-button inspection-button-primary">Register</button>
                 @if (!string.IsNullOrEmpty(_message)) { <span class="inspection-form-message">@_message</span> }
@@ -55,15 +94,16 @@
     else
     {
         <table class="inspection-table">
-            <thead><tr><th>Plugin</th><th>Display name</th><th>Scope</th><th>Active</th><th>Created</th></tr></thead>
+            <thead><tr><th>Plugin</th><th>Display name</th><th>Scope</th><th>Bindings</th><th>Active</th><th>Created</th></tr></thead>
             <tbody>
                 @foreach (var r in _rows)
                 {
                     <tr>
                         <td><code>@r.TypeCode</code></td>
                         <td>@r.DisplayName</td>
-                        <td>@r.Scope</td>
-                        <td>@(r.IsActive ? "✅" : "❌")</td>
+                        <td>@DescribeScope(r.Scope)</td>
+                        <td>@r.Bindings.Count</td>
+                        <td>@(r.IsActive ? "active" : "inactive")</td>
                         <td>@r.CreatedAt.ToString("yyyy-MM-dd")</td>
                     </tr>
                 }
@@ -75,6 +115,7 @@
 @code {
     private List<ExternalSystemInstance>? _rows;
     private List<RegisteredPlugin> _externalPlugins = new();
+    private List<Location> _locations = new();
     private string _message = string.Empty;
 
     [SupplyParameterFromForm] private ExternalForm _form { get; set; } = new();
@@ -85,7 +126,31 @@
         await Reload();
     }
 
-    private async Task Reload() => _rows = await Db.ExternalSystemInstances.AsNoTracking().OrderBy(x => x.DisplayName).ToListAsync();
+    private async Task Reload()
+    {
+        _rows = await Db.ExternalSystemInstances.AsNoTracking()
+            .Include(e => e.Bindings)
+            .OrderBy(x => x.DisplayName)
+            .ToListAsync();
+        _locations = await Db.Locations.AsNoTracking()
+            .OrderBy(l => l.Name)
+            .ToListAsync();
+    }
+
+    private void ToggleLocation(Guid locationId, bool selected)
+    {
+        if (selected)
+        {
+            if (!_form.SelectedLocationIds.Contains(locationId))
+            {
+                _form.SelectedLocationIds.Add(locationId);
+            }
+        }
+        else
+        {
+            _form.SelectedLocationIds.Remove(locationId);
+        }
+    }
 
     private async Task CreateAsync()
     {
@@ -100,26 +165,45 @@
             return;
         }
 
-        Db.ExternalSystemInstances.Add(new ExternalSystemInstance
+        // Sprint 16 — admin service centralises per-scope validation +
+        // binding writes; we surface ArgumentException messages back to
+        // the form. Shared scope drops bindings; per-location/subset use
+        // whatever the user ticked.
+        var ids = _form.Scope == ExternalSystemBindingScope.Shared
+            ? Array.Empty<Guid>()
+            : _form.SelectedLocationIds.Distinct().ToArray();
+
+        try
         {
-            TypeCode = _form.TypeCode,
-            DisplayName = _form.DisplayName.Trim(),
-            Scope = _form.Scope,
-            ConfigJson = "{}",
-            IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
-            TenantId = Tenant.TenantId
-        });
-        await Db.SaveChangesAsync();
-        _form = new ExternalForm();
-        _message = "Registered.";
-        await Reload();
+            await Admin.RegisterAsync(
+                _form.TypeCode,
+                _form.DisplayName,
+                description: null,
+                _form.Scope,
+                ids);
+            _form = new ExternalForm();
+            _message = "Registered.";
+            await Reload();
+        }
+        catch (ArgumentException ex)
+        {
+            _message = ex.Message;
+        }
     }
+
+    private static string DescribeScope(ExternalSystemBindingScope scope) => scope switch
+    {
+        ExternalSystemBindingScope.PerLocation => "Per-location",
+        ExternalSystemBindingScope.SubsetOfLocations => "Subset",
+        ExternalSystemBindingScope.Shared => "Shared",
+        _ => scope.ToString()
+    };
 
     public sealed class ExternalForm
     {
         public string TypeCode { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
         public ExternalSystemBindingScope Scope { get; set; } = ExternalSystemBindingScope.PerLocation;
+        public List<Guid> SelectedLocationIds { get; set; } = new();
     }
 }
