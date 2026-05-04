@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using NickERP.Platform.Tenancy.Database.Services;
+using NickERP.Platform.Tenancy.Database.Workers;
 
 // NickERP.Platform.Tenancy is referenced via ProjectReference; the
 // interceptor types live in the parent namespace.
@@ -85,6 +87,41 @@ public static class TenancyDatabaseServiceCollectionExtensions
         });
         services.AddScoped<ITenantPurgeOrchestrator, TenantPurgeOrchestrator>();
         services.AddScoped<ITenantLifecycleService, TenantLifecycleService>();
+        return services;
+    }
+
+    /// <summary>
+    /// Sprint 25 — register <see cref="ITenantExportService"/> +
+    /// <see cref="TenantExportRunner"/> for hosts that surface the
+    /// admin Exports card (the portal). Reads connection strings from
+    /// the same env vars as the lifecycle wireup. Pass a configure
+    /// delegate to override storage path / retention / concurrency for
+    /// tests.
+    /// </summary>
+    public static IServiceCollection AddNickErpTenantExport(
+        this IServiceCollection services,
+        Action<TenantExportOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton(sp =>
+        {
+            var opts = new TenantExportOptions
+            {
+                PlatformConnectionString =
+                    Environment.GetEnvironmentVariable("NICKERP_PLATFORM_DB_CONNECTION"),
+                InspectionConnectionString =
+                    Environment.GetEnvironmentVariable("NICKERP_INSPECTION_DB_CONNECTION"),
+                NickFinanceConnectionString =
+                    Environment.GetEnvironmentVariable("NICKERP_NICKFINANCE_DB_CONNECTION"),
+            };
+            configure?.Invoke(opts);
+            return opts;
+        });
+        services.AddScoped<ITenantExportService, TenantExportService>();
+        // Runner runs in the host as a hosted service. Single instance
+        // per host; concurrency capped by MaxConcurrentExports (default 2).
+        services.AddHostedService<TenantExportRunner>();
         return services;
     }
 }
