@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Application.AnalysisServices;
+using NickERP.Inspection.Application.Downloads;
 using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Application.PostHocOutcomes;
 using NickERP.Inspection.Application.Submissions;
@@ -78,6 +79,11 @@ builder.Services.AddExternalSystemAdmin();
 // /admin/icums/submission-queue Razor page. Scoped; idempotent
 // (TryAddScoped under the hood).
 builder.Services.AddIcumsSubmissionQueueAdmin();
+
+// Sprint 22 / B2.2 — ICUMS download queue admin service for the
+// /admin/icums/download-queue Razor page. Reads AuthorityDocument +
+// OutcomePullCursor; supports admin re-link of a case override.
+builder.Services.AddIcumsDownloadQueueAdmin();
 
 // Sprint 14 / VP6 Phase C — claim semantics + case-visibility helper.
 // Cases.razor consults CaseVisibilityService for the access-list under
