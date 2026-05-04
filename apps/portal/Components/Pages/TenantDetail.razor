@@ -1,14 +1,17 @@
 @page "/tenants/{TenantId:long}"
 @* Sprint 14 / VP6 Phase B — per-tenant settings detail page. Today the
    page exposes the two VP6 toggles (CaseVisibilityModel + AllowMultiService
-   Membership). Future scope adds soft-delete + retention + module
-   activation toggles (Sprints 18+). *@
+   Membership). Sprint 18 adds the lifecycle section: suspend / resume /
+   soft-delete / restore / hard-purge actions, gated on the current State. *@
 @attribute [Authorize]
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Platform.Tenancy
 @using NickERP.Platform.Tenancy.Database
+@using NickERP.Platform.Tenancy.Database.Services
 @using NickERP.Platform.Tenancy.Entities
 @inject TenancyDbContext Db
+@inject ITenantLifecycleService Lifecycle
+@inject AuthenticationStateProvider AuthState
 @inject Microsoft.AspNetCore.Components.NavigationManager Nav
 
 <PageTitle>Tenant settings — NickERP Portal</PageTitle>
@@ -29,52 +32,202 @@ else
     <section class="portal-section">
         <div class="portal-card">
             <h2 class="portal-card-title">@_tenant.Name <small><code>@_tenant.Code</code></small></h2>
-            <p class="portal-card-subtitle">Tenant id @_tenant.Id — created @_tenant.CreatedAt.ToString("yyyy-MM-dd")</p>
-        </div>
-
-        <div class="portal-card">
-            <h2 class="portal-card-title">VP6 — case routing</h2>
             <p class="portal-card-subtitle">
-                Pick how cases flow through AnalysisServices that share locations.
-                Default <strong>Shared</strong> is appropriate for most operators;
-                pick <strong>Exclusive</strong> when teams must work strictly within their service scope.
+                Tenant id @_tenant.Id — created @_tenant.CreatedAt.ToString("yyyy-MM-dd")
+                — state <span class="portal-state-badge portal-state-@(_tenant.State.ToString().ToLowerInvariant())">@_tenant.State</span>
             </p>
-            <EditForm Model="_form" OnValidSubmit="SaveAsync" FormName="vp6-settings" class="portal-form">
-                <fieldset class="portal-form-row">
-                    <legend>Case visibility model</legend>
-                    <label>
-                        <InputRadioGroup @bind-Value="_form.VisibilityModel">
-                            <label>
-                                <InputRadio Value="@CaseVisibilityModel.Shared" />
-                                Shared <span class="portal-help">— case appears in every qualifying service; first-claim-wins on open.</span>
-                            </label>
-                            <br />
-                            <label>
-                                <InputRadio Value="@CaseVisibilityModel.Exclusive" />
-                                Exclusive <span class="portal-help">— case routes to one service at intake (most-specific-service-wins; ties broken by oldest creation).</span>
-                            </label>
-                        </InputRadioGroup>
-                    </label>
-                </fieldset>
-
-                <fieldset class="portal-form-row">
-                    <legend>Multi-service membership</legend>
-                    <label>
-                        <InputCheckbox @bind-Value="_form.AllowMultiServiceMembership" />
-                        Allow users to join more than one AnalysisService
-                        <span class="portal-help">— union of visible cases across their services. Disable to enforce strict one-service-per-user.</span>
-                    </label>
-                </fieldset>
-
-                <div class="portal-form-actions">
-                    <button type="submit" class="portal-button portal-button-primary">Save</button>
-                    @if (!string.IsNullOrEmpty(_message))
-                    {
-                        <span class="portal-form-message">@_message</span>
-                    }
-                </div>
-            </EditForm>
+            @if (_tenant.State == TenantState.SoftDeleted || _tenant.State == TenantState.PendingHardPurge)
+            {
+                <p class="portal-card-subtitle">
+                    Soft-deleted @_tenant.DeletedAt?.ToString("yyyy-MM-dd HH:mm")
+                    — retention @_tenant.RetentionDays day(s) — hard-purge after @_tenant.HardPurgeAfter?.ToString("yyyy-MM-dd HH:mm")
+                </p>
+                @if (!string.IsNullOrWhiteSpace(_tenant.DeletionReason))
+                {
+                    <p class="portal-card-subtitle">Reason: @_tenant.DeletionReason</p>
+                }
+            }
         </div>
+
+        @* Sprint 18 — lifecycle actions. Each block is gated on the
+           current State so only valid transitions are presented. *@
+        <div class="portal-card">
+            <h2 class="portal-card-title">Lifecycle</h2>
+            @if (_tenant.State == TenantState.Active)
+            {
+                <p class="portal-card-subtitle">
+                    Tenant is active. Suspend it to pause access (reversible) or
+                    soft-delete it to begin the retention window before hard-purge.
+                </p>
+                <EditForm Model="_lifecycleForm" OnValidSubmit="SuspendAsync" FormName="suspend-tenant" class="portal-form">
+                    <fieldset class="portal-form-row">
+                        <legend>Suspend</legend>
+                        <label>
+                            <span>Reason (optional)</span>
+                            <InputText class="portal-input" @bind-Value="_lifecycleForm.SuspendReason" placeholder="e.g. payment overdue" />
+                        </label>
+                    </fieldset>
+                    <div class="portal-form-actions">
+                        <button type="submit" class="portal-button">Suspend</button>
+                    </div>
+                </EditForm>
+                <EditForm Model="_lifecycleForm" OnValidSubmit="SoftDeleteAsync" FormName="soft-delete-tenant" class="portal-form">
+                    <fieldset class="portal-form-row">
+                        <legend>Soft-delete (start retention window)</legend>
+                        <label>
+                            <span>Reason</span>
+                            <InputText class="portal-input" @bind-Value="_lifecycleForm.DeleteReason" placeholder="e.g. customer churned" />
+                        </label>
+                        <label>
+                            <span>Retention days (override default 90)</span>
+                            <InputNumber class="portal-input" @bind-Value="_lifecycleForm.RetentionDays" />
+                        </label>
+                    </fieldset>
+                    <div class="portal-form-actions">
+                        <button type="submit" class="portal-button portal-button-danger">Soft-delete</button>
+                    </div>
+                </EditForm>
+            }
+            else if (_tenant.State == TenantState.Suspended)
+            {
+                <p class="portal-card-subtitle">
+                    Tenant is suspended. Resume to restore access, or soft-delete
+                    to begin the retention window.
+                </p>
+                <EditForm Model="_lifecycleForm" OnValidSubmit="ResumeAsync" FormName="resume-tenant" class="portal-form">
+                    <div class="portal-form-actions">
+                        <button type="submit" class="portal-button portal-button-primary">Resume</button>
+                    </div>
+                </EditForm>
+                <EditForm Model="_lifecycleForm" OnValidSubmit="SoftDeleteAsync" FormName="soft-delete-tenant-suspended" class="portal-form">
+                    <fieldset class="portal-form-row">
+                        <legend>Soft-delete</legend>
+                        <label>
+                            <span>Reason</span>
+                            <InputText class="portal-input" @bind-Value="_lifecycleForm.DeleteReason" placeholder="e.g. customer churned" />
+                        </label>
+                        <label>
+                            <span>Retention days</span>
+                            <InputNumber class="portal-input" @bind-Value="_lifecycleForm.RetentionDays" />
+                        </label>
+                    </fieldset>
+                    <div class="portal-form-actions">
+                        <button type="submit" class="portal-button portal-button-danger">Soft-delete</button>
+                    </div>
+                </EditForm>
+            }
+            else if (_tenant.State == TenantState.SoftDeleted)
+            {
+                var canRestore = _tenant.HardPurgeAfter is not null && DateTimeOffset.UtcNow < _tenant.HardPurgeAfter.Value;
+                var remaining = _tenant.HardPurgeAfter is not null
+                    ? _tenant.HardPurgeAfter.Value - DateTimeOffset.UtcNow
+                    : TimeSpan.Zero;
+                <p class="portal-card-subtitle">
+                    Tenant is soft-deleted. @if (canRestore)
+                    {
+                        <text>Restore is available for the next @((int)remaining.TotalDays) day(s) and @remaining.Hours hour(s).</text>
+                    }
+                    else
+                    {
+                        <text>Retention window expired. Mark for hard-purge to surface in the operator queue.</text>
+                    }
+                </p>
+                @if (canRestore)
+                {
+                    <EditForm Model="_lifecycleForm" OnValidSubmit="RestoreAsync" FormName="restore-tenant" class="portal-form">
+                        <div class="portal-form-actions">
+                            <button type="submit" class="portal-button portal-button-primary">Restore</button>
+                        </div>
+                    </EditForm>
+                }
+                else
+                {
+                    <EditForm Model="_lifecycleForm" OnValidSubmit="MarkPendingPurgeAsync" FormName="mark-pending-purge" class="portal-form">
+                        <div class="portal-form-actions">
+                            <button type="submit" class="portal-button portal-button-danger">Mark pending hard-purge</button>
+                        </div>
+                    </EditForm>
+                }
+            }
+            else if (_tenant.State == TenantState.PendingHardPurge)
+            {
+                <p class="portal-card-subtitle">
+                    Hard-purge will permanently delete every row this tenant owns
+                    across all platform databases. This action cannot be undone.
+                    Type the tenant code <code>@_tenant.Code</code> to enable the button.
+                </p>
+                <EditForm Model="_lifecycleForm" OnValidSubmit="HardPurgeAsync" FormName="hard-purge-tenant" class="portal-form">
+                    <fieldset class="portal-form-row">
+                        <legend>Confirm hard-purge</legend>
+                        <label>
+                            <span>Type tenant code to confirm</span>
+                            <InputText class="portal-input" @bind-Value="_lifecycleForm.PurgeConfirmation" placeholder="@_tenant.Code" />
+                        </label>
+                    </fieldset>
+                    <div class="portal-form-actions">
+                        <button type="submit"
+                                class="portal-button portal-button-danger"
+                                disabled="@(!string.Equals(_lifecycleForm.PurgeConfirmation, _tenant.Code, StringComparison.Ordinal))">
+                            Hard-purge tenant
+                        </button>
+                    </div>
+                </EditForm>
+            }
+            @if (!string.IsNullOrEmpty(_lifecycleMessage))
+            {
+                <p class="portal-form-message">@_lifecycleMessage</p>
+            }
+        </div>
+
+        @* Existing VP6 settings — only meaningful while the tenant is
+           Active or Suspended. Hide for deleted-but-retained tenants
+           since editing them while pending purge is meaningless. *@
+        @if (_tenant.State == TenantState.Active || _tenant.State == TenantState.Suspended)
+        {
+            <div class="portal-card">
+                <h2 class="portal-card-title">VP6 — case routing</h2>
+                <p class="portal-card-subtitle">
+                    Pick how cases flow through AnalysisServices that share locations.
+                    Default <strong>Shared</strong> is appropriate for most operators;
+                    pick <strong>Exclusive</strong> when teams must work strictly within their service scope.
+                </p>
+                <EditForm Model="_form" OnValidSubmit="SaveAsync" FormName="vp6-settings" class="portal-form">
+                    <fieldset class="portal-form-row">
+                        <legend>Case visibility model</legend>
+                        <label>
+                            <InputRadioGroup @bind-Value="_form.VisibilityModel">
+                                <label>
+                                    <InputRadio Value="@CaseVisibilityModel.Shared" />
+                                    Shared <span class="portal-help">— case appears in every qualifying service; first-claim-wins on open.</span>
+                                </label>
+                                <br />
+                                <label>
+                                    <InputRadio Value="@CaseVisibilityModel.Exclusive" />
+                                    Exclusive <span class="portal-help">— case routes to one service at intake (most-specific-service-wins; ties broken by oldest creation).</span>
+                                </label>
+                            </InputRadioGroup>
+                        </label>
+                    </fieldset>
+
+                    <fieldset class="portal-form-row">
+                        <legend>Multi-service membership</legend>
+                        <label>
+                            <InputCheckbox @bind-Value="_form.AllowMultiServiceMembership" />
+                            Allow users to join more than one AnalysisService
+                            <span class="portal-help">— union of visible cases across their services. Disable to enforce strict one-service-per-user.</span>
+                        </label>
+                    </fieldset>
+
+                    <div class="portal-form-actions">
+                        <button type="submit" class="portal-button portal-button-primary">Save</button>
+                        @if (!string.IsNullOrEmpty(_message))
+                        {
+                            <span class="portal-form-message">@_message</span>
+                        }
+                    </div>
+                </EditForm>
+            </div>
+        }
     </section>
 }
 
@@ -83,14 +236,26 @@ else
 
     private Tenant? _tenant;
     private string _message = string.Empty;
+    private string _lifecycleMessage = string.Empty;
     private string? _loadError;
 
     [SupplyParameterFromForm] private SettingsForm _form { get; set; } = new();
+    [SupplyParameterFromForm] private LifecycleForm _lifecycleForm { get; set; } = new();
 
     protected override async Task OnParametersSetAsync()
     {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
         _message = string.Empty;
-        _tenant = await Db.Tenants.FirstOrDefaultAsync(t => t.Id == TenantId);
+        // Sprint 18 — IgnoreQueryFilters so we still surface SoftDeleted +
+        // PendingHardPurge tenants. The detail page is the only place a
+        // restore / hard-purge action can be initiated.
+        _tenant = await Db.Tenants
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(t => t.Id == TenantId);
         if (_tenant is null)
         {
             _loadError = $"Tenant {TenantId} not found.";
@@ -101,6 +266,10 @@ else
             VisibilityModel = _tenant.CaseVisibilityModel,
             AllowMultiServiceMembership = _tenant.AllowMultiServiceMembership,
         };
+        _lifecycleForm = new LifecycleForm
+        {
+            RetentionDays = _tenant.RetentionDays,
+        };
     }
 
     private async Task SaveAsync()
@@ -109,7 +278,9 @@ else
         try
         {
             // Re-fetch as tracked so SaveChanges captures the update.
-            var tracked = await Db.Tenants.FirstAsync(t => t.Id == TenantId);
+            var tracked = await Db.Tenants
+                .IgnoreQueryFilters()
+                .FirstAsync(t => t.Id == TenantId);
             tracked.CaseVisibilityModel = _form.VisibilityModel;
             tracked.AllowMultiServiceMembership = _form.AllowMultiServiceMembership;
             await Db.SaveChangesAsync();
@@ -122,9 +293,136 @@ else
         }
     }
 
+    private async Task<Guid?> CurrentUserIdAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var raw = auth.User?.FindFirst("nickerp:id")?.Value;
+        return Guid.TryParse(raw, out var g) ? g : null;
+    }
+
+    private async Task SuspendAsync()
+    {
+        if (_tenant is null) return;
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            await Lifecycle.SuspendTenantAsync(_tenant.Id, _lifecycleForm.SuspendReason, actor ?? Guid.Empty);
+            _lifecycleMessage = "Tenant suspended.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _lifecycleMessage = $"Suspend failed: {ex.Message}";
+        }
+    }
+
+    private async Task ResumeAsync()
+    {
+        if (_tenant is null) return;
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            await Lifecycle.ResumeTenantAsync(_tenant.Id, actor ?? Guid.Empty);
+            _lifecycleMessage = "Tenant resumed.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _lifecycleMessage = $"Resume failed: {ex.Message}";
+        }
+    }
+
+    private async Task SoftDeleteAsync()
+    {
+        if (_tenant is null) return;
+        if (string.IsNullOrWhiteSpace(_lifecycleForm.DeleteReason))
+        {
+            _lifecycleMessage = "A reason is required for soft-delete.";
+            return;
+        }
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            var retention = _lifecycleForm.RetentionDays > 0 ? _lifecycleForm.RetentionDays : (int?)null;
+            await Lifecycle.SoftDeleteTenantAsync(
+                _tenant.Id, _lifecycleForm.DeleteReason, actor ?? Guid.Empty, retention);
+            _lifecycleMessage = "Tenant soft-deleted. Retention window started.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _lifecycleMessage = $"Soft-delete failed: {ex.Message}";
+        }
+    }
+
+    private async Task RestoreAsync()
+    {
+        if (_tenant is null) return;
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            await Lifecycle.RestoreTenantAsync(_tenant.Id, actor ?? Guid.Empty);
+            _lifecycleMessage = "Tenant restored.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _lifecycleMessage = $"Restore failed: {ex.Message}";
+        }
+    }
+
+    private async Task MarkPendingPurgeAsync()
+    {
+        if (_tenant is null) return;
+        try
+        {
+            var flipped = await Lifecycle.MarkPendingHardPurgeAsync(_tenant.Id);
+            _lifecycleMessage = flipped
+                ? "Tenant marked for hard-purge. Confirm to delete data."
+                : "Retention window has not yet expired.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _lifecycleMessage = $"Mark-pending failed: {ex.Message}";
+        }
+    }
+
+    private async Task HardPurgeAsync()
+    {
+        if (_tenant is null) return;
+        // Belt-and-suspenders — the button is also disabled when this
+        // doesn't match, but a manual form post would still arrive here.
+        if (!string.Equals(_lifecycleForm.PurgeConfirmation, _tenant.Code, StringComparison.Ordinal))
+        {
+            _lifecycleMessage = "Tenant code did not match. Hard-purge aborted.";
+            return;
+        }
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            var result = await Lifecycle.HardPurgeTenantAsync(_tenant.Id, actor ?? Guid.Empty);
+            _lifecycleMessage = $"Hard-purge {result.Outcome}. Log id {result.PurgeLogId}.";
+            // Tenant row no longer exists — bounce back to list.
+            Nav.NavigateTo("/tenants");
+        }
+        catch (Exception ex)
+        {
+            _lifecycleMessage = $"Hard-purge failed: {ex.Message}";
+        }
+    }
+
     public sealed class SettingsForm
     {
         public CaseVisibilityModel VisibilityModel { get; set; } = CaseVisibilityModel.Shared;
         public bool AllowMultiServiceMembership { get; set; } = true;
+    }
+
+    public sealed class LifecycleForm
+    {
+        public string? SuspendReason { get; set; }
+        public string? DeleteReason { get; set; }
+        public int RetentionDays { get; set; } = 90;
+        public string? PurgeConfirmation { get; set; }
     }
 }

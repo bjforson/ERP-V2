@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NickERP.Platform.Tenancy.Database.Services;
 
 // NickERP.Platform.Tenancy is referenced via ProjectReference; the
 // interceptor types live in the parent namespace.
@@ -50,6 +51,40 @@ public static class TenancyDatabaseServiceCollectionExtensions
                 sp.GetRequiredService<TenantOwnedEntityInterceptor>());
         });
 
+        return services;
+    }
+
+    /// <summary>
+    /// Sprint 18 — register <see cref="ITenantLifecycleService"/> +
+    /// <see cref="ITenantPurgeOrchestrator"/> for hosts that surface the
+    /// admin lifecycle UI (the portal). Reads downstream-DB connection
+    /// strings from env vars: <c>NICKERP_PLATFORM_DB_CONNECTION</c>,
+    /// <c>NICKERP_INSPECTION_DB_CONNECTION</c>,
+    /// <c>NICKERP_NICKFINANCE_DB_CONNECTION</c>. Connection strings can
+    /// also be supplied via the optional configure delegate for tests.
+    /// </summary>
+    public static IServiceCollection AddNickErpTenantLifecycle(
+        this IServiceCollection services,
+        Action<TenantPurgeOrchestratorOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton(sp =>
+        {
+            var opts = new TenantPurgeOrchestratorOptions
+            {
+                PlatformConnectionString =
+                    Environment.GetEnvironmentVariable("NICKERP_PLATFORM_DB_CONNECTION"),
+                InspectionConnectionString =
+                    Environment.GetEnvironmentVariable("NICKERP_INSPECTION_DB_CONNECTION"),
+                NickFinanceConnectionString =
+                    Environment.GetEnvironmentVariable("NICKERP_NICKFINANCE_DB_CONNECTION"),
+            };
+            configure?.Invoke(opts);
+            return opts;
+        });
+        services.AddScoped<ITenantPurgeOrchestrator, TenantPurgeOrchestrator>();
+        services.AddScoped<ITenantLifecycleService, TenantLifecycleService>();
         return services;
     }
 }
