@@ -2,16 +2,21 @@
 @* Sprint 14 / VP6 Phase B — per-tenant settings detail page. Today the
    page exposes the two VP6 toggles (CaseVisibilityModel + AllowMultiService
    Membership). Sprint 18 adds the lifecycle section: suspend / resume /
-   soft-delete / restore / hard-purge actions, gated on the current State. *@
+   soft-delete / restore / hard-purge actions, gated on the current State.
+   Sprint 29 adds the module-activation card: per-tenant on/off for each
+   module catalogued in IModuleRegistry. *@
 @attribute [Authorize]
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Platform.Tenancy
 @using NickERP.Platform.Tenancy.Database
 @using NickERP.Platform.Tenancy.Database.Services
 @using NickERP.Platform.Tenancy.Entities
+@using NickERP.Portal.Services.Modules
 @inject TenancyDbContext Db
 @inject ITenantLifecycleService Lifecycle
 @inject ITenantExportService Exports
+@inject IModuleRegistry ModuleRegistry
+@inject ITenantModuleSettingsService ModuleSettings
 @inject AuthenticationStateProvider AuthState
 @inject Microsoft.AspNetCore.Components.NavigationManager Nav
 @implements IDisposable
@@ -328,6 +333,75 @@ else
                 </EditForm>
             </div>
         }
+
+        @* Sprint 29 — module activation card. Lists every module from
+           IModuleRegistry (without the per-tenant filter) and lets a
+           platform admin toggle each one on/off for THIS tenant. The
+           admin's flip writes through ITenantModuleSettingsService;
+           the launcher reads the resulting state on next render. *@
+        @if (_tenant.State == TenantState.Active || _tenant.State == TenantState.Suspended)
+        {
+            <div class="portal-card">
+                <h2 class="portal-card-title">Module activation</h2>
+                <p class="portal-card-subtitle">
+                    Per-tenant on/off for each module the portal launcher
+                    catalogues. Disabled modules are hidden from the tenant's
+                    launcher tile grid; existing module-side data is unaffected.
+                </p>
+                @if (_moduleRows is null)
+                {
+                    <p class="portal-card-subtitle">Loading…</p>
+                }
+                else
+                {
+                    <table class="portal-table">
+                        <thead>
+                            <tr>
+                                <th>Module</th>
+                                <th>Base URL</th>
+                                <th>Enabled</th>
+                                <th>Last toggled</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _moduleRows)
+                            {
+                                <tr>
+                                    <td>
+                                        <strong>@row.Module.DisplayName</strong>
+                                        <div class="portal-card-subtitle"><code>@row.Module.Id</code> — @row.Module.Description</div>
+                                    </td>
+                                    <td><code>@row.Module.BaseUrl</code></td>
+                                    <td>
+                                        <span class="portal-state-badge portal-state-@(row.Enabled ? "active" : "soft-deleted")">
+                                            @(row.Enabled ? "Enabled" : "Disabled")
+                                        </span>
+                                    </td>
+                                    <td>@(row.UpdatedAt is null ? "default" : row.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm"))</td>
+                                    <td>
+                                        @if (row.Enabled)
+                                        {
+                                            <button type="button" class="portal-button portal-button-danger"
+                                                    @onclick="() => ToggleModuleAsync(row.Module.Id, false)">Disable</button>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="portal-button portal-button-primary"
+                                                    @onclick="() => ToggleModuleAsync(row.Module.Id, true)">Enable</button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                @if (!string.IsNullOrEmpty(_moduleMessage))
+                {
+                    <p class="portal-form-message">@_moduleMessage</p>
+                }
+            </div>
+        }
     </section>
 }
 
@@ -348,6 +422,17 @@ else
     // Auto-refresh: every 10 s while at least one row is Pending or
     // Running. Cleared on dispose / when no live rows remain.
     private System.Threading.Timer? _refreshTimer;
+
+    // Sprint 29 — module-activation card state. Joined view of the
+    // catalogue (IModuleRegistry.GetAllModules) + the per-tenant
+    // overrides loaded via ITenantModuleSettingsService.
+    private IReadOnlyList<ModuleActivationRow>? _moduleRows;
+    private string _moduleMessage = string.Empty;
+
+    public sealed record ModuleActivationRow(
+        ModuleRegistryEntry Module,
+        bool Enabled,
+        DateTimeOffset? UpdatedAt);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -378,6 +463,45 @@ else
             RetentionDays = _tenant.RetentionDays,
         };
         await ReloadExportsAsync();
+        await ReloadModulesAsync();
+    }
+
+    private async Task ReloadModulesAsync()
+    {
+        // Sprint 29 — load every catalogued module + per-tenant override
+        // and join them into the table-row shape the card expects. Modules
+        // with no override row default to enabled + UpdatedAt = null.
+        var all = ModuleRegistry.GetAllModules();
+        var overrides = await ModuleSettings.GetSettingsForTenantAsync(TenantId);
+        var byId = overrides.ToDictionary(o => o.ModuleId, o => o);
+        var rows = new List<ModuleActivationRow>(all.Count);
+        foreach (var m in all)
+        {
+            if (byId.TryGetValue(m.Id, out var ov))
+            {
+                rows.Add(new ModuleActivationRow(m, ov.Enabled, ov.UpdatedAt));
+            }
+            else
+            {
+                rows.Add(new ModuleActivationRow(m, m.Enabled, null));
+            }
+        }
+        _moduleRows = rows;
+    }
+
+    private async Task ToggleModuleAsync(string moduleId, bool enabled)
+    {
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            await ModuleSettings.SetEnabledAsync(TenantId, moduleId, enabled, actor);
+            _moduleMessage = $"Module '{moduleId}' is now {(enabled ? "enabled" : "disabled")} for tenant {TenantId}.";
+            await ReloadModulesAsync();
+        }
+        catch (Exception ex)
+        {
+            _moduleMessage = $"Toggle failed: {ex.Message}";
+        }
     }
 
     private async Task ReloadExportsAsync()

@@ -1,0 +1,136 @@
+@*
+ * SharedHeader — Sprint 29 cross-module top bar. Rendered inside each
+ * module's MainLayout so the suite feels uniform: module name on the
+ * left, back-to-launcher link, identity dropdown on the right.
+ *
+ * Identity claims are read off the cascading AuthenticationState — which
+ * resolves to the CF Access JWT principal on real deployments and to the
+ * dev-bypass principal in development. No HttpContext dependency, so the
+ * component renders cleanly under bunit.
+ *
+ * Module label resolution order:
+ *   1. The ModuleId/ModuleName component parameters (per-render override).
+ *   2. The injected IModuleContext (host-configured at startup).
+ *   3. Fallback "NickERP".
+ *@
+
+@using System.Security.Claims
+@using NickERP.Platform.Web.Shared.Modules
+@inject IModuleContext ModuleCtx
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+
+<header class="nickerp-shared-header">
+    <div class="nickerp-shared-header-inner">
+        <div class="nickerp-shared-header-brand">
+            <a class="nickerp-shared-header-launcher"
+               href="@LauncherHref"
+               title="Back to launcher">
+                <span class="nickerp-shared-header-launcher-mark">N</span>
+                <span class="nickerp-shared-header-launcher-text">Launcher</span>
+            </a>
+            <span class="nickerp-shared-header-divider" aria-hidden="true">/</span>
+            <span class="nickerp-shared-header-module">@ResolvedDisplayName</span>
+        </div>
+
+        <div class="nickerp-shared-header-actions">
+            @if (_signedIn)
+            {
+                <details class="nickerp-shared-header-identity">
+                    <summary class="nickerp-shared-header-identity-summary"
+                             title="@_displayName">
+                        <span class="nickerp-shared-header-avatar">@_initials</span>
+                        <span class="nickerp-shared-header-name">@_displayName</span>
+                    </summary>
+                    <div class="nickerp-shared-header-identity-dropdown">
+                        <div class="nickerp-shared-header-identity-name">@_displayName</div>
+                        @if (!string.IsNullOrEmpty(_email))
+                        {
+                            <div class="nickerp-shared-header-identity-email">@_email</div>
+                        }
+                        <div class="nickerp-shared-header-identity-module">@ResolvedDisplayName</div>
+                        <a class="nickerp-shared-header-identity-link"
+                           href="@SignOutHref">Sign out</a>
+                    </div>
+                </details>
+            }
+            else
+            {
+                <span class="nickerp-shared-header-anonymous">Signed out</span>
+            }
+        </div>
+    </div>
+</header>
+
+@code {
+    /// <summary>
+    /// Per-render module-id override. Useful when a host renders chrome
+    /// for more than one logical module (rare). When null/empty, the
+    /// injected <see cref="IModuleContext.ModuleId"/> wins.
+    /// </summary>
+    [Parameter] public string? ModuleId { get; set; }
+
+    /// <summary>
+    /// Per-render display-name override. When null/empty, the injected
+    /// <see cref="IModuleContext.DisplayName"/> wins.
+    /// </summary>
+    [Parameter] public string? ModuleName { get; set; }
+
+    /// <summary>
+    /// URL the sign-out link navigates to. Defaults to the CF Access
+    /// logout endpoint — same default as <c>UserMenu</c>.
+    /// </summary>
+    [Parameter] public string SignOutHref { get; set; } = "/cdn-cgi/access/logout";
+
+    private bool _signedIn;
+    private string _displayName = "Authenticated";
+    private string _email = string.Empty;
+    private string _initials = "?";
+
+    /// <summary>
+    /// Effective module id: parameter override wins, otherwise the
+    /// injected context's id.
+    /// </summary>
+    public string ResolvedModuleId =>
+        string.IsNullOrWhiteSpace(ModuleId) ? ModuleCtx.ModuleId : ModuleId!;
+
+    /// <summary>
+    /// Effective display name: parameter override wins, otherwise the
+    /// injected context's display name.
+    /// </summary>
+    public string ResolvedDisplayName =>
+        string.IsNullOrWhiteSpace(ModuleName) ? ModuleCtx.DisplayName : ModuleName!;
+
+    /// <summary>Resolved launcher URL exposed for tests.</summary>
+    public string LauncherHref => ModuleCtx.PortalLauncherUrl;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+        _signedIn = user.Identity?.IsAuthenticated == true;
+        if (_signedIn)
+        {
+            _displayName = user.FindFirst("nickerp:display_name")?.Value
+                ?? user.FindFirst(ClaimTypes.Name)?.Value
+                ?? "Authenticated";
+            _email = user.FindFirst("nickerp:email")?.Value
+                ?? user.FindFirst(ClaimTypes.Email)?.Value
+                ?? string.Empty;
+            _initials = ComputeInitials(_displayName);
+        }
+    }
+
+    /// <summary>
+    /// Visible for tests — collapses a display name to a 1-2 char
+    /// initials string (uppercase). Empty / blank input returns "?".
+    /// </summary>
+    public static string ComputeInitials(string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName)) return "?";
+        var parts = displayName.Split(' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return "?";
+        if (parts.Length == 1) return parts[0][..1].ToUpperInvariant();
+        return $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
+    }
+}

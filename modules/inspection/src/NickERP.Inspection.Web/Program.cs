@@ -26,6 +26,8 @@ using NickERP.Platform.Plugins;
 using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
+// Sprint 29 — three-module co-deploy chrome.
+using NickERP.Platform.Web.Shared.Modules;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -371,6 +373,19 @@ builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
 builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
+
+// Sprint 29 — wire shared chrome (SharedHeader + SharedFooter +
+// IModuleContext). ADDITIVE: doesn't touch any existing registration.
+// ModuleId pinned to "inspection" so the back-to-launcher link in the
+// header always names the right module. PortalLauncherUrl reads from
+// Portal:LauncherUrl with a dev-default fallback (http://localhost:5400/).
+builder.Services.AddNickErpSharedChrome(opts =>
+{
+    opts.ModuleId = "inspection";
+    opts.DisplayName = "Inspection v2";
+    opts.PortalLauncherUrl = builder.Configuration["Portal:LauncherUrl"]
+        ?? ModuleContext.DefaultLauncherUrl;
+});
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();

@@ -1,0 +1,54 @@
+@*
+ * SharedFooter — Sprint 29 cross-module footer. Lightweight: module
+ * version on the left, link back to the launcher on the right. The
+ * version string falls back to the module-context options' Version
+ * value, then to the entry assembly's informational version.
+ *@
+
+@using System.Reflection
+@using NickERP.Platform.Web.Shared.Modules
+@inject IModuleContext ModuleCtx
+@inject NickErpSharedChromeOptions ChromeOptions
+
+<footer class="nickerp-shared-footer">
+    <div class="nickerp-shared-footer-inner">
+        <span class="nickerp-shared-footer-module">
+            @ModuleCtx.DisplayName <span class="nickerp-shared-footer-version">v@(ResolvedVersion)</span>
+        </span>
+        <span class="nickerp-shared-footer-suite">
+            NICKSCAN ERP SOLUTION
+        </span>
+        <a class="nickerp-shared-footer-launcher" href="@ModuleCtx.PortalLauncherUrl">
+            Portal launcher
+        </a>
+    </div>
+</footer>
+
+@code {
+    /// <summary>
+    /// Computed module version. Options-supplied value wins, otherwise
+    /// the entry assembly's <c>InformationalVersion</c>, otherwise
+    /// "0.0.0".
+    /// </summary>
+    public string ResolvedVersion
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(ChromeOptions.Version))
+            {
+                return ChromeOptions.Version!;
+            }
+
+            // Sprint 29 — read the entry assembly version (the running
+            // module's host). Static lookup at render time keeps this
+            // testable without an extra DI binding.
+            var asm = Assembly.GetEntryAssembly();
+            var info = asm?.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+            if (!string.IsNullOrWhiteSpace(info?.InformationalVersion))
+            {
+                return info!.InformationalVersion!;
+            }
+            return asm?.GetName().Version?.ToString() ?? "0.0.0";
+        }
+    }
+}

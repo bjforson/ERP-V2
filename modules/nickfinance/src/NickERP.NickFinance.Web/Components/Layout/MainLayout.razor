@@ -1,0 +1,39 @@
+@*
+ * NickFinance.Web MainLayout — Sprint 29 chrome adoption.
+ *
+ * NickFinance currently mounts its pages inside the portal host
+ * (apps/portal references this project via NickFinanceWebServiceCollectionExtensions
+ * and Routes.razor uses the portal's own MainLayout). This file exists
+ * for the post-pilot standalone NickFinance.Web host (port 5420 in the
+ * three-module co-deploy catalogue): when that host is built it will
+ * register IModuleContext with ModuleId = "nickfinance" and route via
+ * this layout. Pages don't have to change.
+ *
+ * The portal-hosted G2 pathfinder pages (Petty Cash, FX rates, etc.)
+ * keep using the portal's MainLayout — that path is unaffected by this
+ * file. Sprint 29 is the shared-chrome ADOPTION step; the standalone
+ * host build is post-pilot per ROADMAP §1 / locked answer 7.
+ *@
+@inherits LayoutComponentBase
+
+<SharedHeader ModuleId="nickfinance" />
+
+<div class="nickfinance-shell">
+    <nav class="nickfinance-sidenav">
+        <NavLink href="/finance/petty-cash/boxes" Match="NavLinkMatch.Prefix">Petty cash</NavLink>
+        <NavLink href="/finance/periods" Match="NavLinkMatch.Prefix">Periods</NavLink>
+        <NavLink href="/finance/fx-rates" Match="NavLinkMatch.Prefix">FX rates</NavLink>
+    </nav>
+
+    <main class="nickfinance-main">
+        @Body
+    </main>
+</div>
+
+<SharedFooter />
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">x</span>
+</div>

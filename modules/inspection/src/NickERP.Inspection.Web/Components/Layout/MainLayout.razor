@@ -1,5 +1,14 @@
 @inherits LayoutComponentBase
 
+@* Sprint 29 — three-module co-deploy chrome. SharedHeader sits above
+   the legacy TopNav so the suite reads as one product (back-to-launcher
+   link + identity dropdown). The legacy TopNav stays for now — its
+   notifications-bell + AppSwitcher slots are too valuable to drop in
+   one sprint, and a future iteration can fold them into the shared
+   chrome's slots. SharedFooter anchors the bottom with the version
+   badge + portal link. *@
+<SharedHeader ModuleId="inspection" />
+
 <TopNav AppName="Inspection v2" AppHomeHref="/" SearchEnabled="false">
     <NotificationsSlot>
         @* Sprint 8 P3 — overrides the placeholder shared bell with one
@@ -34,6 +43,8 @@
         @Body
     </main>
 </div>
+
+<SharedFooter />
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.

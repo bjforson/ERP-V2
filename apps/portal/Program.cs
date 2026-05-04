@@ -20,6 +20,9 @@ using NickERP.NickFinance.Web.Endpoints;
 // Sprint 14 / VP6 Phase A.5 — IAnalysisServiceBootstrap for Tenants.razor.
 using NickERP.Inspection.Application.AnalysisServices;
 using NickERP.Inspection.Database;
+// Sprint 29 — three-module co-deploy launcher.
+using NickERP.Portal.Services.Modules;
+using NickERP.Platform.Web.Shared.Modules;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -126,6 +129,24 @@ if (inspectionEnabled)
     builder.Services.AddAnalysisServiceBootstrap();
 }
 builder.Services.AddSingleton(new NickERP.Portal.Services.InspectionFeatureFlag(inspectionEnabled));
+
+// ---------------------------------------------------------------------------
+// Sprint 29 — three-module co-deploy launcher. Catalogue assembled at
+// startup from Portal:Modules:{Id}:BaseUrl with reasonable dev defaults
+// (5410 inspection, 5420 nickfinance, 5430 nickhr); per-tenant overrides
+// live in tenancy.tenant_module_settings. Registry + settings service are
+// scoped — they share the request's TenancyDbContext. The launcher page
+// also installs IModuleContext (sentinel "portal" module) so the shared
+// chrome can render on portal-side pages if a future iteration adopts it.
+// ---------------------------------------------------------------------------
+builder.Services.AddNickErpModuleRegistry(builder.Configuration);
+builder.Services.AddNickErpSharedChrome(opts =>
+{
+    opts.ModuleId = NickERP.Platform.Web.Shared.Modules.ModuleContext.DefaultModuleId;
+    opts.DisplayName = "NickERP Portal";
+    opts.PortalLauncherUrl = builder.Configuration["Portal:LauncherUrl"]
+        ?? NickERP.Platform.Web.Shared.Modules.ModuleContext.DefaultLauncherUrl;
+});
 
 // Default authorization policy: every endpoint or component requires auth.
 builder.Services.AddAuthorization(opts =>

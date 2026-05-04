@@ -3,11 +3,15 @@
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Platform.Audit.Database
 @using NickERP.Platform.Identity.Database
+@using NickERP.Platform.Tenancy
 @using NickERP.Platform.Tenancy.Database
+@using NickERP.Portal.Services.Modules
 @inject IdentityDbContext Identity
 @inject TenancyDbContext Tenancy
 @inject AuditDbContext Audit
 @inject NickERP.Portal.Services.NickFinanceFeatureFlag NickFinance
+@inject IModuleRegistry ModuleRegistry
+@inject ITenantContext TenantCtx
 
 <PageTitle>NickERP Portal</PageTitle>
 
@@ -27,19 +31,30 @@
 
 <section class="portal-section">
     <h2>v2 modules</h2>
+    @* Sprint 29 — module tiles flow through IModuleRegistry so per-tenant
+       overrides apply. Comms placeholder retained as a portal-local
+       reminder of the v1-shimmed module. *@
     <div class="portal-app-grid">
-        <AppCard Title="Inspection v2" Description="Federated inspection — admin skeleton live" Href="http://localhost:5410" Color="#0ea5e9" Initial="I" />
+        @if (_modules is not null)
+        {
+            @foreach (var m in _modules)
+            {
+                <AppCard Title="@m.DisplayName"
+                         Description="@m.Description"
+                         Href="@m.BaseUrl"
+                         Color="@m.Color"
+                         Initial="@m.IconHint" />
+            }
+        }
         @if (NickFinance.Enabled)
         {
-            <AppCard Title="Petty Cash" Description="NickFinance pathfinder (G2)" Href="/finance/petty-cash/boxes" Color="#16a34a" Initial="F" />
+            <AppCard Title="Petty Cash" Description="NickFinance G2 pathfinder (portal-local)" Href="/finance/petty-cash/boxes" Color="#16a34a" Initial="F" />
         }
-        else
-        {
-            <AppCard Title="Petty Cash" Description="NickFinance pathfinder (G2) — not configured for this host" Href="#" Color="#16a34a" Initial="F" Disabled="true" />
-        }
-        <AppCard Title="HR v2" Description="Adapted from v1, not rebuilt — link lands when adapter shim ships" Href="#" Color="#7c3aed" Initial="H" Disabled="true" />
         <AppCard Title="Comms v2" Description="Adapted from v1, not rebuilt" Href="#" Color="#06b6d4" Initial="C" Disabled="true" />
     </div>
+    <p class="portal-page-subtitle">
+        <a href="/launcher">Open the dedicated launcher &rarr;</a>
+    </p>
 </section>
 
 <section class="portal-section">
@@ -59,6 +74,7 @@
     private long _userCount;
     private long _scopeCount;
     private long _eventCount;
+    private IReadOnlyList<ModuleRegistryEntry>? _modules;
 
     protected override async Task OnInitializedAsync()
     {
@@ -67,5 +83,20 @@
         try { _userCount = await Identity.Users.LongCountAsync(); } catch { _userCount = 0; }
         try { _scopeCount = await Identity.AppScopes.LongCountAsync(); } catch { _scopeCount = 0; }
         try { _eventCount = await Audit.Events.LongCountAsync(); } catch { _eventCount = 0; }
+
+        // Sprint 29 — module tiles via the registry. Same best-effort
+        // pattern as the count probes: empty list ⇒ render no tiles
+        // rather than blowing up the home page.
+        try
+        {
+            var tenantId = TenantCtx.IsResolved
+                ? TenantCtx.TenantId
+                : NickERP.Platform.Tenancy.Entities.Tenant.DefaultTenantId;
+            _modules = await ModuleRegistry.GetModulesForTenantAsync(tenantId);
+        }
+        catch
+        {
+            _modules = Array.Empty<ModuleRegistryEntry>();
+        }
     }
 }
