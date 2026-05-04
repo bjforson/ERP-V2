@@ -143,10 +143,14 @@ public sealed class RulesAdminService
             throw new InvalidOperationException(
                 $"Rule '{ruleId}' is not registered. Refusing to write a tenant override for an unknown rule.");
 
+        // Lower-case both sides for the lookup so the unique-index
+        // (TenantId, RuleId) is honoured while staying case-insensitive
+        // across the in-memory test provider + Postgres production.
+        var ruleIdLower = ruleId.ToLowerInvariant();
         var existing = await _tenancyDb.TenantValidationRuleSettings
             .FirstOrDefaultAsync(
                 s => s.TenantId == tenantId
-                  && EF.Functions.ILike(s.RuleId, ruleId),
+                  && s.RuleId.ToLower() == ruleIdLower,
                 ct);
         var now = DateTimeOffset.UtcNow;
         if (existing is null)

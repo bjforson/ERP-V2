@@ -33,11 +33,12 @@ public sealed class DbRuleEnablementProvider : IRuleEnablementProvider
     public async Task<bool> IsEnabledAsync(long tenantId, string ruleId, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(ruleId)) return true;
+        var ruleIdLower = ruleId.ToLowerInvariant();
         var row = await _tenancyDb.TenantValidationRuleSettings
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 s => s.TenantId == tenantId
-                  && EF.Functions.ILike(s.RuleId, ruleId),
+                  && s.RuleId.ToLower() == ruleIdLower,
                 ct);
         return row?.Enabled ?? true;
     }

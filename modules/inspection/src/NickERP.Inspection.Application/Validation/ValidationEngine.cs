@@ -57,15 +57,9 @@ public sealed class ValidationEngine
         ITenantContext tenant,
         ILogger<ValidationEngine> logger)
     {
-        _db = db ?? throw new ArgumentNullException(nameof(db));
-        _enablement = enablement ?? throw new ArgumentNullException(nameof(enablement));
-        _events = events ?? throw new ArgumentNullException(nameof(events));
-        _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-
-        // Materialise + sort by RuleId so the eval order is stable across
-        // runs. Throws on duplicate ids — the engine refuses to silently
-        // shadow a rule.
+        // Validate rule shape before stashing dependencies so a duplicate
+        // ruleId in a misconfigured DI is the diagnostic the user sees,
+        // not a downstream NullReferenceException.
         var ruleList = rules?.ToList() ?? new List<IValidationRule>();
         var dupes = ruleList
             .GroupBy(r => r.RuleId, StringComparer.OrdinalIgnoreCase)
@@ -78,6 +72,15 @@ public sealed class ValidationEngine
                 $"Duplicate IValidationRule.RuleId registrations: {string.Join(", ", dupes)}. "
                 + "Rule ids must be unique within a deployment.");
         }
+
+        _db = db ?? throw new ArgumentNullException(nameof(db));
+        _enablement = enablement ?? throw new ArgumentNullException(nameof(enablement));
+        _events = events ?? throw new ArgumentNullException(nameof(events));
+        _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+        // Stable eval order — sort by RuleId so two evaluations of the
+        // same case produce the same audit transcript.
         _rules = ruleList.OrderBy(r => r.RuleId, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
