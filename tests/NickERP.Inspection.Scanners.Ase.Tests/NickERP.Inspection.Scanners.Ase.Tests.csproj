@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Scanners.Ase\NickERP.Inspection.Scanners.Ase.csproj" />
+  </ItemGroup>
+
+</Project>

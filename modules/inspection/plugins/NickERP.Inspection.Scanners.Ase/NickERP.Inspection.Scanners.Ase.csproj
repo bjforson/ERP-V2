@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Scanners.Ase</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Scanners.Ase</AssemblyName>
+    <Description>NickERP Inspection v2 — ASE IScannerAdapter + IScannerCursorSyncAdapter. Vendor-specific upstream is a remote SQL Server cursor; the v2 adapter is a stub-shaped real plugin so the cursor-sync contract is exercised end-to-end without on-site hardware. Real ASE protocol wiring lands when an ASE site is provisioned.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!--
+      Class libraries don't copy NuGet PackageReference DLLs to output by default,
+      but plugins are loaded from a sibling directory at runtime, not from the
+      host's resolved deps. Force NuGet deps next to the plugin DLL so the
+      plugin loader can resolve them via AssemblyLoadContext. (Mirrors FS6000.)
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Scanners.Abstractions\NickERP.Inspection.Scanners.Abstractions.csproj" />
+    <!-- Sprint 50 — ASE adapter ships canonical scan-package shapes via
+         the IScannerAdapter.ParseScanAsync overload defined in
+         NickERP.Inspection.Edge.Abstractions; the package layout matches
+         FS6000's vendor-neutral mapping. -->
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Edge.Abstractions\NickERP.Inspection.Edge.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
