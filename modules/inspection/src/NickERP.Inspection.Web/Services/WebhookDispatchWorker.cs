@@ -399,9 +399,11 @@ public sealed class WebhookDispatchWorker : BackgroundService, IBackgroundServic
         catch { /* best-effort */ }
 
         // Subset of audit-event types this dispatcher cares about;
-        // inlined here so a non-webhook event type doesn't appear
-        // in the dispatch query plan at all.
-        var subscribedTypes = StandardEventTypeSet;
+        // materialised as a string[] so EF's
+        // <c>contains</c> translation works on both Postgres + the
+        // EF in-memory provider used in tests (the latter doesn't
+        // know how to lift IReadOnlySet&lt;T&gt;.Contains).
+        var subscribedTypes = StandardEventTypesArray;
 
         IQueryable<DomainEventRow> q = auditDb.Events
             .AsNoTracking()
@@ -446,8 +448,11 @@ public sealed class WebhookDispatchWorker : BackgroundService, IBackgroundServic
     /// Map an <see cref="DomainEventRow"/> to a
     /// <see cref="WebhookEvent"/>. Caller must have verified the
     /// event type belongs to <see cref="WebhookEventTypes"/>.
+    /// Public static so tests can drive the mapper without spinning
+    /// up the full DI graph; production callers go through
+    /// <see cref="DispatchOnceAsync"/>.
     /// </summary>
-    internal static WebhookEvent MapToWebhookEvent(DomainEventRow row, long tenantId)
+    public static WebhookEvent MapToWebhookEvent(DomainEventRow row, long tenantId)
     {
         // Payload deserialise — best-effort. Audit.events stores JSON
         // documents per the publisher contract; we lift the top-level
@@ -591,9 +596,11 @@ public sealed class WebhookDispatchWorker : BackgroundService, IBackgroundServic
     /// Static set of standard <see cref="WebhookEventTypes"/> string
     /// constants. Materialised once so the audit-event LINQ query
     /// can <c>.Contains</c> against a deterministic set without
-    /// reflecting on every tick.
+    /// reflecting on every tick. Public static so tests can assert
+    /// drift against the constants in
+    /// <see cref="WebhookEventTypes"/>.
     /// </summary>
-    internal static readonly IReadOnlySet<string> StandardEventTypeSet = new HashSet<string>(StringComparer.Ordinal)
+    public static readonly IReadOnlySet<string> StandardEventTypeSet = new HashSet<string>(StringComparer.Ordinal)
     {
         WebhookEventTypes.HIGH_RISK_SCAN_DETECTED,
         WebhookEventTypes.INSPECTION_REQUIRED,
@@ -606,6 +613,15 @@ public sealed class WebhookDispatchWorker : BackgroundService, IBackgroundServic
         WebhookEventTypes.LEGAL_HOLD_RELEASED,
         WebhookEventTypes.THRESHOLD_CHANGED
     };
+
+    /// <summary>
+    /// Same content as <see cref="StandardEventTypeSet"/> but as a
+    /// concrete <c>string[]</c> so EF's
+    /// <c>Where(... arr.Contains(col) ...)</c> translates on both
+    /// Npgsql + the EF in-memory provider (the latter doesn't lift
+    /// <see cref="IReadOnlySet{T}.Contains(T)"/>).
+    /// </summary>
+    internal static readonly string[] StandardEventTypesArray = StandardEventTypeSet.ToArray();
 }
 
 /// <summary>
