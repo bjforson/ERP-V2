@@ -310,6 +310,14 @@ public sealed class InspectionDbContext : DbContext
                 .HasDefaultValue(NickERP.Inspection.Core.Retention.RetentionClass.Standard);
             e.Property(x => x.LegalHold).IsRequired().HasDefaultValue(false);
             e.Property(x => x.LegalHoldReason).HasMaxLength(500);
+            // Sprint 45 / Phase B — canonical ScanPackage manifest fields.
+            // Nullable across the board so artifacts ingested via the
+            // pre-Sprint-45 path (no canonical bundle) coexist with
+            // canonical-bundle artifacts post-rollout.
+            e.Property(x => x.ManifestJson).HasColumnType("jsonb");
+            e.Property(x => x.ManifestSha256).HasColumnType("bytea");
+            e.Property(x => x.ManifestSignature).HasColumnType("bytea");
+            e.Property(x => x.ManifestVerifiedAt);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => x.ContentHash).HasDatabaseName("ix_scan_artifacts_content_hash");
@@ -322,6 +330,12 @@ public sealed class InspectionDbContext : DbContext
                 .HasDatabaseName("ix_scan_artifacts_legal_hold");
             e.HasIndex(x => new { x.TenantId, x.RetentionClass, x.CreatedAt })
                 .HasDatabaseName("ix_scan_artifacts_retention_class");
+            // Sprint 45 / Phase B — newly-verified feed for the
+            // /admin/sla per-tier dashboard's "manifest replays in the
+            // last hour" panel. (TenantId, ManifestVerifiedAt DESC).
+            e.HasIndex(x => new { x.TenantId, x.ManifestVerifiedAt })
+                .IsDescending(false, true)
+                .HasDatabaseName("ix_scan_artifacts_tenant_manifest_verified");
 
             e.HasMany<ScanRenderArtifact>().WithOne(r => r.ScanArtifact).HasForeignKey(r => r.ScanArtifactId).OnDelete(DeleteBehavior.Cascade);
         });

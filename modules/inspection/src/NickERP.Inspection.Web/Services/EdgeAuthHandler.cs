@@ -125,7 +125,13 @@ public sealed class EdgeAuthHandler
             var nodeResult = await TryAuthenticatePerNodeAsync(presentedKey, ct);
             if (nodeResult.Outcome == EdgeAuthOutcome.AuthenticatedPerNode)
             {
-                return nodeResult;
+                // Sprint 45 / Phase B — surface the plaintext key on the
+                // result so the EdgeReplayEndpoint can use it as the
+                // manifest HMAC signing key for canonical scan-package
+                // validation. Same key, no new infrastructure. The
+                // result type is request-scoped and never logged with
+                // the key in scope (the existing SafePrefix path stays).
+                return nodeResult with { PresentedKey = presentedKey };
             }
 
             // Per-node key was presented but didn't authenticate. Don't
@@ -308,8 +314,18 @@ public enum EdgeAuthOutcome
     LookupError = 6
 }
 
-/// <summary>Result of an edge-auth attempt. <see cref="MatchedRow"/> is non-null only when a per-node row was found (whether or not it was accepted).</summary>
-public sealed record EdgeAuthResult(EdgeAuthOutcome Outcome, EdgeNodeApiKey? MatchedRow);
+/// <summary>
+/// Result of an edge-auth attempt. <see cref="MatchedRow"/> is non-null
+/// only when a per-node row was found (whether or not it was accepted);
+/// <see cref="PresentedKey"/> is non-null only on
+/// <see cref="EdgeAuthOutcome.AuthenticatedPerNode"/> outcomes — the
+/// EdgeReplayEndpoint uses it as the manifest HMAC signing key for
+/// canonical-scan-package validation (Sprint 45 Phase B).
+/// </summary>
+public sealed record EdgeAuthResult(
+    EdgeAuthOutcome Outcome,
+    EdgeNodeApiKey? MatchedRow,
+    string? PresentedKey = null);
 
 /// <summary>
 /// Production <see cref="IEdgeKeyHashEnvelope"/> backed by ASP.NET Core

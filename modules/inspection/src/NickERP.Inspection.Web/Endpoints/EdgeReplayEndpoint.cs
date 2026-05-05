@@ -5,7 +5,11 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Core.Entities;
+using NickERP.Inspection.Database;
+using NickERP.Inspection.Edge.Abstractions;
 using NickERP.Inspection.Web.Services;
 using NickERP.Platform.Audit.Database;
 using NickERP.Platform.Audit.Database.Entities;
@@ -91,6 +95,23 @@ public static class EdgeReplayEndpoint
     public const string ScannerStatusChangedHint = "inspection.scanner.status.changed";
 
     /// <summary>
+    /// Sprint 45 / Phase B — hint string for canonical scan-package
+    /// replays. Payload is a serialised <see cref="ScanPackage"/>
+    /// envelope (per <c>NickERP.Inspection.Edge.Abstractions</c>). The
+    /// endpoint validates the manifest sha256 + HMAC signature under
+    /// the per-edge key (Sprint 13 EdgeAuthHandler reads same key) and,
+    /// on success, persists ScanArtifact rows with the manifest fields
+    /// stored alongside.
+    /// </summary>
+    public const string ScanPackageHint = "inspection.scan.package";
+
+    /// <summary>Sprint 45 / Phase B — audit event emitted when manifest validation succeeds.</summary>
+    public const string ManifestValidatedAudit = "nickerp.edge.replay.manifest_validated";
+
+    /// <summary>Sprint 45 / Phase B — audit event emitted when manifest validation fails.</summary>
+    public const string ManifestValidationFailedAudit = "nickerp.edge.replay.manifest_validation_failed";
+
+    /// <summary>
     /// Map the edge replay endpoint onto <paramref name="app"/>.
     /// Wire from <c>Program.cs</c> after authentication; the endpoint
     /// itself is anonymous (<see cref="EdgeAuthHandler"/> gates).
@@ -118,6 +139,7 @@ public static class EdgeReplayEndpoint
         ILoggerFactory loggerFactory,
         EdgeReplayRequestDto body,
         TimeProvider? clock = null,
+        IServiceProvider? services = null,
         CancellationToken ct = default)
     {
         var logger = loggerFactory.CreateLogger("EdgeReplayEndpoint");
@@ -174,8 +196,35 @@ public static class EdgeReplayEndpoint
         for (var i = 0; i < body.Events.Count; i++)
         {
             var evt = body.Events[i];
-            var entryResult = await ProcessOneAsync(
-                db, body.EdgeNodeId, evt, authorizedSet, now, logger, ct);
+            EdgeReplayResultDto entryResult;
+            // Sprint 45 / Phase B — scan-package hint takes a different
+            // path: validate manifest sha256 + HMAC signature under the
+            // per-edge key, persist ScanArtifact rows on success, audit
+            // either way. The audit-event-replay paths (Sprint 11 / 17)
+            // stay on ProcessOneAsync.
+            if (string.Equals(evt.EventTypeHint, ScanPackageHint, StringComparison.Ordinal))
+            {
+                if (services is null)
+                {
+                    // Tests without a full service-provider can't exercise
+                    // the scan-package path (it needs InspectionDbContext +
+                    // AuditDbContext via DI). Fail-fast with a per-entry
+                    // error so the lack of wiring is loud, not silent.
+                    entryResult = new EdgeReplayResultDto(false,
+                        "scan-package replay requires the full DI provider; configure HandleAsync(services:...) in the host wiring");
+                }
+                else
+                {
+                    entryResult = await ProcessScanPackageAsync(
+                        services, body.EdgeNodeId, evt, authorizedSet,
+                        authResult.PresentedKey, now, logger, ct);
+                }
+            }
+            else
+            {
+                entryResult = await ProcessOneAsync(
+                    db, body.EdgeNodeId, evt, authorizedSet, now, logger, ct);
+            }
             results.Add(entryResult);
             if (entryResult.Ok)
             {
@@ -356,6 +405,390 @@ public static class EdgeReplayEndpoint
 
         return new EdgeReplayResultDto(true, null);
     }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — scan-package validation + persistence.
+    ///
+    /// <para>
+    /// <b>Flow.</b>
+    /// <list type="number">
+    ///   <item><description>Authorization check — same per-edge / per-tenant gating as Sprint 11 / 17 paths.</description></item>
+    ///   <item><description>Future-timestamp guard — same 60s tolerance.</description></item>
+    ///   <item><description>Plaintext key required — the per-edge HMAC signing key is the presented X-Edge-Api-Key plaintext (Sprint 13 contract; no new key infrastructure). Legacy X-Edge-Token path cannot sign manifests.</description></item>
+    ///   <item><description>Wire-DTO → canonical <see cref="ScanPackage"/> conversion. Base64 image data decoded; manifest sha256 + signature decoded.</description></item>
+    ///   <item><description><see cref="ScanPackageValidator.Validate"/> runs the three-stage check (required-field shape, per-image sha256, manifest sha256 + HMAC signature).</description></item>
+    ///   <item><description>On failure: emit <see cref="ManifestValidationFailedAudit"/>; return 400-shaped per-entry error indicating which check failed.</description></item>
+    ///   <item><description>On success: persist one <see cref="ScanArtifact"/> per <see cref="ImageFile"/> with manifest fields stored alongside; emit <see cref="ManifestValidatedAudit"/>; return ok.</description></item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private static async Task<EdgeReplayResultDto> ProcessScanPackageAsync(
+        IServiceProvider services,
+        string edgeNodeId,
+        EdgeReplayEventDto evt,
+        HashSet<long> authorizedTenants,
+        string? presentedKey,
+        DateTimeOffset replayedAt,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        // ---- Authorization (per-edge / per-tenant). ---------------------
+        if (!authorizedTenants.Contains(evt.TenantId))
+        {
+            return new EdgeReplayResultDto(false,
+                $"tenant {evt.TenantId} not authorized for edge {edgeNodeId}");
+        }
+
+        // ---- Future-timestamp guard. ------------------------------------
+        if (evt.EdgeTimestamp > replayedAt.AddSeconds(60))
+        {
+            return new EdgeReplayResultDto(false,
+                $"edge timestamp {evt.EdgeTimestamp:O} is more than 60s in the future relative to server time {replayedAt:O}");
+        }
+
+        // ---- Plaintext key required. ------------------------------------
+        // The legacy X-Edge-Token path cannot sign manifests — there's
+        // only one shared secret and it's not a per-edge HMAC key. Refuse
+        // scan-package replay on the legacy path so an attacker who guessed
+        // the legacy token can't replay scans on behalf of any edge.
+        if (string.IsNullOrEmpty(presentedKey))
+        {
+            return new EdgeReplayResultDto(false,
+                "scan-package replay requires a per-edge X-Edge-Api-Key header (legacy X-Edge-Token cannot sign manifests)");
+        }
+
+        // ---- Wire-DTO → ScanPackage. ------------------------------------
+        ScanPackage package;
+        try
+        {
+            var dto = evt.Payload.Deserialize<ScanPackageWireDto>(ScanPackageJsonOptions);
+            if (dto is null)
+            {
+                return await EmitManifestFailureAsync(services, edgeNodeId, evt, replayedAt,
+                    ScanPackageFailureKind.RequiredFieldMissing,
+                    "scan-package payload could not be deserialised", logger, ct);
+            }
+            package = dto.ToScanPackage();
+        }
+        catch (FormatException ex)
+        {
+            return await EmitManifestFailureAsync(services, edgeNodeId, evt, replayedAt,
+                ScanPackageFailureKind.RequiredFieldMissing,
+                $"scan-package payload base64 decode failed: {ex.Message}", logger, ct);
+        }
+        catch (JsonException ex)
+        {
+            return await EmitManifestFailureAsync(services, edgeNodeId, evt, replayedAt,
+                ScanPackageFailureKind.RequiredFieldMissing,
+                $"scan-package payload JSON malformed: {ex.Message}", logger, ct);
+        }
+
+        // ---- Manifest validation. ---------------------------------------
+        var hmacKey = Encoding.UTF8.GetBytes(presentedKey);
+        var validation = ScanPackageValidator.Validate(package, hmacKey);
+        if (!validation.IsValid)
+        {
+            return await EmitManifestFailureAsync(services, edgeNodeId, evt, replayedAt,
+                validation.FailureKind ?? ScanPackageFailureKind.RequiredFieldMissing,
+                validation.FailureReason ?? "manifest validation failed",
+                logger, ct);
+        }
+
+        // ---- Persistence + success audit. --------------------------------
+        return await PersistScanPackageAsync(
+            services, edgeNodeId, evt, package, validation.ManifestJson!, replayedAt, logger, ct);
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — emit a <see cref="ManifestValidationFailedAudit"/>
+    /// audit event + return a per-entry failure result. The audit row
+    /// is best-effort: if the audit DB is unavailable we still return
+    /// the failure to the caller (the per-entry response carries the
+    /// load-bearing diagnostic).
+    /// </summary>
+    private static async Task<EdgeReplayResultDto> EmitManifestFailureAsync(
+        IServiceProvider services,
+        string edgeNodeId,
+        EdgeReplayEventDto evt,
+        DateTimeOffset replayedAt,
+        ScanPackageFailureKind kind,
+        string reason,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var scope = services.CreateScope();
+            var auditDb = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+            var tenantCtx = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+            tenantCtx.SetSystemContext();
+
+            var scanId = TryReadScanId(evt.Payload);
+            var payload = JsonSerializer.SerializeToDocument(new
+            {
+                edgeNodeId,
+                tenantId = evt.TenantId,
+                scanId,
+                failureReason = reason,
+                failureKind = kind.ToString()
+            });
+            var idempotencyKey = ComputeManifestAuditKey(
+                edgeNodeId, evt.TenantId, evt.EdgeTimestamp, scanId, kind);
+            auditDb.Events.Add(new DomainEventRow
+            {
+                EventId = Guid.NewGuid(),
+                TenantId = evt.TenantId,
+                ActorUserId = null,
+                CorrelationId = null,
+                EventType = ManifestValidationFailedAudit,
+                EntityType = "ScanPackage",
+                EntityId = scanId ?? string.Empty,
+                Payload = payload,
+                OccurredAt = evt.EdgeTimestamp,
+                IngestedAt = replayedAt,
+                IdempotencyKey = idempotencyKey,
+                PrevEventHash = null
+            });
+            await auditDb.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "EdgeReplayEndpoint: failed to write manifest_validation_failed audit row for edge={Edge} tenant={Tenant}.",
+                edgeNodeId, evt.TenantId);
+        }
+
+        return new EdgeReplayResultDto(
+            false,
+            $"manifest validation failed ({kind}): {reason}");
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — persist one <see cref="ScanArtifact"/> per
+    /// <see cref="ImageFile"/> on the inspection DB, with manifest
+    /// fields stored alongside (<see cref="ScanArtifact.ManifestJson"/>,
+    /// <see cref="ScanArtifact.ManifestSha256"/>,
+    /// <see cref="ScanArtifact.ManifestSignature"/>,
+    /// <see cref="ScanArtifact.ManifestVerifiedAt"/>). Then emit
+    /// <see cref="ManifestValidatedAudit"/>.
+    ///
+    /// <para>
+    /// The artifact rows are NOT linked to a Scan/Case yet — the
+    /// inspection-side workflow projector consumes the manifest_validated
+    /// audit events in a future sprint and binds them to cases. The
+    /// rows here are durable, content-addressed (per-file Sha256Hex →
+    /// <see cref="ScanArtifact.ContentHash"/>), and idempotent
+    /// (re-replay of the same package collapses on
+    /// <c>(TenantId, ContentHash)</c> via the existing index posture).
+    /// </para>
+    /// </summary>
+    private static async Task<EdgeReplayResultDto> PersistScanPackageAsync(
+        IServiceProvider services,
+        string edgeNodeId,
+        EdgeReplayEventDto evt,
+        ScanPackage package,
+        byte[] manifestJson,
+        DateTimeOffset replayedAt,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        using var scope = services.CreateScope();
+        var inspectionDb = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var auditDb = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var tenantCtx = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+        tenantCtx.SetTenant(evt.TenantId);
+
+        // De-dup: if any of these (TenantId, ContentHash) rows already
+        // exist, the replay collapses to a no-op success — the
+        // canonical bundle is content-addressed.
+        var existingHashes = new HashSet<string>(StringComparer.Ordinal);
+        if (package.ImageFiles is { Count: > 0 })
+        {
+            var hashes = package.ImageFiles.Select(f => f.Sha256Hex).ToList();
+            var existing = await inspectionDb.ScanArtifacts
+                .Where(a => a.TenantId == evt.TenantId && hashes.Contains(a.ContentHash))
+                .Select(a => a.ContentHash)
+                .ToListAsync(ct);
+            foreach (var h in existing) existingHashes.Add(h);
+        }
+
+        var manifestSha256 = package.ManifestSha256.ToArray();
+        var manifestSignature = package.ManifestSignature.ToArray();
+        var manifestJsonString = Encoding.UTF8.GetString(manifestJson);
+        var nowUtc = replayedAt;
+
+        var newRows = 0;
+        foreach (var file in package.ImageFiles ?? Array.Empty<ImageFile>())
+        {
+            if (existingHashes.Contains(file.Sha256Hex)) continue;
+
+            inspectionDb.ScanArtifacts.Add(new ScanArtifact
+            {
+                Id = Guid.NewGuid(),
+                ScanId = Guid.Empty, // unbound; workflow projector binds later
+                ArtifactKind = MapView(file.View),
+                StorageUri = $"edge-replay://{edgeNodeId}/{package.ScanId}/{file.FileName}",
+                MimeType = "application/octet-stream",
+                WidthPx = 0,
+                HeightPx = 0,
+                Channels = 1,
+                ContentHash = file.Sha256Hex,
+                MetadataJson = BuildArtifactMetadataJson(package, file),
+                CreatedAt = replayedAt,
+                ManifestJson = manifestJsonString,
+                ManifestSha256 = manifestSha256,
+                ManifestSignature = manifestSignature,
+                ManifestVerifiedAt = nowUtc,
+                TenantId = evt.TenantId
+            });
+            newRows++;
+        }
+
+        if (newRows > 0)
+        {
+            try
+            {
+                await inspectionDb.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogError(ex,
+                    "EdgeReplayEndpoint: ScanArtifact persistence failed for edge={Edge} tenant={Tenant} scanId={ScanId}.",
+                    edgeNodeId, evt.TenantId, package.ScanId);
+                return new EdgeReplayResultDto(false, $"persistence failure: {ex.Message}");
+            }
+        }
+
+        // Success audit on the audit DB.
+        try
+        {
+            tenantCtx.SetSystemContext();
+            var payload = JsonSerializer.SerializeToDocument(new
+            {
+                edgeNodeId,
+                tenantId = evt.TenantId,
+                scanId = package.ScanId,
+                imageCount = package.ImageFiles?.Count ?? 0,
+                newArtifactRows = newRows
+            });
+            var idempotencyKey = ComputeManifestAuditKey(
+                edgeNodeId, evt.TenantId, evt.EdgeTimestamp, package.ScanId, kind: null);
+            auditDb.Events.Add(new DomainEventRow
+            {
+                EventId = Guid.NewGuid(),
+                TenantId = evt.TenantId,
+                ActorUserId = null,
+                CorrelationId = null,
+                EventType = ManifestValidatedAudit,
+                EntityType = "ScanPackage",
+                EntityId = package.ScanId,
+                Payload = payload,
+                OccurredAt = evt.EdgeTimestamp,
+                IngestedAt = replayedAt,
+                IdempotencyKey = idempotencyKey,
+                PrevEventHash = null
+            });
+            await auditDb.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "EdgeReplayEndpoint: failed to write manifest_validated audit row for edge={Edge} tenant={Tenant} scanId={ScanId}.",
+                edgeNodeId, evt.TenantId, package.ScanId);
+        }
+
+        return new EdgeReplayResultDto(true, null);
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — best-effort read of <c>scan_id</c> from the
+    /// raw payload, used to populate audit-row <c>EntityId</c> when
+    /// validation fails before we can deserialise the full package.
+    /// </summary>
+    private static string? TryReadScanId(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object) return null;
+        if (payload.TryGetProperty("scan_id", out var prop) && prop.ValueKind == JsonValueKind.String)
+            return prop.GetString();
+        if (payload.TryGetProperty("scanId", out var camel) && camel.ValueKind == JsonValueKind.String)
+            return camel.GetString();
+        return null;
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — deterministic idempotency key for manifest
+    /// audit rows. Distinct namespace from the Sprint 11 / 17 path so a
+    /// scan-package replay doesn't collide with an audit-event replay
+    /// from the same edge at the same instant.
+    /// </summary>
+    private static string ComputeManifestAuditKey(
+        string edgeNodeId, long tenantId, DateTimeOffset edgeTimestamp,
+        string? scanId, ScanPackageFailureKind? kind)
+    {
+        var marker = kind?.ToString() ?? "ok";
+        var idPart = scanId ?? edgeTimestamp.UtcTicks.ToString();
+        return $"manifest|{edgeNodeId}|{tenantId}|{idPart}|{marker}";
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — map vendor-neutral view tag to the
+    /// <see cref="ScanArtifact.ArtifactKind"/> column. Free-form on
+    /// either side; this just normalises common values so the dashboard
+    /// can group sensibly.
+    /// </summary>
+    private static string MapView(string? view)
+    {
+        if (string.IsNullOrWhiteSpace(view)) return "Primary";
+        return view.ToLowerInvariant() switch
+        {
+            "primary" => "Primary",
+            "high-energy" => "HighEnergy",
+            "low-energy" => "LowEnergy",
+            "material" => "Material",
+            "side" or "side-view" => "SideView",
+            _ => view
+        };
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — build the per-artifact metadata JSON
+    /// stored on <see cref="ScanArtifact.MetadataJson"/>. Keeps the
+    /// vendor-neutral view tag, the source filename, and the package
+    /// identity for downstream binding.
+    /// </summary>
+    private static string BuildArtifactMetadataJson(ScanPackage package, ImageFile file)
+    {
+        var doc = new
+        {
+            scan_id = package.ScanId,
+            scanner_id = package.ScannerId,
+            site_id = package.SiteId,
+            gateway_id = package.GatewayId,
+            scan_type = package.ScanType,
+            view = file.View ?? string.Empty,
+            file_name = file.FileName,
+            size_bytes = file.SizeBytes,
+            occurred_at = package.OccurredAt.ToString("O"),
+            container_number = package.ContainerNumber ?? string.Empty,
+            vehicle_plate = package.VehiclePlate ?? string.Empty,
+            declaration_number = package.DeclarationNumber ?? string.Empty,
+            manifest_number = package.ManifestNumber ?? string.Empty
+        };
+        return JsonSerializer.Serialize(doc, ScanPackageJsonOptions);
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — JSON options for the wire-format scan
+    /// package payload. Snake-case property naming matches the
+    /// canonical manifest shape (see
+    /// <see cref="ScanPackageManifest.BuildManifestJson"/>).
+    /// </summary>
+    internal static readonly JsonSerializerOptions ScanPackageJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = false
+    };
 
     /// <summary>
     /// Sprint 17 — resolve the audit-row metadata for one event based on
@@ -588,6 +1021,101 @@ public sealed record ScannerStatusChangedPayload(
     string? StatusDetail,
     Guid? ActorUserId,
     string? CorrelationId);
+
+/// <summary>
+/// Sprint 45 / Phase B — wire-format DTO for a canonical
+/// <see cref="ScanPackage"/> payload received via
+/// <c>/api/edge/replay</c>. Snake-case property names match the
+/// canonical manifest JSON shape (see
+/// <see cref="ScanPackageManifest.BuildManifestJson"/>); image bytes
+/// arrive as base64 strings.
+///
+/// <para>
+/// <b>Why a wire DTO.</b> The in-memory <see cref="ScanPackage"/>
+/// record holds <see cref="ImageFile.Data"/> as raw bytes; the JSON
+/// envelope encodes them as base64 strings. The DTO bridges the two —
+/// validation runs against the in-memory shape, the wire shape stays
+/// transport-friendly.
+/// </para>
+/// </summary>
+public sealed class ScanPackageWireDto
+{
+    public string ScanId { get; set; } = string.Empty;
+    public string SiteId { get; set; } = string.Empty;
+    public string ScannerId { get; set; } = string.Empty;
+    public string GatewayId { get; set; } = string.Empty;
+    public string ScanType { get; set; } = string.Empty;
+    public DateTimeOffset OccurredAt { get; set; }
+    public string OperatorId { get; set; } = string.Empty;
+    public string ContainerNumber { get; set; } = string.Empty;
+    public string VehiclePlate { get; set; } = string.Empty;
+    public string DeclarationNumber { get; set; } = string.Empty;
+    public string ManifestNumber { get; set; } = string.Empty;
+    public List<ImageFileWireDto> ImageFiles { get; set; } = new();
+    /// <summary>Base64 of the manifest sha256 digest.</summary>
+    public string ManifestSha256 { get; set; } = string.Empty;
+    /// <summary>Base64 of the manifest HMAC-SHA256 signature.</summary>
+    public string ManifestSignature { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Convert the wire DTO into an in-memory
+    /// <see cref="ScanPackage"/>. May throw <see cref="FormatException"/>
+    /// for malformed base64 — the endpoint catches and emits a
+    /// per-entry RequiredFieldMissing failure.
+    /// </summary>
+    public ScanPackage ToScanPackage()
+    {
+        var images = (ImageFiles ?? new List<ImageFileWireDto>())
+            .Select(f => f.ToImageFile())
+            .ToList();
+        return new ScanPackage(
+            ScanId: ScanId ?? string.Empty,
+            SiteId: SiteId ?? string.Empty,
+            ScannerId: ScannerId ?? string.Empty,
+            GatewayId: GatewayId ?? string.Empty,
+            ScanType: ScanType ?? string.Empty,
+            OccurredAt: OccurredAt,
+            OperatorId: OperatorId ?? string.Empty,
+            ContainerNumber: ContainerNumber ?? string.Empty,
+            VehiclePlate: VehiclePlate ?? string.Empty,
+            DeclarationNumber: DeclarationNumber ?? string.Empty,
+            ManifestNumber: ManifestNumber ?? string.Empty,
+            ImageFiles: images,
+            ManifestSha256: string.IsNullOrEmpty(ManifestSha256)
+                ? Array.Empty<byte>()
+                : Convert.FromBase64String(ManifestSha256),
+            ManifestSignature: string.IsNullOrEmpty(ManifestSignature)
+                ? Array.Empty<byte>()
+                : Convert.FromBase64String(ManifestSignature));
+    }
+}
+
+/// <summary>
+/// Sprint 45 / Phase B — wire-format DTO for one image inside a
+/// <see cref="ScanPackageWireDto"/>. <see cref="Data"/> is base64.
+/// </summary>
+public sealed class ImageFileWireDto
+{
+    public string FileName { get; set; } = string.Empty;
+    public string Sha256Hex { get; set; } = string.Empty;
+    public string View { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    /// <summary>Base64 of the raw image bytes.</summary>
+    public string Data { get; set; } = string.Empty;
+
+    public ImageFile ToImageFile()
+    {
+        var bytes = string.IsNullOrEmpty(Data)
+            ? Array.Empty<byte>()
+            : Convert.FromBase64String(Data);
+        return new ImageFile(
+            FileName: FileName ?? string.Empty,
+            Sha256Hex: Sha256Hex ?? string.Empty,
+            View: View ?? string.Empty,
+            SizeBytes: SizeBytes,
+            Data: bytes);
+    }
+}
 
 /// <summary>
 /// Sprint 17 — resolved <see cref="DomainEventRow"/> metadata for one
