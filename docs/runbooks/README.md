@@ -87,6 +87,7 @@ Are you responding to an alert / user report / log line?
 | [10](10-pgbackrest-backup-restore.md) | pgbackrest backup + restore (full + incremental + PITR) | n/a — operator-initiated; or backup-failed alert | P1 (data-loss restore; 7-day-no-backup) |
 | [11](11-postgres-version-lock-pg17.md) | PG17 version lock + upgrade-from-older procedure | n/a — operator-initiated | P1 (failed upgrade rollback) |
 | [12](12-nickfinance-runbook.md) | NickFinance (G2 pathfinder) operations — deploy / health / migrations / backup / FX-rate publish | n/a — operator-initiated; or `postgres-nickfinance` Unhealthy | P2 (`postgres-nickfinance` Unhealthy) / P1 (data loss → runbook 10 §7) |
+| [13](13-comms-gateway-settings.md) | Comms-gateway settings reference — vendor-neutral `comms.email.*` key catalogue, audit trail, rotation guidance (Sprint 35) | n/a — operator-initiated when configuring tenant comms | P3 (config drift) |
 
 > Slots 07 + 08 are post-incident / analytical runbooks (sprint-13
 > live-deploy backlog and 2026-05-04 OCR baseline) — they sit
