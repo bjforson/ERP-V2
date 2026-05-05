@@ -35,6 +35,17 @@ internal sealed class BoePayloadReader
     public string? DeclarationNumber => ReadString(_root, "Header", "DeclarationNumber");
     public string? ContainerNumber => ReadString(_root, "ContainerDetails", "ContainerNumber");
     public string? CrmsLevel => ReadString(_root, "Header", "CRMSLevel");
+    /// <summary>
+    /// Sprint 48 / Phase C — half-state CMR port fields. Mirrors the v1
+    /// NSCIM ICUMS payload's <c>ManifestDetails.PortOfLoading</c> +
+    /// <c>ManifestDetails.PortOfDischarge</c> shape; null when the doc
+    /// is not in the half-state phase or when ICUMS pushed the field
+    /// blank.
+    /// </summary>
+    public string? PortOfLoading => ReadString(_root, "ManifestDetails", "PortOfLoading");
+
+    /// <summary>Sprint 48 / Phase C — see <see cref="PortOfLoading"/>.</summary>
+    public string? PortOfDischarge => ReadString(_root, "ManifestDetails", "PortOfDischarge");
 
     private static string? ReadString(JsonElement parent, string p1, string p2)
     {
