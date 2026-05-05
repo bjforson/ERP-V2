@@ -94,7 +94,13 @@ storage/**/*.onnx.data
 # Worktrees for parallel sprint masters — never tracked
 .worktrees/
 
-# Generated migration scripts — operator-applied, not source-tracked
+# Generated migration scripts — operator-applied, not source-tracked.
+# Historic sprint-*.sql files were tracked before this rule existed;
+# git keeps them. New ad-hoc EF-script-migration output should not be
+# tracked. Hand-authored operator helpers (e.g. the Sprint 52
+# audit-events-create-partition.sql) ARE tracked — they're force-added
+# at commit time. Pattern stays the same; treat any conflict as
+# operator-intent.
 tools/migrations/*.sql
 
 # External design docs ingested as reference material
