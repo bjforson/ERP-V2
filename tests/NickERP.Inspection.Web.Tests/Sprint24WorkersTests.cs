@@ -7,6 +7,7 @@ using NickERP.Inspection.Application.Workers;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.ExternalSystems.Abstractions;
+using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Inspection.Web.Services;
 using NickERP.Platform.Plugins;
@@ -60,6 +61,11 @@ public sealed class Sprint24WorkersTests : IDisposable
         services.AddSingleton(_cursorAdapter);
         services.AddSingleton(_esAdapter);
         services.AddSingleton<IPluginRegistry>(sp => new MultiPluginRegistry(_scannerAdapter, _cursorAdapter, _esAdapter));
+
+        // Sprint 50 / Phase B — AseSyncWorker now persists Scan +
+        // ScanArtifact rows through IImageStore. Register a noop store
+        // so the in-memory DbContext path stays self-contained.
+        services.AddSingleton<IImageStore>(new NoopImageStore());
 
         // Worker options — every worker is enabled so the SweepOnce /
         // PullOnce / etc methods don't no-op.
@@ -229,6 +235,205 @@ public sealed class Sprint24WorkersTests : IDisposable
 
         Assert.Equal(0, pulled);
         Assert.Equal(0, _cursorAdapter.PullInvocationCount);
+    }
+
+    // -----------------------------------------------------------------
+    // Sprint 50 / Phase B — AseSyncWorker persistence
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task AseSync_PersistsScanAndArtifact_OnFirstSeeingRecord()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        var key = "idem-persist-1";
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(
+                    DeviceId: _scannerInstanceId,
+                    SourceReference: "MSCU-CURSOR-1",
+                    CapturedAt: DateTimeOffset.UtcNow,
+                    Format: "image/png",
+                    Bytes: new byte[] { 0x41, 0x42, 0x43, 0x44 },
+                    IdempotencyKey: key)
+            },
+            NextCursor: "after-1",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        var pulled = await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        Assert.Equal(1, pulled);
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var scan = await db.Scans.AsNoTracking().FirstAsync(s => s.IdempotencyKey == key);
+        Assert.Equal(_scannerInstanceId, scan.ScannerDeviceInstanceId);
+        Assert.Equal(_tenantId, scan.TenantId);
+
+        var artifact = await db.ScanArtifacts.AsNoTracking().FirstAsync(a => a.ScanId == scan.Id);
+        Assert.Equal("Primary", artifact.ArtifactKind);
+        Assert.Equal(_tenantId, artifact.TenantId);
+        Assert.False(string.IsNullOrEmpty(artifact.ContentHash));
+        Assert.False(string.IsNullOrEmpty(artifact.StorageUri));
+
+        // Parent case auto-opens with the cursor record's SourceReference
+        // as the SubjectIdentifier (mirrors FS6000 IngestRawArtifactAsync).
+        var parent = await db.Cases.AsNoTracking().FirstAsync(c => c.Id == scan.CaseId);
+        Assert.Equal("MSCU-CURSOR-1", parent.SubjectIdentifier);
+        Assert.Equal(_locationId, parent.LocationId);
+        Assert.Equal(InspectionWorkflowState.Open, parent.State);
+    }
+
+    [Fact]
+    public async Task AseSync_DedupesOnDuplicateIdempotencyKey()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        var key = "idem-dedupe";
+        var record = new CursorSyncRecord(
+            DeviceId: _scannerInstanceId,
+            SourceReference: "MSCU-DEDUPE",
+            CapturedAt: DateTimeOffset.UtcNow,
+            Format: "image/png",
+            Bytes: new byte[] { 0x01, 0x02, 0x03 },
+            IdempotencyKey: key);
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[] { record },
+            NextCursor: "c1",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        // Second cycle — same record, identical IdempotencyKey. Worker
+        // pre-checks + skips persistence; only one Scan row exists.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[] { record },
+            NextCursor: "c2",
+            HasMore: false);
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var scans = await db.Scans.AsNoTracking()
+            .Where(s => s.IdempotencyKey == key)
+            .ToListAsync();
+        Assert.Single(scans);
+
+        // Artifact is also single — no orphan rows from the dedupe cycle.
+        var artifacts = await db.ScanArtifacts.AsNoTracking()
+            .Where(a => a.ScanId == scans[0].Id)
+            .ToListAsync();
+        Assert.Single(artifacts);
+    }
+
+    [Fact]
+    public async Task AseSync_ReusesOpenCase_ForSameSubjectInWindow()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        // First record opens a fresh case keyed on SourceReference.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-REUSE", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0xAA }, "idem-reuse-1")
+            },
+            NextCursor: "c1", HasMore: false);
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        // Second record, same subject, different idempotency key — should
+        // attach to the SAME case, not open a new one.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-REUSE", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0xBB }, "idem-reuse-2")
+            },
+            NextCursor: "c2", HasMore: false);
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var cases = await db.Cases.AsNoTracking()
+            .Where(c => c.SubjectIdentifier == "MSCU-REUSE")
+            .ToListAsync();
+        Assert.Single(cases);
+
+        var scans = await db.Scans.AsNoTracking()
+            .Where(s => s.CaseId == cases[0].Id)
+            .ToListAsync();
+        Assert.Equal(2, scans.Count);
+    }
+
+    [Fact]
+    public async Task AseSync_AdvancesCursor_AfterPersistence()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-ADVANCE", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0xC0, 0xDE }, "idem-advance-1")
+            },
+            NextCursor: "advanced-cursor",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        // Second cycle — adapter should see the new cursor we returned.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "advanced-cursor",
+            HasMore: false);
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        Assert.Equal("advanced-cursor", _cursorAdapter.LastCursorSeen);
+    }
+
+    [Fact]
+    public async Task AseSync_PartialBatchFailure_DoesNotKillBatch()
+    {
+        // One record's bytes will cause the adapter to throw on
+        // ParseScanAsync; subsequent records still persist. The worker
+        // logs the failure + the cycle returns the count of records the
+        // ADAPTER returned (not the count successfully persisted), so
+        // pulled stays at the batch size.
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        _cursorAdapter.PoisonRefs.Add("MSCU-POISON");
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-OK", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0x01 }, "idem-ok"),
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-POISON", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0x02 }, "idem-poison"),
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-OK-2", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0x03 }, "idem-ok-2")
+            },
+            NextCursor: "c-after-batch",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var keys = await db.Scans.AsNoTracking()
+            .Select(s => s.IdempotencyKey)
+            .ToListAsync();
+        // Two non-poison records persist; the poison record is logged + skipped.
+        Assert.Contains("idem-ok", keys);
+        Assert.Contains("idem-ok-2", keys);
+        Assert.DoesNotContain("idem-poison", keys);
     }
 
     // -----------------------------------------------------------------
@@ -958,6 +1163,21 @@ internal sealed class RecordingCursorAdapter : IScannerCursorSyncAdapter
     public string? LastCursorSeen { get; private set; }
     public int PullInvocationCount { get; private set; }
 
+    /// <summary>
+    /// Sprint 50 / Phase B — when ParseScanAsync runs against a record
+    /// whose source-reference appears here, throw to simulate adapter
+    /// failure. Lets the worker's per-record try/catch be exercised.
+    /// </summary>
+    public HashSet<string> PoisonRefs { get; } = new();
+
+    /// <summary>
+    /// Most-recent SourceReference passed to ParseScanAsync — recorded
+    /// on the matching record's bytes. (We can't introspect the record
+    /// directly, so the worker passes the bytes; the test seeds a
+    /// SourceReference→bytes map here.)
+    /// </summary>
+    public Dictionary<byte[], string> RefByBytes { get; } = new(new ByteArrayComparer());
+
     public Task<NickERP.Inspection.Scanners.Abstractions.ConnectionTestResult> TestAsync(
         ScannerDeviceConfig config, CancellationToken ct = default) =>
         Task.FromResult(new NickERP.Inspection.Scanners.Abstractions.ConnectionTestResult(true, "ok"));
@@ -973,12 +1193,77 @@ internal sealed class RecordingCursorAdapter : IScannerCursorSyncAdapter
         Task.FromResult(new ParsedArtifact(raw.DeviceId, raw.CapturedAt, 0, 0, 0, raw.Format, raw.Bytes,
             new Dictionary<string, string>()));
 
+    public Task<NickERP.Inspection.Scanners.Abstractions.ParsedScan> ParseScanAsync(
+        byte[] rawScanData,
+        ScannerCapabilities capabilities,
+        CancellationToken ct = default)
+    {
+        // Poison-ref hook: any record whose SourceReference is in
+        // PoisonRefs (registered by Pull below) throws here so the
+        // worker's per-record try/catch fires.
+        var matchingRef = NextBatch?.Records
+            ?.FirstOrDefault(r => r.Bytes.SequenceEqual(rawScanData))?.SourceReference;
+        if (matchingRef is not null && PoisonRefs.Contains(matchingRef))
+        {
+            throw new InvalidOperationException($"simulated parse failure for {matchingRef}");
+        }
+
+        var image = new NickERP.Inspection.Edge.Abstractions.ImageFile(
+            FileName: "test.bin",
+            Sha256Hex: NickERP.Inspection.Edge.Abstractions.ScanPackageManifest.Sha256Hex(rawScanData),
+            View: "primary",
+            SizeBytes: rawScanData.LongLength,
+            Data: rawScanData);
+        var pkg = new NickERP.Inspection.Edge.Abstractions.ScanPackage(
+            ScanId: Guid.NewGuid().ToString(),
+            SiteId: string.Empty,
+            ScannerId: "test-cursor-scanner",
+            GatewayId: string.Empty,
+            ScanType: "primary",
+            OccurredAt: DateTimeOffset.UtcNow,
+            OperatorId: string.Empty,
+            ContainerNumber: string.Empty,
+            VehiclePlate: string.Empty,
+            DeclarationNumber: string.Empty,
+            ManifestNumber: string.Empty,
+            ImageFiles: new[] { image },
+            ManifestSha256: System.Array.Empty<byte>(),
+            ManifestSignature: System.Array.Empty<byte>());
+        var artifact = new ParsedArtifact(
+            DeviceId: Guid.Empty,
+            CapturedAt: pkg.OccurredAt,
+            WidthPx: 0,
+            HeightPx: 0,
+            Channels: 1,
+            MimeType: "image/png",
+            Bytes: rawScanData,
+            Metadata: new Dictionary<string, string>());
+        return Task.FromResult(new NickERP.Inspection.Scanners.Abstractions.ParsedScan(
+            new[] { artifact }, pkg));
+    }
+
     public Task<CursorSyncBatch> PullAsync(
         ScannerDeviceConfig config, string cursor, int batchLimit, CancellationToken ct)
     {
         PullInvocationCount++;
         LastCursorSeen = cursor;
         return Task.FromResult(NextBatch);
+    }
+}
+
+internal sealed class ByteArrayComparer : IEqualityComparer<byte[]>
+{
+    public bool Equals(byte[]? x, byte[]? y) =>
+        ReferenceEquals(x, y) || (x is not null && y is not null && x.SequenceEqual(y));
+
+    public int GetHashCode(byte[] obj)
+    {
+        unchecked
+        {
+            int hash = 17;
+            foreach (var b in obj) hash = hash * 31 + b;
+            return hash;
+        }
     }
 }
 
@@ -1011,6 +1296,22 @@ internal sealed class RecordingExternalSystemAdapter : IExternalSystemAdapter
         if (ShouldThrowOnSubmit) throw new InvalidOperationException("simulated authority crash");
         return Task.FromResult(NextSubmissionResult);
     }
+}
+
+/// <summary>
+/// Sprint 50 / Phase B — noop IImageStore for the in-memory worker tests
+/// so AseSyncWorker.PersistRecordsAsync can resolve a store without
+/// touching disk. Mirrors NoopImageStore in CaseDetailTabsTests.
+/// </summary>
+internal sealed class NoopImageStore : IImageStore
+{
+    public Task<string> SaveSourceAsync(string contentHash, string fileExtension, ReadOnlyMemory<byte> bytes, CancellationToken ct = default) =>
+        Task.FromResult("noop://" + contentHash);
+    public Task<byte[]> ReadSourceAsync(string contentHash, string fileExtension, CancellationToken ct = default) =>
+        Task.FromResult(System.Array.Empty<byte>());
+    public Task<string> SaveRenderAsync(Guid scanArtifactId, string kind, ReadOnlyMemory<byte> bytes, CancellationToken ct = default) =>
+        Task.FromResult("noop://" + scanArtifactId);
+    public Stream? OpenRenderRead(Guid scanArtifactId, string kind) => null;
 }
 
 /// <summary>
