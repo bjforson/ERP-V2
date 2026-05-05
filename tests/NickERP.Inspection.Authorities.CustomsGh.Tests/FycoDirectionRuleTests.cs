@@ -135,7 +135,6 @@ public sealed class FycoDirectionRuleTests
     [InlineData("export")]
     [InlineData("Export")]
     [InlineData("EXPORT")]
-    [InlineData("EPORT")] // regex still catches eport via the relaxed pattern
     public void Broader_export_pattern_handles_free_text_v1_couldnt(string fycoValue)
     {
         // v1's narrow 1/Y/YES parser missed all of these; v2 must catch
@@ -144,17 +143,50 @@ public sealed class FycoDirectionRuleTests
         var rule = BuildRule();
         var ctx = BuildContext(fycoValue: fycoValue, clearanceType: "IM", regimeCode: "40");
         var outcome = rule.Evaluate(ctx);
-        if (string.Equals(fycoValue, "EPORT", StringComparison.OrdinalIgnoreCase))
-        {
-            // EPORT isn't a clean "ex(p?)ort" hit in the default regex; it
-            // falls into "neither matched" and Skips. Documents the
-            // current parser bound — operators may want to extend it.
-            outcome.Severity.Should().Be(ValidationSeverity.Skip);
-        }
-        else
-        {
-            outcome.Severity.Should().Be(ValidationSeverity.Error);
-        }
+        outcome.Severity.Should().Be(ValidationSeverity.Error);
+    }
+
+    [Theory]
+    [InlineData("EPORT")]            // missing X
+    [InlineData("EXORT")]            // missing P
+    [InlineData("EXPRT")]            // missing O
+    [InlineData("WAYBILL/EPORT")]    // typo embedded in free-text
+    [InlineData("waybill/exort")]    // typo + lowercase
+    public void Sprint37_export_typo_patterns_now_match(string fycoValue)
+    {
+        // Sprint 37 / FU-fyco-export-pattern-eport — three observed
+        // single-letter typos of EXPORT (EPORT/EXORT/EXPRT) are now
+        // matched by the default export regex. Confirm they're
+        // treated as export-direction (so the rule fires on
+        // misclassification against an import regime) rather than
+        // silently Skipping. Embedded-in-free-text variants confirm
+        // the word-boundary still matches.
+        var rule = BuildRule();
+        var ctx = BuildContext(fycoValue: fycoValue, clearanceType: "IM", regimeCode: "40");
+        var outcome = rule.Evaluate(ctx);
+        outcome.Severity.Should().Be(ValidationSeverity.Error,
+            because: $"'{fycoValue}' is one of the Sprint 37 known-typo set and should resolve to export-direction.");
+        outcome.Properties!["fycoDirection"].Should().Be("export");
+    }
+
+    [Theory]
+    [InlineData("EXPROT")]   // anagram — intentionally NOT matched
+    [InlineData("X-PORT")]   // hyphenation — intentionally NOT matched
+    [InlineData("EXPRORT")]  // extra letter — intentionally NOT matched
+    public void Sprint37_truly_exotic_typos_still_skip(string fycoValue)
+    {
+        // Sprint 37 / FU-fyco-export-pattern-eport — the tightening
+        // intentionally STOPS at the three observed single-letter
+        // omissions of EXPORT. Anagrams, hyphenations, and
+        // extra-letter typos are not auto-matched; they need an
+        // operator-call to confirm before being added to the regex.
+        // This test pins that boundary so a future loosening is a
+        // visible test failure rather than a silent change.
+        var rule = BuildRule();
+        var ctx = BuildContext(fycoValue: fycoValue, clearanceType: "IM", regimeCode: "40");
+        var outcome = rule.Evaluate(ctx);
+        outcome.Severity.Should().Be(ValidationSeverity.Skip,
+            because: $"'{fycoValue}' is intentionally outside the Sprint 37 known-typo set.");
     }
 
     [Fact]
