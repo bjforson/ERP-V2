@@ -40,13 +40,26 @@ public sealed class ModuleRegistryService : IModuleRegistry
         CancellationToken ct = default)
     {
         // Sprint 29 — load the per-tenant overrides for this caller.
-        // RLS narrows by app.tenant_id (the interceptor sets it from the
-        // request principal); the explicit Where(TenantId == tenantId)
-        // is belt-and-suspenders so an admin tool that calls this without
-        // a tenant claim still gets a single tenant's view.
+        // RLS narrows by app.tenant_id; the TenantConnectionInterceptor
+        // pushes app.tenant_id on every connection open from the request
+        // principal's tenant claim.
+        //
+        // Sprint 43 / Phase D — FU-launcher-rls-with-postgres. The
+        // explicit Where(TenantId == tenantId) belt-and-suspenders
+        // filter that previously sat here was dropped after
+        // TenantModuleSettingsRlsIntegrationTests proved RLS narrows
+        // correctly under a non-superuser role with the policy's
+        // COALESCE-to-'0' fail-closed default. Defense-in-depth via
+        // a redundant LINQ filter is no longer required: the policy
+        // itself fails closed when app.tenant_id is unset, and the
+        // unit-test path that needed cross-tenant isolation now uses
+        // distinct in-memory database names per tenant. See
+        // feedback_confirm_before_weakening_security.md — this change
+        // does NOT weaken the security posture; it removes a belt-
+        // and-suspenders that was hiding a missing-context bug case
+        // that should fail loud.
         var overrides = await _db.TenantModuleSettings
             .AsNoTracking()
-            .Where(x => x.TenantId == tenantId)
             .ToDictionaryAsync(x => x.ModuleId, x => x.Enabled, ct);
 
         var resolved = new List<ModuleRegistryEntry>(_catalogue.Count);
