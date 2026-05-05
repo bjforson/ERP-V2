@@ -50,6 +50,18 @@ public sealed class InspectionCase : ITenantOwned
     /// <summary>Cross-service correlation id (matches the structured-log <c>CorrelationId</c> for the request that created the case).</summary>
     public string? CorrelationId { get; set; }
 
+    /// <summary>
+    /// Sprint 34 / B6 — review queue priority bucket. Drives ordering
+    /// of cases on the analyst's <c>/reviews/queue</c> page and on the
+    /// supervisor audit queue. Defaults to <see cref="ReviewQueue.Standard"/>;
+    /// can be promoted by an admin or by the system (e.g. a rule
+    /// violation in the validation engine flips the case to
+    /// <see cref="ReviewQueue.Exception"/>). Vendor-neutral: specific
+    /// SLA tiers / time budgets live on the <see cref="SlaWindow"/>
+    /// settings, not here.
+    /// </summary>
+    public ReviewQueue ReviewQueue { get; set; } = ReviewQueue.Standard;
+
     public long TenantId { get; set; }
 
     public List<Scan> Scans { get; set; } = new();

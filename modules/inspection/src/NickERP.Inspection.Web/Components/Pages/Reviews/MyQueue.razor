@@ -1,0 +1,154 @@
+@page "/reviews/queue"
+@* Sprint 34 / B6 Phase B — analyst's review queue.
+
+   Lists cases visible to the current user via VP6 service membership,
+   ordered by ReviewQueue priority bucket then OpenedAt. Supports a
+   priority filter; rows light up active-claim badges so the analyst
+   doesn't waste a click on a case another analyst is already working.
+
+   Vendor-neutral by design — no Ghana port codes, no regime-specific
+   fields. The page reads ReviewQueueRow, which is the shape
+   ReviewQueueService already enforces.
+*@
+@attribute [Authorize]
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject ReviewQueueService Queue
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@inject ILogger<MyQueue> Logger
+
+<PageTitle>Review queue - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>My review queue</h1>
+        <p class="inspection-page-subtitle">
+            Cases visible through your <a href="/admin/analysis-services">analysis service</a>
+            memberships, ordered by review-queue priority. Pick a case to
+            jump into <a href="/cases">case detail</a> or one of the
+            specialised review pages (BL review, AI triage, supervisor audit).
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_userId == Guid.Empty)
+{
+    <p class="inspection-empty">Sign in to see your queue.</p>
+}
+else if (_rows is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-filter-bar">
+            <label>Priority:
+                <select @bind="_queueFilter" @bind:after="ReloadAsync">
+                    <option value="">all</option>
+                    <option value="Standard">Standard</option>
+                    <option value="HighPriority">High priority</option>
+                    <option value="Urgent">Urgent</option>
+                    <option value="Exception">Exception</option>
+                    <option value="PostClearance">Post-clearance</option>
+                </select>
+            </label>
+            <button type="button" class="inspection-button" @onclick="ReloadAsync">Refresh</button>
+        </div>
+
+        @if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No cases match the current filter.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>State</th>
+                        <th>Priority</th>
+                        <th>Opened</th>
+                        <th>Claim</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        var ageMin = (int)Math.Max(0, (DateTimeOffset.UtcNow - r.OpenedAt).TotalMinutes);
+                        var claimed = r.ActiveClaim is not null;
+                        var claimedByMe = r.ActiveClaim?.ClaimedByUserId == _userId;
+                        <tr class="inspection-queue-row is-@r.Queue.ToString().ToLowerInvariant()">
+                            <td><a href="/cases/@r.CaseId"><code>@r.SubjectIdentifier</code></a></td>
+                            <td>@StateBadge(r.State)</td>
+                            <td>@QueueBadge(r.Queue)</td>
+                            <td><span title="@r.OpenedAt.ToString("O")">@ageMin min</span></td>
+                            <td>
+                                @if (claimedByMe)
+                                {
+                                    <span class="inspection-pill is-mine">claimed by you</span>
+                                }
+                                else if (claimed)
+                                {
+                                    <span class="inspection-pill is-other">@r.ActiveClaim!.ClaimedByUserId.ToString()[..8]</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-empty">free</span>
+                                }
+                            </td>
+                            <td>
+                                <a href="/cases/@r.CaseId" class="inspection-button">Open</a>
+                                <a href="/reviews/bl/@r.CaseId" class="inspection-button">BL</a>
+                                <a href="/reviews/ai/@r.CaseId" class="inspection-button">AI</a>
+                                <a href="/reviews/audit/@r.CaseId" class="inspection-button">Audit</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private List<ReviewQueueRow>? _rows;
+    private Guid _userId;
+    private string _queueFilter = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+        Guid.TryParse(idClaim, out _userId);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (_userId == Guid.Empty)
+        {
+            _rows = new List<ReviewQueueRow>();
+            return;
+        }
+        ReviewQueue? filter = string.IsNullOrEmpty(_queueFilter)
+            ? null
+            : Enum.TryParse<ReviewQueue>(_queueFilter, out var q) ? q : null;
+        var rows = await Queue.GetMyQueueAsync(_userId, filter);
+        _rows = rows.ToList();
+    }
+
+    private static MarkupString StateBadge(InspectionWorkflowState s) =>
+        new($"<span class='inspection-pill-state is-{s.ToString().ToLowerInvariant()}'>{s}</span>");
+
+    private static MarkupString QueueBadge(ReviewQueue q) =>
+        new($"<span class='inspection-pill-queue is-{q.ToString().ToLowerInvariant()}'>{q}</span>");
+}

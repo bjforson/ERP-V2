@@ -192,11 +192,22 @@ public sealed class InspectionDbContext : DbContext
             e.Property(x => x.OpenedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             e.Property(x => x.StateEnteredAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             e.Property(x => x.CorrelationId).HasMaxLength(64);
+            // Sprint 34 / B6 — review queue priority bucket. Persisted
+            // as int via HasConversion<int>() for stable wire format.
+            e.Property(x => x.ReviewQueue).HasConversion<int>().IsRequired().HasDefaultValue(ReviewQueue.Standard);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => new { x.TenantId, x.LocationId, x.State, x.OpenedAt }).HasDatabaseName("ix_cases_tenant_loc_state_time");
             e.HasIndex(x => new { x.TenantId, x.SubjectIdentifier }).HasDatabaseName("ix_cases_tenant_subject");
             e.HasIndex(x => x.AssignedAnalystUserId).HasDatabaseName("ix_cases_assigned_analyst");
+            // Sprint 34 / B6 — review-queue ordering: highest priority
+            // first, then oldest open case. Composite (TenantId,
+            // ReviewQueue DESC, State, OpenedAt) covers the
+            // /reviews/queue and supervisor /reviews/audit page hot
+            // paths on every load.
+            e.HasIndex(x => new { x.TenantId, x.ReviewQueue, x.State, x.OpenedAt })
+                .IsDescending(false, true, false, false)
+                .HasDatabaseName("ix_cases_tenant_queue_state_time");
 
             e.HasOne(x => x.Location).WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Station).WithMany().HasForeignKey(x => x.StationId).OnDelete(DeleteBehavior.SetNull);
@@ -338,7 +349,22 @@ public sealed class InspectionDbContext : DbContext
             e.Property(x => x.VerdictChangesJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
             e.Property(x => x.PostHocOutcomeJson).HasColumnType("jsonb");
             e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            // Sprint 34 / B6 — review type + outcome + completion
+            // timestamp + supervisor-distinct started-by user id. All
+            // additive; existing rows backfill ReviewType=Standard
+            // (the enum's 0 value) and the rest stay null.
+            e.Property(x => x.ReviewType).HasConversion<int>().IsRequired().HasDefaultValue(ReviewType.Standard);
+            e.Property(x => x.Outcome).HasMaxLength(64);
+            e.Property(x => x.CompletedAt);
+            e.Property(x => x.StartedByUserId);
             e.Property(x => x.TenantId).IsRequired();
+
+            // Sprint 34 / B6 — throughput dashboard query path:
+            // (TenantId, ReviewType, CreatedAt). Covers the "how many
+            // BL reviews this week" / "supervisor pass-rate" rollups
+            // in ReviewQueueService.GetThroughputAsync.
+            e.HasIndex(x => new { x.TenantId, x.ReviewType, x.CreatedAt })
+                .HasDatabaseName("ix_analyst_reviews_tenant_type_time");
 
             e.HasMany(x => x.Findings).WithOne(f => f.Review).HasForeignKey(f => f.AnalystReviewId).OnDelete(DeleteBehavior.Cascade);
         });

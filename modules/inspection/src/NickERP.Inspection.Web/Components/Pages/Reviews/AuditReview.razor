@@ -1,0 +1,302 @@
+@page "/reviews/audit/{CaseId:guid}"
+@* Sprint 34 / B6.3 — Supervisor second-opinion / audit review.
+
+   Surfaces every prior AnalystReview row + Findings + AI outputs for a
+   case so a supervisor can record concur / dissent / escalate. Persists
+   as a fresh AnalystReview row with ReviewType=AuditReview; Findings
+   prefix is review.audit.
+
+   Vendor-neutral by design — the page reads existing AnalystReview /
+   Finding rows and shapes them into the supervisor's view; no Ghana
+   port codes, no regime-specific fields.
+*@
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.Reviews
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject IReviewWorkflow Workflow
+@inject ReviewQueueService Queue
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@inject ILogger<AuditReview> Logger
+
+<PageTitle>Audit review - @ShortId - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Audit review @if (_case is not null) {<text> &mdash; <code>@_case.SubjectIdentifier</code></text>}</h1>
+        <p class="inspection-page-subtitle">
+            Supervisor second-opinion (Sprint 34 / B6.3). Read every
+            prior review on this case + findings + AI outputs, then
+            record concur / dissent / escalate. Audit-trailed via
+            <code>nickerp.inspection.review.completed</code>.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved.</p>
+}
+else if (_userId == Guid.Empty)
+{
+    <p class="inspection-empty">Sign in to start an audit review.</p>
+}
+else if (_case is null && !_notFound)
+{
+    <p>Loading...</p>
+}
+else if (_notFound)
+{
+    <p class="inspection-empty">Case not found.</p>
+    <p><a href="/reviews/queue">Back to queue</a></p>
+}
+else
+{
+    <section class="inspection-section">
+        <h2>Prior reviews on this case</h2>
+        @if (_priorReviews.Count == 0)
+        {
+            <p class="inspection-empty">
+                No prior reviews recorded yet on this case. The
+                supervisor pass typically follows an analyst BL or AI
+                triage review; you can still complete an audit pass
+                with a "no prior work" outcome.
+            </p>
+        }
+        else
+        {
+            <table class="inspection-table inspection-prior-reviews">
+                <thead>
+                    <tr>
+                        <th>Started</th>
+                        <th>Type</th>
+                        <th>Analyst</th>
+                        <th>Outcome</th>
+                        <th>Confidence</th>
+                        <th>Findings</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var pr in _priorReviews)
+                    {
+                        <tr>
+                            <td><span title="@pr.CreatedAt.ToString("O")">@pr.CreatedAt.ToString("yyyy-MM-dd HH:mm")</span></td>
+                            <td>@pr.ReviewType</td>
+                            <td><code>@(pr.StartedByUserId?.ToString()[..8] ?? "?")</code></td>
+                            <td>@(pr.Outcome ?? "(in progress)")</td>
+                            <td>@pr.ConfidenceScore.ToString("0.00")</td>
+                            <td>@pr.FindingCount</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    @if (_findings.Count > 0)
+    {
+        <section class="inspection-section">
+            <h2>All findings on this case</h2>
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Severity</th>
+                        <th>Note</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var f in _findings)
+                    {
+                        <tr>
+                            <td><code>@f.FindingType</code></td>
+                            <td>@f.Severity</td>
+                            <td>@(f.Note ?? "")</td>
+                            <td>@f.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+
+    <section class="inspection-section">
+        <h2>Supervisor decision</h2>
+        <label>
+            Decision:
+            <select @bind="_decision">
+                <option value="concur">Concur with analyst</option>
+                <option value="dissent">Dissent from analyst</option>
+                <option value="escalated">Escalate further</option>
+            </select>
+        </label>
+        <textarea @bind="_note" placeholder="Reason / rationale" rows="3" maxlength="2000"></textarea>
+
+        @if (_decision == "escalated")
+        {
+            <label>
+                Escalate to user id (optional - leave blank for queue):
+                <input type="text" @bind="_escalateToUserIdRaw" placeholder="(blank for next supervisor)" />
+            </label>
+        }
+    </section>
+
+    <section class="inspection-section">
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="inspection-form-message">@_message</p>
+        }
+        <button type="button" class="inspection-button is-primary"
+                @onclick="StartOrCompleteAsync"
+                disabled="@_busy">
+            @(_reviewId is null ? "Start audit review" : "Complete audit review")
+        </button>
+        <a href="/cases/@CaseId" class="inspection-button">Back to case</a>
+        <a href="/reviews/queue" class="inspection-button">Back to queue</a>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid CaseId { get; set; }
+
+    private InspectionCase? _case;
+    private bool _notFound;
+    private Guid _userId;
+    private List<PriorReviewRow> _priorReviews = new();
+    private List<Finding> _findings = new();
+    private Guid? _reviewId;
+    private string _decision = "concur";
+    private string _note = string.Empty;
+    private string _escalateToUserIdRaw = string.Empty;
+    private string _message = string.Empty;
+    private bool _busy;
+
+    private string ShortId => _case is null ? "" : _case.Id.ToString()[..8];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+        Guid.TryParse(idClaim, out _userId);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _case = await Db.Cases.AsNoTracking().FirstOrDefaultAsync(c => c.Id == CaseId);
+        if (_case is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        // Pull every review on this case + a per-row finding count.
+        var rawReviews = await (
+            from r in Db.AnalystReviews.AsNoTracking()
+            join s in Db.ReviewSessions.AsNoTracking() on r.ReviewSessionId equals s.Id
+            where s.CaseId == CaseId
+            orderby r.CreatedAt descending
+            select new { r.Id, r.ReviewType, r.StartedByUserId, r.Outcome, r.ConfidenceScore, r.CreatedAt }
+        ).ToListAsync();
+
+        var reviewIds = rawReviews.Select(r => r.Id).ToList();
+        var findingCounts = await Db.Findings.AsNoTracking()
+            .Where(f => reviewIds.Contains(f.AnalystReviewId))
+            .GroupBy(f => f.AnalystReviewId)
+            .Select(g => new { ReviewId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ReviewId, x => x.Count);
+
+        _priorReviews = rawReviews.Select(r => new PriorReviewRow(
+            r.Id, r.ReviewType, r.StartedByUserId, r.Outcome, r.ConfidenceScore, r.CreatedAt,
+            findingCounts.TryGetValue(r.Id, out var c) ? c : 0)).ToList();
+
+        // Pull every finding on this case so the supervisor can see
+        // what was flagged across all prior reviews. Filter out the
+        // current audit review's own findings (none yet on first load).
+        _findings = await (
+            from f in Db.Findings.AsNoTracking()
+            join r in Db.AnalystReviews.AsNoTracking() on f.AnalystReviewId equals r.Id
+            join s in Db.ReviewSessions.AsNoTracking() on r.ReviewSessionId equals s.Id
+            where s.CaseId == CaseId
+            orderby f.CreatedAt
+            select f
+        ).ToListAsync();
+    }
+
+    private async Task StartOrCompleteAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+        _message = string.Empty;
+        try
+        {
+            if (_reviewId is null)
+            {
+                _reviewId = await Workflow.StartReviewAsync(CaseId, ReviewType.AuditReview, _userId);
+                _message = "Audit review started.";
+            }
+            else
+            {
+                var findings = BuildFindings();
+                var outcome = _decision; // already concur/dissent/escalated
+                await Workflow.CompleteReviewAsync(_reviewId.Value, outcome, findings, _userId);
+
+                // If the supervisor chose to escalate to a specific
+                // user id (optional), record that as a separate
+                // EscalateReviewAsync call. The complete-call above
+                // already audit-trailed the supervisor's outcome.
+                if (_decision == "escalated"
+                    && Guid.TryParse(_escalateToUserIdRaw, out var toUser)
+                    && toUser != Guid.Empty)
+                {
+                    await Queue.EscalateReviewAsync(
+                        _reviewId.Value, _userId, toUser,
+                        string.IsNullOrWhiteSpace(_note) ? "supervisor escalation" : _note);
+                }
+
+                _message = "Audit review completed.";
+                _reviewId = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Audit review action failed for case {CaseId}.", CaseId);
+            _message = $"Action failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private List<Finding> BuildFindings()
+    {
+        var findings = new List<Finding>
+        {
+            new Finding
+            {
+                FindingType = $"review.audit.{_decision}",
+                Severity = _decision == "dissent" ? "warning" : _decision == "escalated" ? "critical" : "info",
+                Note = string.IsNullOrWhiteSpace(_note) ? null : _note,
+                LocationInImageJson = "{}",
+            }
+        };
+        return findings;
+    }
+
+    private sealed record PriorReviewRow(
+        Guid Id,
+        ReviewType ReviewType,
+        Guid? StartedByUserId,
+        string? Outcome,
+        double ConfidenceScore,
+        DateTimeOffset CreatedAt,
+        int FindingCount);
+}

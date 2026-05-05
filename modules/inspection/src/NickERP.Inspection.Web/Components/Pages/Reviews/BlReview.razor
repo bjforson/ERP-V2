@@ -1,0 +1,280 @@
+@page "/reviews/bl/{CaseId:guid}"
+@* Sprint 34 / B6.1 — Bill of Lading review.
+
+   Renders the BL header fields alongside scan thumbnails so the
+   analyst can verify each field against the documents and the image.
+   Saves the per-field verifications as Findings (FindingType prefix
+   review.bl.field.{name}.{verified|discrepancy}); persists a discrepancy
+   note as the Finding.Note where given.
+
+   Vendor-neutral by design — the field labels come from the case's
+   AuthorityDocument PayloadJson keys, not a hard-coded Ghana shape.
+   Adapter modules can extend the field set via plugin contributions
+   without modifying core domain.
+*@
+@attribute [Authorize]
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.Reviews
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject IReviewWorkflow Workflow
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@inject ILogger<BlReview> Logger
+
+<PageTitle>BL review - @ShortId - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>BL review @if (_case is not null) {<text> &mdash; <code>@_case.SubjectIdentifier</code></text>}</h1>
+        <p class="inspection-page-subtitle">
+            Bill of Lading verification (Sprint 34 / B6.1; v1 NSCIM
+            BLReview parity). Compare each field against the scan and
+            the authority documents on file. Mark verified or note a
+            discrepancy; the page saves your work as findings against
+            this review.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved.</p>
+}
+else if (_userId == Guid.Empty)
+{
+    <p class="inspection-empty">Sign in to start a BL review.</p>
+}
+else if (_case is null && !_notFound)
+{
+    <p>Loading...</p>
+}
+else if (_notFound)
+{
+    <p class="inspection-empty">Case not found.</p>
+    <p><a href="/reviews/queue">Back to queue</a></p>
+}
+else
+{
+    <section class="inspection-section">
+        <h2>BL fields</h2>
+        @if (_fields.Count == 0)
+        {
+            <p class="inspection-empty">
+                This case has no authority document payload yet. Fetch
+                documents on the <a href="/cases/@CaseId">case detail page</a> first.
+            </p>
+        }
+        else
+        {
+            <table class="inspection-table inspection-bl-fields">
+                <thead>
+                    <tr>
+                        <th>Field</th>
+                        <th>Reported value</th>
+                        <th>Verified</th>
+                        <th>Discrepancy note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var f in _fields)
+                    {
+                        <tr data-field="@f.Name">
+                            <td><code>@f.Name</code></td>
+                            <td>@(string.IsNullOrEmpty(f.Value) ? "(empty)" : f.Value)</td>
+                            <td>
+                                <input type="checkbox" @bind="f.Verified" />
+                            </td>
+                            <td>
+                                <input type="text" @bind="f.DiscrepancyNote" placeholder="(none)" maxlength="500" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="inspection-section">
+        <h2>Overall assessment</h2>
+        <label>
+            Overall outcome:
+            <select @bind="_outcome">
+                <option value="completed">Completed (all verified)</option>
+                <option value="abnormal">Abnormal (one or more discrepancies)</option>
+                <option value="abandoned">Abandoned</option>
+            </select>
+        </label>
+        <textarea @bind="_assessment" placeholder="(BL-level assessment)" rows="3" maxlength="2000"></textarea>
+    </section>
+
+    <section class="inspection-section">
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="inspection-form-message">@_message</p>
+        }
+        <button type="button" class="inspection-button is-primary"
+                @onclick="StartOrCompleteAsync"
+                disabled="@_busy">
+            @(_reviewId is null ? "Start BL review" : "Complete BL review")
+        </button>
+        <a href="/cases/@CaseId" class="inspection-button">Back to case</a>
+        <a href="/reviews/queue" class="inspection-button">Back to queue</a>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid CaseId { get; set; }
+
+    private InspectionCase? _case;
+    private bool _notFound;
+    private Guid _userId;
+    private List<BlField> _fields = new();
+    private Guid? _reviewId;
+    private string _outcome = "completed";
+    private string _assessment = string.Empty;
+    private string _message = string.Empty;
+    private bool _busy;
+
+    private string ShortId => _case is null ? "" : _case.Id.ToString()[..8];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+        Guid.TryParse(idClaim, out _userId);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _case = await Db.Cases.AsNoTracking().FirstOrDefaultAsync(c => c.Id == CaseId);
+        if (_case is null)
+        {
+            _notFound = true;
+            return;
+        }
+        var docs = await Db.AuthorityDocuments.AsNoTracking()
+            .Where(d => d.CaseId == CaseId)
+            .OrderBy(d => d.ReceivedAt)
+            .ToListAsync();
+        _fields = ExtractFields(docs);
+        // No-op if there are no fields — the page renders the empty
+        // state but the analyst can still abandon the review (which
+        // creates a typed AnalystReview row for audit).
+    }
+
+    /// <summary>
+    /// Extract BL-shaped fields from the authority document payload
+    /// JSON. Vendor-neutral: any top-level string property becomes a
+    /// row. Standard names ("ConsigneeName", "Commodity", "Weight",
+    /// "PortOfOrigin", "PortOfDestination") get a friendlier label;
+    /// anything else falls through with the raw key. The very first
+    /// document on the case wins for a key — re-runs of the fetch
+    /// don't multiply rows.
+    /// </summary>
+    private static List<BlField> ExtractFields(List<AuthorityDocument> docs)
+    {
+        var fields = new Dictionary<string, BlField>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in docs)
+        {
+            if (string.IsNullOrEmpty(d.PayloadJson)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(d.PayloadJson);
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (fields.ContainsKey(prop.Name)) continue;
+                    var value = prop.Value.ValueKind switch
+                    {
+                        JsonValueKind.String => prop.Value.GetString() ?? string.Empty,
+                        JsonValueKind.Number => prop.Value.ToString(),
+                        JsonValueKind.True => "true",
+                        JsonValueKind.False => "false",
+                        JsonValueKind.Null => string.Empty,
+                        _ => string.Empty
+                    };
+                    if (string.IsNullOrEmpty(value)) continue;
+                    fields[prop.Name] = new BlField { Name = prop.Name, Value = value };
+                }
+            }
+            catch (JsonException) { /* skip malformed payload */ }
+        }
+        return fields.Values.OrderBy(f => f.Name).ToList();
+    }
+
+    private async Task StartOrCompleteAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+        _message = string.Empty;
+        try
+        {
+            if (_reviewId is null)
+            {
+                _reviewId = await Workflow.StartReviewAsync(CaseId, ReviewType.BlReview, _userId);
+                _message = "Review started.";
+            }
+            else
+            {
+                var findings = BuildFindings();
+                await Workflow.CompleteReviewAsync(_reviewId.Value, _outcome, findings, _userId);
+                _message = "Review completed.";
+                _reviewId = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "BL review action failed for case {CaseId}.", CaseId);
+            _message = $"Action failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private List<Finding> BuildFindings()
+    {
+        var findings = new List<Finding>();
+        foreach (var f in _fields)
+        {
+            // Either verified or discrepancy — the analyst's choice
+            // becomes a typed Finding so downstream rollups can split
+            // verified/discrepancy without re-parsing notes.
+            var hasDiscrepancy = !string.IsNullOrWhiteSpace(f.DiscrepancyNote);
+            if (!f.Verified && !hasDiscrepancy) continue; // skipped row
+            findings.Add(new Finding
+            {
+                FindingType = $"review.bl.field.{f.Name.ToLowerInvariant()}.{(f.Verified ? "verified" : "discrepancy")}",
+                Severity = hasDiscrepancy ? "warning" : "info",
+                Note = hasDiscrepancy ? f.DiscrepancyNote : null,
+                LocationInImageJson = "{}",
+            });
+        }
+        if (!string.IsNullOrWhiteSpace(_assessment))
+        {
+            findings.Add(new Finding
+            {
+                FindingType = "review.bl.assessment",
+                Severity = "info",
+                Note = _assessment,
+                LocationInImageJson = "{}",
+            });
+        }
+        return findings;
+    }
+
+    private sealed class BlField
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Value { get; set; } = string.Empty;
+        public bool Verified { get; set; }
+        public string DiscrepancyNote { get; set; } = string.Empty;
+    }
+}

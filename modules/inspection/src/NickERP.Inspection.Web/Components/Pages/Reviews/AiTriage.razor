@@ -1,0 +1,267 @@
+@page "/reviews/ai/{CaseId:guid}"
+@* Sprint 34 / B6.2 — AI triage review.
+
+   Surfaces the AI verdict + confidence + region overlays produced by
+   the Sprint 6.5 / 6.11 inference pipeline (read from existing Findings
+   prefixed validation.* / completeness.* / inference.*). The analyst
+   confirms / overrides / escalates each AI verdict; the response
+   persists as Findings with FindingType=review.ai_triage.{outcome}.
+
+   Vendor-neutral by design — the AI verdicts live on Findings already;
+   this page just wraps them in a triage UI. No Ghana port codes, no
+   regime-specific fields.
+*@
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Application.Reviews
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject InspectionDbContext Db
+@inject IReviewWorkflow Workflow
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@inject ILogger<AiTriage> Logger
+
+<PageTitle>AI triage - @ShortId - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>AI triage @if (_case is not null) {<text> &mdash; <code>@_case.SubjectIdentifier</code></text>}</h1>
+        <p class="inspection-page-subtitle">
+            Analyst-AI triage loop (Sprint 34 / B6.2). Review the AI's
+            verdict + confidence for each detected anomaly. Confirm,
+            override, or escalate per row. Confidence + decision time
+            are persisted on the AnalystReview for ML training feedback.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved.</p>
+}
+else if (_userId == Guid.Empty)
+{
+    <p class="inspection-empty">Sign in to start an AI triage review.</p>
+}
+else if (_case is null && !_notFound)
+{
+    <p>Loading...</p>
+}
+else if (_notFound)
+{
+    <p class="inspection-empty">Case not found.</p>
+    <p><a href="/reviews/queue">Back to queue</a></p>
+}
+else
+{
+    <section class="inspection-section">
+        <h2>AI verdicts</h2>
+        @if (_aiVerdicts.Count == 0)
+        {
+            <p class="inspection-empty">
+                No AI verdicts available for this case yet. The
+                inference pipeline (§6.5 / §6.11) hasn't produced
+                Findings. Try the <a href="/cases/@CaseId?tab=rules">rules + findings</a>
+                tab to inspect what the engine has emitted.
+            </p>
+        }
+        else
+        {
+            <table class="inspection-table inspection-ai-verdicts">
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>AI verdict</th>
+                        <th>Confidence</th>
+                        <th>Severity</th>
+                        <th>Your call</th>
+                        <th>Note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var v in _aiVerdicts)
+                    {
+                        <tr data-source="@v.Source">
+                            <td><code>@v.Source</code></td>
+                            <td>@v.Verdict</td>
+                            <td>@(v.Confidence?.ToString("0.00") ?? "-")</td>
+                            <td>@v.Severity</td>
+                            <td>
+                                <select @bind="v.Decision">
+                                    <option value="confirmed">Confirm</option>
+                                    <option value="overridden">Override</option>
+                                    <option value="escalated">Escalate</option>
+                                </select>
+                            </td>
+                            <td>
+                                <input type="text" @bind="v.Note" placeholder="(optional)" maxlength="500" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="inspection-section">
+        <h2>Analyst confidence</h2>
+        <label>
+            Your overall confidence in this triage pass (0.00 - 1.00):
+            <input type="number" min="0" max="1" step="0.01" @bind="_confidence" />
+        </label>
+    </section>
+
+    <section class="inspection-section">
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="inspection-form-message">@_message</p>
+        }
+        <button type="button" class="inspection-button is-primary"
+                @onclick="StartOrCompleteAsync"
+                disabled="@_busy">
+            @(_reviewId is null ? "Start AI triage" : "Complete AI triage")
+        </button>
+        <a href="/cases/@CaseId" class="inspection-button">Back to case</a>
+        <a href="/reviews/queue" class="inspection-button">Back to queue</a>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid CaseId { get; set; }
+
+    private InspectionCase? _case;
+    private bool _notFound;
+    private Guid _userId;
+    private List<AiVerdictRow> _aiVerdicts = new();
+    private Guid? _reviewId;
+    private double _confidence = 0.85;
+    private string _message = string.Empty;
+    private bool _busy;
+
+    private string ShortId => _case is null ? "" : _case.Id.ToString()[..8];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+        Guid.TryParse(idClaim, out _userId);
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _case = await Db.Cases.AsNoTracking().FirstOrDefaultAsync(c => c.Id == CaseId);
+        if (_case is null)
+        {
+            _notFound = true;
+            return;
+        }
+        // Pull every Finding on this case authored by an engine
+        // (validation.* / completeness.* / inference.*) and surface
+        // them as AI-verdict rows.
+        var findings = await (
+            from r in Db.AnalystReviews.AsNoTracking()
+            join s in Db.ReviewSessions.AsNoTracking() on r.ReviewSessionId equals s.Id
+            join f in Db.Findings.AsNoTracking() on r.Id equals f.AnalystReviewId
+            where s.CaseId == CaseId
+            select new { f.FindingType, f.Severity, f.Note }
+        ).ToListAsync();
+
+        _aiVerdicts = findings
+            .Where(f => f.FindingType.StartsWith("validation.", StringComparison.OrdinalIgnoreCase)
+                     || f.FindingType.StartsWith("completeness.", StringComparison.OrdinalIgnoreCase)
+                     || f.FindingType.StartsWith("inference.", StringComparison.OrdinalIgnoreCase))
+            .Select(f => new AiVerdictRow
+            {
+                Source = f.FindingType,
+                Verdict = f.Severity == "critical" ? "Anomaly" : f.Severity == "warning" ? "Suspect" : "OK",
+                Confidence = TryReadConfidence(f.Note),
+                Severity = f.Severity,
+                Note = string.Empty,
+                Decision = "confirmed",
+            })
+            .DistinctBy(v => v.Source)
+            .OrderBy(v => v.Source)
+            .ToList();
+    }
+
+    private static double? TryReadConfidence(string? note)
+    {
+        if (string.IsNullOrEmpty(note)) return null;
+        // The engine sometimes writes "confidence=0.93" inline. Best-
+        // effort parse; a missing value just renders as "-".
+        var idx = note.IndexOf("confidence=", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return null;
+        var slice = note[(idx + 11)..];
+        var end = slice.IndexOfAny(new[] { ' ', ',', ';' });
+        if (end > 0) slice = slice[..end];
+        return double.TryParse(slice, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
+    }
+
+    private async Task StartOrCompleteAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+        _message = string.Empty;
+        try
+        {
+            if (_reviewId is null)
+            {
+                _reviewId = await Workflow.StartReviewAsync(CaseId, ReviewType.AiTriage, _userId);
+                _message = "Review started.";
+            }
+            else
+            {
+                var findings = BuildFindings();
+                // Outcome is the dominant decision — escalated > overridden > confirmed.
+                var outcome = _aiVerdicts.Any(v => v.Decision == "escalated") ? "escalated"
+                    : _aiVerdicts.Any(v => v.Decision == "overridden") ? "overridden"
+                    : "confirmed";
+                await Workflow.CompleteReviewAsync(_reviewId.Value, outcome, findings, _userId);
+                _message = "Review completed.";
+                _reviewId = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "AI triage action failed for case {CaseId}.", CaseId);
+            _message = $"Action failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private List<Finding> BuildFindings()
+    {
+        var findings = new List<Finding>();
+        foreach (var v in _aiVerdicts)
+        {
+            findings.Add(new Finding
+            {
+                FindingType = $"review.ai_triage.{v.Decision}",
+                Severity = v.Decision == "escalated" ? "critical" : v.Decision == "overridden" ? "warning" : "info",
+                Note = string.IsNullOrWhiteSpace(v.Note)
+                    ? $"source={v.Source};confidence={v.Confidence?.ToString("0.00") ?? "n/a"}"
+                    : v.Note,
+                LocationInImageJson = "{}",
+            });
+        }
+        return findings;
+    }
+
+    private sealed class AiVerdictRow
+    {
+        public string Source { get; set; } = string.Empty;
+        public string Verdict { get; set; } = string.Empty;
+        public double? Confidence { get; set; }
+        public string Severity { get; set; } = "info";
+        public string Note { get; set; } = string.Empty;
+        public string Decision { get; set; } = "confirmed";
+    }
+}
