@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace NickERP.Platform.Plugins;
@@ -33,6 +34,38 @@ public interface IPluginRegistry
     /// requested contract.
     /// </summary>
     T Resolve<T>(string module, string typeCode, IServiceProvider services) where T : class;
+
+    /// <summary>
+    /// Sprint 42 / FU-promote-validation-rules-to-plugin-registry —
+    /// enumerate every concrete type contributed by a registered plugin
+    /// assembly that implements <paramref name="contractType"/>. Distinct
+    /// from <see cref="ForContract"/>: the latter returns plugin types
+    /// decorated with <see cref="PluginAttribute"/>; this method returns
+    /// every concrete (non-abstract, non-interface, ctor-bearing) type
+    /// in the same assemblies that implement the contract.
+    ///
+    /// <para>
+    /// The use case is plugin-supplied <see cref="System.Collections.Generic.IEnumerable{T}"/>
+    /// contributions that aren't themselves <c>[Plugin]</c>-decorated.
+    /// Sprint 28's <c>PluginValidationRuleRegistration</c> previously
+    /// reflected over every DLL in the plugins folder to find these;
+    /// this accessor lets the registration trust the registry instead.
+    /// </para>
+    ///
+    /// <para>
+    /// Returns the empty list when <paramref name="contractType"/> is
+    /// not implemented by any concrete in any registered plugin
+    /// assembly. Plugins that ship no contributing types (FS6000 / Mock /
+    /// IcumsGh / etc.) therefore stay neutral — no breaking change.
+    /// </para>
+    /// <para>
+    /// <b>Default implementation</b> returns the empty list so existing
+    /// <see cref="IPluginRegistry"/> implementations (test stubs, etc.)
+    /// don't need to update. The default <see cref="PluginRegistry"/>
+    /// overrides with the real reflection scan.
+    /// </para>
+    /// </summary>
+    IReadOnlyList<Type> GetContributedTypes(Type contractType) => Array.Empty<Type>();
 }
 
 /// <summary>Default <see cref="IPluginRegistry"/> backed by an in-memory dictionary.</summary>
@@ -81,6 +114,46 @@ public sealed class PluginRegistry : IPluginRegistry
         }
 
         return (T)services.GetRequiredService(registered.ConcreteType);
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<Type> GetContributedTypes(Type contractType)
+    {
+        ArgumentNullException.ThrowIfNull(contractType);
+
+        // Distinct over plugin assemblies — plugins from the same DLL
+        // shouldn't have their contributions enumerated twice.
+        var assemblies = _all
+            .Select(p => p.ConcreteType.Assembly)
+            .Distinct()
+            .ToList();
+
+        var result = new List<Type>();
+        foreach (var assembly in assemblies)
+        {
+            Type[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                // Defensive: a plugin DLL with a missing transitive dep
+                // shouldn't crash the host. Skip the unloadable types
+                // and continue.
+                types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
+            }
+
+            foreach (var t in types)
+            {
+                if (t.IsAbstract || t.IsInterface) continue;
+                if (!contractType.IsAssignableFrom(t)) continue;
+                if (t.GetConstructors().Length == 0) continue;
+                result.Add(t);
+            }
+        }
+
+        return result;
     }
 
     private sealed class ModuleTypeCodeComparer : IEqualityComparer<(string Module, string TypeCode)>

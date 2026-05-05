@@ -244,6 +244,13 @@ public sealed class ValidationEngine
                 TimeToDecisionMs = 0,
                 ConfidenceScore = 1.0,
                 CreatedAt = now,
+                // Sprint 42 / FU-engine-emitted-reviewtype-tagging — engine-
+                // emitted reviews ship with ReviewType.EngineValidation so the
+                // /admin/reviews/throughput dashboard can split engine output
+                // from human-emitted reviews. Sprint 34 left this defaulting
+                // to ReviewType.Standard; the followup wires the explicit
+                // type through.
+                ReviewType = ReviewType.EngineValidation,
                 TenantId = tenantId
             };
             _db.AnalystReviews.Add(syntheticReview);
