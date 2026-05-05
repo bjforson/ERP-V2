@@ -61,6 +61,63 @@ else
     </section>
 
     <section class="inspection-section">
+        <h2>By queue tier</h2>
+        @* Sprint 45 / Phase D — per-tier breakdown cards. Tiers order
+           by escalation priority (Urgent first); ManualCount surfaces
+           windows that an operator manually assigned (the auto-escalator
+           leaves them alone). *@
+        @if (_byTier is null || _byTier.Count == 0)
+        {
+            <p class="inspection-empty">No tier breakdown available yet.</p>
+        }
+        else
+        {
+            <div class="inspection-card-grid">
+                @foreach (var t in _byTier)
+                {
+                    <div class="inspection-card">
+                        <h2 class="inspection-card-title">@t.Tier</h2>
+                        <p class="inspection-card-metric">@(t.OpenOnTime + t.OpenAtRisk + t.OpenBreached)</p>
+                        <ul>
+                            <li>On time: @t.OpenOnTime</li>
+                            <li>At risk: @t.OpenAtRisk</li>
+                            <li>Breached: @t.OpenBreached</li>
+                            <li>Manual: @t.ManualCount</li>
+                        </ul>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="inspection-section">
+        <h2>Reclassify a window</h2>
+        @* Sprint 45 / Phase D — manual reclassify. Operator pastes the
+           SlaWindow id from the breach drill-in table + picks a tier;
+           saving sets QueueTierIsManual=true so the escalator worker
+           leaves it alone. *@
+        <div class="inspection-form">
+            <label>SLA window id <input type="text" @bind="_reclassifyId" /></label>
+            <label>Tier
+                <select @bind="_reclassifyTier">
+                    @foreach (var tier in Enum.GetValues<QueueTier>())
+                    {
+                        <option value="@tier">@tier</option>
+                    }
+                </select>
+            </label>
+            <button class="btn btn-primary" type="button" @onclick="ReclassifyAsync"
+                    disabled="@(!CanReclassify())">Reclassify</button>
+            @if (!string.IsNullOrEmpty(_reclassifyMessage))
+            {
+                <p class="@(_reclassifySuccess ? "inspection-success" : "inspection-error")">
+                    @_reclassifyMessage
+                </p>
+            }
+        </div>
+    </section>
+
+    <section class="inspection-section">
         <h2>By window</h2>
         @if (_summary.ByWindow.Count == 0)
         {
@@ -140,6 +197,12 @@ else
 @code {
     private SlaDashboardSummary? _summary;
     private List<SlaBreachedRow>? _breached;
+    // Sprint 45 / Phase D — per-tier breakdown + reclassify form state.
+    private List<SlaTierBreakdown>? _byTier;
+    private string _reclassifyId = string.Empty;
+    private QueueTier _reclassifyTier = QueueTier.Standard;
+    private string? _reclassifyMessage;
+    private bool _reclassifySuccess;
 
     protected override async Task OnInitializedAsync()
     {
@@ -151,5 +214,30 @@ else
     {
         _summary = await Dashboard.BuildSummaryAsync();
         _breached = (await Dashboard.ListBreachedAsync()).ToList();
+        _byTier = (await Dashboard.ListByTierAsync()).ToList();
+    }
+
+    private bool CanReclassify() =>
+        !string.IsNullOrWhiteSpace(_reclassifyId)
+        && Guid.TryParse(_reclassifyId, out _);
+
+    private async Task ReclassifyAsync()
+    {
+        if (!Guid.TryParse(_reclassifyId, out var id))
+        {
+            _reclassifyMessage = "Invalid window id (expected a GUID).";
+            _reclassifySuccess = false;
+            return;
+        }
+        var ok = await Dashboard.ReclassifyTierAsync(id, _reclassifyTier);
+        _reclassifySuccess = ok;
+        _reclassifyMessage = ok
+            ? $"Reclassified {id} to {_reclassifyTier} (manual)."
+            : $"No SLA window found for id {id}.";
+        if (ok)
+        {
+            _reclassifyId = string.Empty;
+            await ReloadAsync();
+        }
     }
 }

@@ -314,3 +314,36 @@ public sealed class SlaStateRefresherOptions : WorkerOptionsBase
     /// </summary>
     public new TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
 }
+
+/// <summary>
+/// Sprint 45 / Phase D — periodic queue-tier auto-escalator for the
+/// SLA window engine. Promotes <c>Standard</c> → <c>High</c> after
+/// <see cref="StandardToHighAfter"/>; <c>High</c> → <c>Urgent</c>
+/// after <see cref="HighToUrgentAfter"/>. Manual operator-set tiers
+/// are skipped. Default-disabled per Sprint 24 architectural decision;
+/// opt-in per environment via
+/// <c>Inspection:Workers:QueueEscalator:Enabled=true</c>.
+/// </summary>
+public sealed class QueueEscalatorOptions : WorkerOptionsBase
+{
+    /// <summary>Section root binding key.</summary>
+    public const string SectionName = "Inspection:Workers:QueueEscalator";
+
+    /// <summary>
+    /// Override poll interval. Default 60 seconds — same cadence as
+    /// the state-refresher worker; keeps cycle latency bounded.
+    /// </summary>
+    public new TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Time-since-StartedAt after which a Standard-tier window
+    /// auto-escalates to High. Default 30 minutes.
+    /// </summary>
+    public TimeSpan StandardToHighAfter { get; set; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// Time-since-StartedAt after which a High-tier window
+    /// auto-escalates to Urgent. Default 60 minutes.
+    /// </summary>
+    public TimeSpan HighToUrgentAfter { get; set; } = TimeSpan.FromMinutes(60);
+}
