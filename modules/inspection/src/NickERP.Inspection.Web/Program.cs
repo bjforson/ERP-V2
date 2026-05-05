@@ -9,6 +9,7 @@ using NickERP.Inspection.Application.Downloads;
 using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Application.Icums;
 using NickERP.Inspection.Application.PostHocOutcomes;
+using NickERP.Inspection.Application.Reviews;
 using NickERP.Inspection.Application.Sla;
 using NickERP.Inspection.Application.Submissions;
 using NickERP.Inspection.Application.Thresholds;
@@ -241,6 +242,13 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.SlaDashboardService>(
 // depends on it for the SplitCaseAsync hand-off.)
 builder.Services.AddNickErpInspectionDetection();
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.CrossRecordScanService>();
+
+// Sprint 34 / B6 — specialised-review workflow + queue service.
+// IReviewWorkflow is scoped (captures InspectionDbContext + tenant);
+// ReviewQueueService composes CaseVisibilityService + CaseClaimService
+// + IReviewWorkflow for the BL / AI-triage / Audit / queue pages.
+builder.Services.AddNickErpInspectionReviews();
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.ReviewQueueService>();
 
 // §6.5 admin actions — Approve / Reject for ScannerThresholdProfile.
 // Mirrors CaseWorkflowService — pages call this so the audit emission
