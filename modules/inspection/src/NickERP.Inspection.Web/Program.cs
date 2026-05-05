@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Application.AnalysisServices;
+using NickERP.Inspection.Application.Completeness;
 using NickERP.Inspection.Application.Downloads;
 using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Application.Icums;
 using NickERP.Inspection.Application.PostHocOutcomes;
+using NickERP.Inspection.Application.Sla;
 using NickERP.Inspection.Application.Submissions;
 using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Application.Validation;
@@ -214,6 +216,22 @@ NickERP.Inspection.Application.Validation.PluginValidationRuleRegistration
 // Reads/writes tenant_validation_rule_settings + reads recent failures
 // from audit.events.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.RulesAdminService>();
+
+// Sprint 31 / B5.1 — vendor-neutral completeness rollup engine. Same
+// posture as the Sprint 28 validation engine: built-in requirements
+// ship with the host, plugin requirements would land via a future
+// CompletenessRequirementRegistration pass; the engine auto-fires on
+// the Open→Validated transition.
+builder.Services.AddNickErpInspectionCompleteness();
+builder.Services.AddNickErpInspectionCompletenessDbProvider();
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.CompletenessService>();
+
+// Sprint 31 / B5.1 — SLA window tracker + dashboard service. Tracker
+// auto-opens windows on case creation + auto-closes them on terminal
+// transitions; dashboard service backs /admin/sla. Both scoped.
+builder.Services.AddNickErpInspectionSla(builder.Configuration);
+builder.Services.AddNickErpInspectionSlaDbProvider();
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.SlaDashboardService>();
 
 // §6.5 admin actions — Approve / Reject for ScannerThresholdProfile.
 // Mirrors CaseWorkflowService — pages call this so the audit emission
