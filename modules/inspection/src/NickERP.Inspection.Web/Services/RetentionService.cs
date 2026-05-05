@@ -65,7 +65,7 @@ public sealed class RetentionService
 {
     private readonly InspectionDbContext _db;
     private readonly ITenantContext _tenant;
-    private readonly ITenantSettingsService _settings;
+    private readonly ITenantSettingsService? _settings;
     private readonly IEventPublisher _events;
     private readonly ILogger<RetentionService> _logger;
     private readonly TimeProvider _clock;
@@ -73,16 +73,20 @@ public sealed class RetentionService
     public RetentionService(
         InspectionDbContext db,
         ITenantContext tenant,
-        ITenantSettingsService settings,
         IEventPublisher events,
         ILogger<RetentionService> logger,
+        ITenantSettingsService? settings = null,
         TimeProvider? clock = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
-        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        // Sprint 44 fix-forward: ITenantSettingsService is optional so the
+        // E2E test host (which doesn't bootstrap the platform tenant-settings
+        // layer) can still construct the service. When null, retention
+        // policies fall back to RetentionPolicyDefaults.
+        _settings = settings;
         _clock = clock ?? TimeProvider.System;
     }
 
@@ -372,8 +376,9 @@ public sealed class RetentionService
 
         // Training + LegalHold have no setting key — never overridable
         // from tenant_settings. Return the fallback (= int.MaxValue)
-        // straight away.
-        if (key is null || !_tenant.IsResolved)
+        // straight away. Same shortcut when ITenantSettingsService isn't
+        // wired (E2E test host) or the tenant context isn't resolved.
+        if (key is null || _settings is null || !_tenant.IsResolved)
         {
             return new RetentionPolicy(retentionClass, fallback, eligible, "fallback");
         }
