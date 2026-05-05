@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Edge.Abstractions</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Edge.Abstractions</AssemblyName>
+    <Description>NickERP Inspection v2 — Sprint 40 — canonical scan-package contract (ScanPackage / ImageFile / ScanPackageManifest / ScanPackageValidator). Vendor-neutral, edge-replay-safe, signed-and-checksummed evidentiary bundle. Adopted from external doc §9.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>
