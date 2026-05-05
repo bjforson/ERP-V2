@@ -135,9 +135,10 @@ public sealed class QueueEscalatorWorker : BackgroundService, IBackgroundService
 
     /// <summary>
     /// One escalation cycle. Returns the total count of windows whose
-    /// tier was promoted. Internal so tests can drive a single cycle.
+    /// tier was promoted. Public so tests can drive a single cycle
+    /// without reflection.
     /// </summary>
-    internal async Task<int> EscalateOnceAsync(CancellationToken ct)
+    public async Task<int> EscalateOnceAsync(CancellationToken ct)
     {
         var tenantIds = await DiscoverActiveTenantsAsync(ct);
         if (tenantIds.Count == 0) return 0;
@@ -294,8 +295,9 @@ public sealed class QueueEscalatorWorker : BackgroundService, IBackgroundService
     /// <summary>
     /// Sprint 45 / Phase D — auto-escalation ladder. <c>Standard</c> →
     /// <c>High</c>; <c>High</c> → <c>Urgent</c>. Other tiers terminal.
+    /// Public so tests can assert the ladder shape.
     /// </summary>
-    internal static QueueTier NextTier(QueueTier current) => current switch
+    public static QueueTier NextTier(QueueTier current) => current switch
     {
         QueueTier.Standard => QueueTier.High,
         QueueTier.High => QueueTier.Urgent,

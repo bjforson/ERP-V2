@@ -781,9 +781,11 @@ public static class EdgeReplayEndpoint
     /// Sprint 45 / Phase B — JSON options for the wire-format scan
     /// package payload. Snake-case property naming matches the
     /// canonical manifest shape (see
-    /// <see cref="ScanPackageManifest.BuildManifestJson"/>).
+    /// <see cref="ScanPackageManifest.BuildManifestJson"/>). Public so
+    /// tests can build wire payloads with the same options the
+    /// endpoint deserialises with.
     /// </summary>
-    internal static readonly JsonSerializerOptions ScanPackageJsonOptions = new()
+    public static readonly JsonSerializerOptions ScanPackageJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         PropertyNameCaseInsensitive = true,

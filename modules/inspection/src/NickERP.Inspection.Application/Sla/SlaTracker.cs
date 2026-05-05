@@ -153,6 +153,16 @@ public sealed class SlaTracker : ISlaTracker
                 {
                     budget = tierMinutes;
                 }
+                else if (IsTierIndefinite(tierBudget) && IsTierBoundWindow(name))
+                {
+                    // Tier explicitly requested an indefinite budget
+                    // (0/0) for a tier-bound window — caller wants no
+                    // SLA enforcement (Exception tier). Skip the row
+                    // rather than falling through to engine defaults
+                    // — that would silently re-impose a deadline the
+                    // tier deliberately suppressed.
+                    continue;
+                }
                 else if (defaults.TryGetValue(name, out var def))
                 {
                     budget = def;
@@ -216,6 +226,26 @@ public sealed class SlaTracker : ISlaTracker
         // Unknown tier — fall back to Standard.
         return options.TierDefaults[QueueTier.Standard];
     }
+
+    /// <summary>
+    /// Sprint 45 / Phase C — true when both (firstReview, final) are
+    /// 0 (the Exception-tier sentinel). Used to suppress engine-default
+    /// fallback when the caller explicitly requested no SLA enforcement.
+    /// </summary>
+    private static bool IsTierIndefinite((int FirstReviewMinutes, int FinalMinutes) tier)
+        => tier.FirstReviewMinutes <= 0 && tier.FinalMinutes <= 0;
+
+    /// <summary>
+    /// Sprint 45 / Phase C — true when the window name is one of the
+    /// well-known tier-bound windows (case.open_to_validated /
+    /// case.validated_to_verdict / case.verdict_to_submitted). Used
+    /// to gate the Exception-tier no-fallback branch — non-tier-bound
+    /// windows still get engine defaults under any tier.
+    /// </summary>
+    private static bool IsTierBoundWindow(string windowName)
+        => string.Equals(windowName, OpenToValidated, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(windowName, ValidatedToVerdict, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(windowName, VerdictToSubmitted, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Sprint 45 / Phase C — for a "well-known" SLA window name,
