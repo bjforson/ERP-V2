@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using NickERP.Inspection.Edge.Abstractions;
 using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Platform.Plugins;
 
@@ -60,6 +61,61 @@ public sealed class MockScannerAdapter : IScannerAdapter
                 ["source"] = "mock",
                 ["original-path"] = raw.SourcePath
             }));
+    }
+
+    /// <summary>
+    /// Sprint 40 / Phase B — canonical-shape parse. Produces a single
+    /// <see cref="ImageFile"/> with computed sha256 + an unsigned
+    /// <see cref="ScanPackage"/>. The host signs the manifest with the
+    /// per-edge HMAC key.
+    /// </summary>
+    public Task<ParsedScan> ParseScanAsync(
+        byte[] rawScanData,
+        ScannerCapabilities capabilities,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(rawScanData);
+        ArgumentNullException.ThrowIfNull(capabilities);
+        var hex = ScanPackageManifest.Sha256Hex(rawScanData);
+        var image = new ImageFile(
+            FileName: "mock-primary.png",
+            Sha256Hex: hex,
+            View: "primary",
+            SizeBytes: rawScanData.LongLength,
+            Data: rawScanData);
+
+        var package = new ScanPackage(
+            ScanId: Guid.NewGuid().ToString(),
+            SiteId: "mock-site",
+            ScannerId: TypeCode,
+            GatewayId: string.Empty,
+            ScanType: "primary",
+            OccurredAt: DateTimeOffset.UtcNow,
+            OperatorId: string.Empty,
+            ContainerNumber: string.Empty,
+            VehiclePlate: string.Empty,
+            DeclarationNumber: string.Empty,
+            ManifestNumber: string.Empty,
+            ImageFiles: new[] { image },
+            ManifestSha256: Array.Empty<byte>(),
+            ManifestSignature: Array.Empty<byte>());
+
+        var artifact = new ParsedArtifact(
+            DeviceId: Guid.Empty,
+            CapturedAt: package.OccurredAt,
+            WidthPx: 1,
+            HeightPx: 1,
+            Channels: 1,
+            MimeType: "image/png",
+            Bytes: rawScanData,
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["source"] = "mock",
+                ["scanner.type"] = TypeCode
+            },
+            FormatVersion: "mock-v1");
+
+        return Task.FromResult(new ParsedScan(new[] { artifact }, package));
     }
 
     private static RawScanArtifact SyntheticArtifact(ScannerDeviceConfig config)

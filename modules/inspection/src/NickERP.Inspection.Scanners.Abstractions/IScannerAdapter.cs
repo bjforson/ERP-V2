@@ -1,3 +1,5 @@
+using NickERP.Inspection.Edge.Abstractions;
+
 namespace NickERP.Inspection.Scanners.Abstractions;
 
 /// <summary>
@@ -28,9 +30,129 @@ public interface IScannerAdapter
     /// Parse a raw artifact into a normalized form (image bytes, dimensions,
     /// channels, capture metadata). Vendor-specific format decoding lives
     /// here; the inspection core only sees the parsed form.
+    ///
+    /// <para>
+    /// <b>Sprint 40 — superseded by <see cref="ParseScanAsync"/>.</b> This
+    /// overload remains for adapters that haven't yet adopted the
+    /// canonical <see cref="ScanPackage"/> shape; new adapters should
+    /// implement <see cref="ParseScanAsync"/>, which returns both the
+    /// per-artifact parsed shape AND a signed, sha256-checksummed
+    /// <see cref="ScanPackage"/> bundle suitable for edge-replay
+    /// validation. Existing adapters (FS6000, Mock, ASE) keep this
+    /// overload as their primary implementation; the host calls
+    /// <see cref="ParseScanAsync"/> when present and falls back to
+    /// <see cref="ParseAsync"/> otherwise.
+    /// </para>
     /// </summary>
+    [Obsolete(
+        "Sprint 40 — adapters should implement ParseScanAsync(byte[], ScannerCapabilities, CancellationToken) " +
+        "to produce a canonical ScanPackage bundle. ParseAsync remains valid for backward compatibility but " +
+        "will be removed in a future contract-version bump.",
+        error: false)]
     Task<ParsedArtifact> ParseAsync(RawScanArtifact raw, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sprint 40 / Phase B — canonical scan-parse path. Decode raw vendor
+    /// scanner bytes into BOTH (a) one or more parsed image artifacts AND
+    /// (b) a canonical <see cref="ScanPackage"/> bundle ready for HMAC
+    /// signing. The host then signs the manifest under the per-edge HMAC
+    /// key (Sprint 13 T2 EdgeAuthHandler) and either ingests directly
+    /// or buffers for edge-replay.
+    ///
+    /// <para>
+    /// <b>Default implementation.</b> Adapters that haven't adopted the
+    /// canonical shape get a minimal default that wraps a single
+    /// <see cref="ParseAsync"/> call into a one-image
+    /// <see cref="ScanPackage"/> with empty signature fields — the
+    /// caller is then responsible for computing sha256 + HMAC. New
+    /// adapters override this with native bundle support; existing
+    /// FS6000 / Mock plugins are upgraded to override it as part of
+    /// Sprint 40 Phase B.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Empty signature fields.</b> The returned package's
+    /// <see cref="ScanPackage.ManifestSha256"/> and
+    /// <see cref="ScanPackage.ManifestSignature"/> are
+    /// <see cref="Array.Empty{T}"/> — the host calls
+    /// <see cref="ScanPackageManifest.Seal"/> with the per-edge HMAC
+    /// key to populate them. This keeps the adapter free of any
+    /// per-edge key knowledge (the same parsed scan can be replayed by
+    /// any edge that's authorized for the originating tenant).
+    /// </para>
+    /// </summary>
+    /// <param name="rawScanData">Raw vendor bytes the scanner emitted. Adapters that watch a directory pass the contents of the discovered files; adapters that pull from a remote DB pass the row's payload bytes.</param>
+    /// <param name="capabilities">Adapter capabilities — typically <see cref="Capabilities"/>; the parameter is explicit so the host can override (e.g. forcing dual-energy parse on a single-energy capable adapter when the device reports both channels).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Parsed scan with normalized artifacts + an unsigned canonical bundle.</returns>
+    Task<ParsedScan> ParseScanAsync(
+        byte[] rawScanData,
+        ScannerCapabilities capabilities,
+        CancellationToken ct = default)
+    {
+        // Default implementation: wrap the raw bytes in a single
+        // ParsedArtifact via ParseAsync's shape, and surface a
+        // one-image canonical bundle with empty signature fields. The
+        // adapter that overrides this gets a richer bundle (multiple
+        // views, per-image hashes computed natively).
+        ArgumentNullException.ThrowIfNull(rawScanData);
+        ArgumentNullException.ThrowIfNull(capabilities);
+        var sha = ScanPackageManifest.Sha256Hex(rawScanData);
+        var image = new ImageFile(
+            FileName: "scan.bin",
+            Sha256Hex: sha,
+            View: capabilities.SupportedFormats?.FirstOrDefault() ?? string.Empty,
+            SizeBytes: rawScanData.LongLength,
+            Data: rawScanData);
+        var pkg = new ScanPackage(
+            ScanId: Guid.NewGuid().ToString(),
+            SiteId: string.Empty,
+            ScannerId: TypeCode,
+            GatewayId: string.Empty,
+            ScanType: "primary",
+            OccurredAt: DateTimeOffset.UtcNow,
+            OperatorId: string.Empty,
+            ContainerNumber: string.Empty,
+            VehiclePlate: string.Empty,
+            DeclarationNumber: string.Empty,
+            ManifestNumber: string.Empty,
+            ImageFiles: new[] { image },
+            ManifestSha256: Array.Empty<byte>(),
+            ManifestSignature: Array.Empty<byte>());
+        var artifacts = new[]
+        {
+            new ParsedArtifact(
+                DeviceId: Guid.Empty,
+                CapturedAt: pkg.OccurredAt,
+                WidthPx: 0,
+                HeightPx: 0,
+                Channels: 1,
+                MimeType: image.View,
+                Bytes: rawScanData,
+                Metadata: new Dictionary<string, string>(StringComparer.Ordinal),
+                FormatVersion: "default-wrap")
+        };
+        return Task.FromResult(new ParsedScan(artifacts, pkg));
+    }
 }
+
+/// <summary>
+/// Sprint 40 / Phase B — return shape from
+/// <see cref="IScannerAdapter.ParseScanAsync"/>. Carries the per-artifact
+/// parsed shape (for the inspection-core ingest pipeline) AND the
+/// canonical bundle (for edge-replay / chain-of-custody).
+///
+/// <para>
+/// The host signs <see cref="Package"/>'s manifest before transmission
+/// or storage; <see cref="Artifacts"/> is the projection the
+/// CaseWorkflowService.IngestRawArtifactAsync path consumes.
+/// </para>
+/// </summary>
+/// <param name="Artifacts">Per-artifact parsed shape — one row per emitted image / channel.</param>
+/// <param name="Package">Unsigned canonical bundle — host calls <c>ScanPackageManifest.Seal</c> with the per-edge HMAC key to populate manifest sha256 + signature.</param>
+public sealed record ParsedScan(
+    IReadOnlyList<ParsedArtifact> Artifacts,
+    ScanPackage Package);
 
 /// <summary>
 /// What the scanner can do — surfaced to the admin UI when registering an
