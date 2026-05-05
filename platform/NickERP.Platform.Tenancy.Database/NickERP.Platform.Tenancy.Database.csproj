@@ -28,6 +28,10 @@
          and uses IdempotencyKey to build deterministic keys. Both live in
          NickERP.Platform.Audit (the in-process abstraction; no DB dep). -->
     <ProjectReference Include="..\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <!-- Sprint 43 — PilotReadinessService + MultiTenantInvariantProbe both
+         read audit.events directly. Audit.Database lives in the same
+         nickerp_platform DB, schema 'audit', sibling to 'tenancy'. -->
+    <ProjectReference Include="..\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using NickERP.Platform.Tenancy.Database.Pilot;
 using NickERP.Platform.Tenancy.Database.Services;
 using NickERP.Platform.Tenancy.Database.Workers;
+using NickERP.Platform.Tenancy.Pilot;
 
 // NickERP.Platform.Tenancy is referenced via ProjectReference; the
 // interceptor types live in the parent namespace.
@@ -122,6 +124,22 @@ public static class TenancyDatabaseServiceCollectionExtensions
         // Runner runs in the host as a hosted service. Single instance
         // per host; concurrency capped by MaxConcurrentExports (default 2).
         services.AddHostedService<TenantExportRunner>();
+        return services;
+    }
+
+    /// <summary>
+    /// Sprint 43 — register <see cref="IPilotReadinessService"/> + the
+    /// active <see cref="MultiTenantInvariantProbe"/> for the
+    /// <c>/admin/pilot-readiness</c> dashboard. The
+    /// <see cref="IInspectionPilotProbeDataSource"/> is left to the
+    /// host (apps/portal) to wire up because the platform layer has
+    /// no direct dependency on Inspection.Database.
+    /// </summary>
+    public static IServiceCollection AddNickErpPilotReadiness(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddScoped<MultiTenantInvariantProbe>();
+        services.AddScoped<IPilotReadinessService, PilotReadinessService>();
         return services;
     }
 }
