@@ -4,11 +4,13 @@
 @using NickERP.Inspection.Core.Entities
 @using NickERP.Inspection.Database
 @using NickERP.Inspection.Scanners.Abstractions
+@using NickERP.Inspection.Web.Services
 @using NickERP.Platform.Plugins
 @using NickERP.Platform.Tenancy
 @inject InspectionDbContext Db
 @inject IPluginRegistry Plugins
 @inject ITenantContext Tenant
+@inject ScannerOnboardingService Onboarding
 
 <PageTitle>Scanners — Inspection v2</PageTitle>
 
@@ -75,6 +77,79 @@
     }
 </section>
 
+@*
+   Sprint 46 / Phase A — onboarding wizard. Captures the 12-question
+   vendor-survey questionnaire (Annex B Table 55) per scanner-device-type.
+   Operator-driven, not gating: a scanner can register without filling
+   it in. Records persist via ScannerOnboardingService; on completion
+   the service emits nickerp.inspection.scanner_onboarded.
+*@
+<section class="inspection-section">
+    <div class="inspection-card">
+        <header class="inspection-filter-bar">
+            <h2 class="inspection-card-title">Onboard new scanner</h2>
+            <span class="inspection-page-subtitle">
+                Vendor-survey questionnaire — operator-driven, not gating. Captured for compliance + adapter authoring.
+            </span>
+        </header>
+
+        <EditForm Model="_wizardForm" OnValidSubmit="StartWizardAsync" FormName="onboard-scanner-start" class="inspection-form">
+            <div class="inspection-form-row">
+                <label>
+                    <span>Scanner type code</span>
+                    <InputText class="inspection-input" @bind-Value="_wizardForm.ScannerDeviceTypeId" placeholder="fs6000" />
+                </label>
+                <label class="inspection-checkbox">
+                    <InputCheckbox @bind-Value="_wizardForm.HasPlugin" />
+                    <span>A v2 plugin already exists for this type</span>
+                </label>
+            </div>
+            <div class="inspection-form-actions">
+                <button type="submit" class="inspection-button inspection-button-primary">Start questionnaire</button>
+                @if (!string.IsNullOrEmpty(_wizardMessage)) { <span class="inspection-form-message">@_wizardMessage</span> }
+            </div>
+        </EditForm>
+
+        @if (_wizardActive)
+        {
+            <div class="inspection-wizard">
+                <p class="inspection-page-subtitle">
+                    Type code <code>@_wizardActiveTypeCode</code> — answer each
+                    question; you can leave any field blank and re-record later.
+                    Each question persists on save.
+                </p>
+                <ol class="inspection-wizard-steps">
+                    @foreach (var field in ScannerOnboardingService.Fields)
+                    {
+                        <li class="inspection-wizard-step">
+                            <label>
+                                <span class="inspection-wizard-label">@field.DisplayLabel</span>
+                                <span class="inspection-page-subtitle">@field.HelpText</span>
+                                <textarea class="inspection-input"
+                                          rows="2"
+                                          @bind="_wizardAnswers[field.FieldName]"
+                                          placeholder="@_wizardExisting.GetValueOrDefault(field.FieldName)?.Value"></textarea>
+                            </label>
+                        </li>
+                    }
+                </ol>
+                <div class="inspection-form-actions">
+                    <button type="button" class="inspection-button inspection-button-primary" @onclick="CompleteWizardAsync">
+                        Save + mark complete
+                    </button>
+                    <button type="button" class="inspection-button" @onclick="CancelWizard">
+                        Cancel
+                    </button>
+                    @if (!string.IsNullOrEmpty(_wizardCompletionMessage))
+                    {
+                        <span class="inspection-form-message">@_wizardCompletionMessage</span>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</section>
+
 @code {
     private List<ScannerDeviceInstance>? _rows;
     private List<Location> _locations = new();
@@ -82,7 +157,21 @@
     private List<RegisteredPlugin> _scannerPlugins = new();
     private string _message = string.Empty;
 
+    // Wizard state — survives across questionnaire steps but is not
+    // a [SupplyParameterFromForm] because the questionnaire is in-page
+    // (not posted to the server in one shot).
+    private string _wizardMessage = string.Empty;
+    private string _wizardCompletionMessage = string.Empty;
+    private bool _wizardActive;
+    private string _wizardActiveTypeCode = string.Empty;
+    private bool _wizardActiveHasPlugin;
+    private Dictionary<string, string> _wizardAnswers = new(StringComparer.Ordinal);
+    private IReadOnlyDictionary<string, ScannerOnboardingResponse> _wizardExisting =
+        new Dictionary<string, ScannerOnboardingResponse>(StringComparer.Ordinal);
+
     [SupplyParameterFromForm] private ScannerForm _form { get; set; } = new();
+    [SupplyParameterFromForm(FormName = "onboard-scanner-start")]
+    private OnboardingStartForm _wizardForm { get; set; } = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -124,10 +213,89 @@
         await Reload();
     }
 
+    /// <summary>
+    /// Begin the onboarding wizard for the given scanner-device-type.
+    /// Loads any existing answers so re-recording shows the latest as
+    /// placeholder hints. Validation is light — empty type-code is the
+    /// only hard error; everything else (unknown type, no plugin yet)
+    /// is fine because the questionnaire is operator-driven, not gating.
+    /// </summary>
+    private async Task StartWizardAsync()
+    {
+        _wizardCompletionMessage = string.Empty;
+        if (string.IsNullOrWhiteSpace(_wizardForm.ScannerDeviceTypeId))
+        {
+            _wizardMessage = "Scanner type code is required.";
+            return;
+        }
+        if (!Tenant.IsResolved)
+        {
+            _wizardMessage = "Tenant context is not resolved. Sign out and back in.";
+            return;
+        }
+
+        _wizardActiveTypeCode = _wizardForm.ScannerDeviceTypeId.Trim();
+        _wizardActiveHasPlugin = _wizardForm.HasPlugin;
+        _wizardExisting = await Onboarding.GetCurrentResponsesAsync(_wizardActiveTypeCode);
+        _wizardAnswers = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var field in ScannerOnboardingService.Fields)
+        {
+            // Pre-populate with prior answer if any — operators can edit
+            // and re-record. Empty starting value is fine.
+            _wizardAnswers[field.FieldName] = string.Empty;
+        }
+        _wizardActive = true;
+        _wizardMessage = string.Empty;
+    }
+
+    /// <summary>
+    /// Finish the wizard — record every non-empty answer (each is its
+    /// own append insert) then emit the scanner_onboarded audit event.
+    /// Empty answers are skipped; operators can re-open the wizard later
+    /// to fill in missing fields without disturbing existing rows.
+    /// </summary>
+    private async Task CompleteWizardAsync()
+    {
+        if (!_wizardActive) return;
+        if (string.IsNullOrWhiteSpace(_wizardActiveTypeCode))
+        {
+            _wizardCompletionMessage = "No active type code.";
+            return;
+        }
+
+        var recorded = 0;
+        foreach (var field in ScannerOnboardingService.Fields)
+        {
+            if (!_wizardAnswers.TryGetValue(field.FieldName, out var value)) continue;
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            await Onboarding.RecordResponseAsync(_wizardActiveTypeCode, field.FieldName, value.Trim());
+            recorded++;
+        }
+        await Onboarding.MarkOnboardingCompleteAsync(_wizardActiveTypeCode, _wizardActiveHasPlugin);
+
+        _wizardCompletionMessage = recorded > 0
+            ? $"Recorded {recorded} answer(s) and marked onboarding complete."
+            : "Marked onboarding complete (no new answers).";
+        _wizardActive = false;
+        _wizardForm = new OnboardingStartForm();
+    }
+
+    private void CancelWizard()
+    {
+        _wizardActive = false;
+        _wizardCompletionMessage = string.Empty;
+    }
+
     public sealed class ScannerForm
     {
         public string TypeCode { get; set; } = string.Empty;
         public Guid LocationId { get; set; }
         public string DisplayName { get; set; } = string.Empty;
+    }
+
+    public sealed class OnboardingStartForm
+    {
+        public string ScannerDeviceTypeId { get; set; } = string.Empty;
+        public bool HasPlugin { get; set; }
     }
 }
