@@ -3,8 +3,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Application.Completeness;
+using NickERP.Inspection.Application.Sla;
 using NickERP.Inspection.Application.Validation;
 using NickERP.Inspection.Authorities.Abstractions;
+using NickERP.Inspection.Core.Completeness;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Core.Validation;
 using NickERP.Inspection.Database;
@@ -40,6 +43,14 @@ public sealed class CaseWorkflowService
     // register the engine; production wires it through
     // AddNickErpInspectionValidation() in Program.cs.
     private readonly ValidationEngine? _validationEngine;
+    // Sprint 31 / B5.1 — vendor-neutral completeness rollup hook. Same
+    // posture as the validation engine: optional in DI; auto-fires on the
+    // Open→Validated transition; persists Findings + audit events.
+    private readonly ICompletenessChecker? _completenessChecker;
+    // Sprint 31 / B5.1 — SLA window tracker. Optional in DI; opens
+    // standard windows on case creation; closes them on terminal-state
+    // transitions. Same posture as completeness/validation engines.
+    private readonly ISlaTracker? _slaTracker;
 
     public CaseWorkflowService(
         InspectionDbContext db,
@@ -50,7 +61,9 @@ public sealed class CaseWorkflowService
         AuthenticationStateProvider auth,
         IImageStore imageStore,
         ILogger<CaseWorkflowService> logger,
-        ValidationEngine? validationEngine = null)
+        ValidationEngine? validationEngine = null,
+        ICompletenessChecker? completenessChecker = null,
+        ISlaTracker? slaTracker = null)
     {
         _db = db;
         _events = events;
@@ -61,6 +74,8 @@ public sealed class CaseWorkflowService
         _imageStore = imageStore;
         _logger = logger;
         _validationEngine = validationEngine;
+        _completenessChecker = completenessChecker;
+        _slaTracker = slaTracker;
     }
 
     private async Task<(Guid? UserId, long TenantId)> CurrentActorAsync()
@@ -150,6 +165,23 @@ public sealed class CaseWorkflowService
         NickErpActivity.CaseStateTransitions.Add(1,
             new KeyValuePair<string, object?>("from", "none"),
             new KeyValuePair<string, object?>("to", InspectionWorkflowState.Open.ToString()));
+
+        // Sprint 31 / B5.1 — auto-open the standard SLA windows
+        // (case.open_to_validated, validated_to_verdict, verdict_to_submitted).
+        // Best-effort: a tracker failure must not break case creation.
+        if (_slaTracker is not null)
+        {
+            try
+            {
+                await _slaTracker.OpenStandardWindowsAsync(c.Id, now, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "SlaTracker failed to open standard windows for case {CaseId}; dashboards will under-count this case.",
+                    c.Id);
+            }
+        }
 
         return c;
     }
@@ -489,6 +521,23 @@ public sealed class CaseWorkflowService
                 NickErpActivity.CaseStateTransitions.Add(1,
                     new KeyValuePair<string, object?>("from", priorStateForValidated.ToString()),
                     new KeyValuePair<string, object?>("to", InspectionWorkflowState.Validated.ToString()));
+
+                // Sprint 31 / B5.1 — close the open_to_validated SLA
+                // window. Best-effort.
+                if (_slaTracker is not null)
+                {
+                    try
+                    {
+                        await _slaTracker.CloseWindowAsync(
+                            c.Id, SlaTracker.OpenToValidated, now, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex,
+                            "SlaTracker failed to close open_to_validated for case {CaseId}.",
+                            c.Id);
+                    }
+                }
             }
         }
 
@@ -528,7 +577,51 @@ public sealed class CaseWorkflowService
             }
         }
 
+        // Sprint 31 / B5.1 — auto-fire the completeness rollup engine on
+        // the same Open→Validated transition. Coexists with the
+        // validation engine: validation rules check invariants ("does
+        // the Fyco match the regime direction?"); completeness checks
+        // ask "does the case have a scan, a document, and an analyst
+        // decision?". Both produce Findings on the same case;
+        // completeness Findings carry the FindingType=completeness.{id}
+        // prefix so the dashboard can split them out from validation
+        // Findings.
+        if (_completenessChecker is not null && c.State == InspectionWorkflowState.Validated)
+        {
+            try
+            {
+                await _completenessChecker.EvaluateAsync(caseId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "Completeness checker threw for case {CaseId}; analyst can re-run via EvaluateCompletenessAsync.",
+                    caseId);
+            }
+        }
+
         return new FetchDocumentsResult(emitted, rules);
+    }
+
+    // ---------------------------------------------------------------------
+    // Sprint 31 / B5.1 — manually re-run the completeness rollup for a
+    // case. The auto-fire path runs once during FetchDocumentsAsync (when
+    // the case enters Validated); this entry-point lets analysts /
+    // admin tools re-evaluate after editing a case (new scan, new
+    // document, post-verdict mutation) without round-tripping the
+    // document-fetch flow.
+    // ---------------------------------------------------------------------
+    public async Task<CompletenessEvaluationResult?> EvaluateCompletenessAsync(
+        Guid caseId,
+        CancellationToken ct = default)
+    {
+        if (_completenessChecker is null)
+        {
+            _logger.LogDebug(
+                "EvaluateCompletenessAsync called but no ICompletenessChecker is registered; returning null.");
+            return null;
+        }
+        return await _completenessChecker.EvaluateAsync(caseId, ct);
     }
 
     // ---------------------------------------------------------------------
@@ -965,6 +1058,17 @@ public sealed class CaseWorkflowService
         NickErpActivity.CaseStateTransitions.Add(1,
             new KeyValuePair<string, object?>("from", priorState.ToString()),
             new KeyValuePair<string, object?>("to", InspectionWorkflowState.Verdict.ToString()));
+
+        // Sprint 31 / B5.1 — close validated_to_verdict.
+        if (_slaTracker is not null)
+        {
+            try { await _slaTracker.CloseWindowAsync(caseId, SlaTracker.ValidatedToVerdict, now, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "SlaTracker failed to close validated_to_verdict for case {CaseId}.", caseId);
+            }
+        }
         return verdict;
     }
 
@@ -1042,8 +1146,125 @@ public sealed class CaseWorkflowService
             NickErpActivity.CaseStateTransitions.Add(1,
                 new KeyValuePair<string, object?>("from", priorState.ToString()),
                 new KeyValuePair<string, object?>("to", InspectionWorkflowState.Submitted.ToString()));
+
+            // Sprint 31 / B5.1 — close verdict_to_submitted on accepted submission.
+            if (_slaTracker is not null && sub.RespondedAt is { } respondedAt)
+            {
+                try { await _slaTracker.CloseWindowAsync(caseId, SlaTracker.VerdictToSubmitted, respondedAt, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex,
+                        "SlaTracker failed to close verdict_to_submitted for case {CaseId}.", caseId);
+                }
+            }
         }
         return sub;
+    }
+
+    // ---------------------------------------------------------------------
+    // Sprint 31 / B5.2 — split a parent case into N child cases.
+    //
+    // Used after CrossRecordScanService confirms a multi-container
+    // detection. Each child case inherits the parent's
+    // (LocationId, StationId, SubjectType) but carries its own
+    // SubjectIdentifier (one of the detected subjects) and is opened
+    // fresh. The parent case stays alive in its current state — the
+    // caller can choose to Cancel it, or leave it Closed-but-not-purged
+    // depending on which branch of the v1 split semantic the operator
+    // wants. Findings + analyst-review trail stay on the parent for
+    // audit; this method does NOT migrate them.
+    //
+    // Returns the new child case ids in the same order as
+    // <paramref name="splitSubjectIdentifiers"/>. Throws if the parent
+    // case doesn't exist, is in a terminal state already, or the
+    // collection is empty.
+    // ---------------------------------------------------------------------
+    public async Task<IReadOnlyList<Guid>> SplitCaseAsync(
+        Guid parentCaseId,
+        IReadOnlyList<string> splitSubjectIdentifiers,
+        CancellationToken ct = default)
+    {
+        if (splitSubjectIdentifiers is null || splitSubjectIdentifiers.Count == 0)
+            throw new ArgumentException("Split needs at least one child subject identifier.", nameof(splitSubjectIdentifiers));
+
+        var (actor, tenant) = await CurrentActorAsync();
+        var tenantId = EnsureTenant(tenant);
+        var now = DateTimeOffset.UtcNow;
+
+        var parent = await _db.Cases.FirstOrDefaultAsync(c => c.Id == parentCaseId, ct)
+            ?? throw new InvalidOperationException($"Parent case {parentCaseId} not found.");
+        if (parent.State is InspectionWorkflowState.Closed or InspectionWorkflowState.Cancelled)
+            throw new InvalidOperationException(
+                $"Cannot split case {parentCaseId} — already terminal ({parent.State}).");
+
+        var children = new List<InspectionCase>(splitSubjectIdentifiers.Count);
+        foreach (var subj in splitSubjectIdentifiers)
+        {
+            var trimmed = subj?.Trim();
+            if (string.IsNullOrEmpty(trimmed)) continue;
+            // Skip the parent's own subject — splitting onto the same
+            // identifier would create a self-loop case and break the
+            // (LocationId, SubjectIdentifier) reuse heuristic in
+            // IngestRawArtifactAsync.
+            if (string.Equals(trimmed, parent.SubjectIdentifier, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var child = new InspectionCase
+            {
+                Id = Guid.NewGuid(),
+                LocationId = parent.LocationId,
+                StationId = parent.StationId,
+                SubjectType = parent.SubjectType,
+                SubjectIdentifier = trimmed,
+                SubjectPayloadJson = "{}",
+                State = InspectionWorkflowState.Open,
+                OpenedAt = now,
+                StateEnteredAt = now,
+                OpenedByUserId = actor,
+                CorrelationId = parent.CorrelationId, // keep the audit chain linked
+                TenantId = tenantId
+            };
+            _db.Cases.Add(child);
+            children.Add(child);
+        }
+        if (children.Count == 0)
+            throw new InvalidOperationException(
+                "Split produced no child cases — every supplied identifier matched the parent's subject identifier.");
+
+        await _db.SaveChangesAsync(ct);
+
+        foreach (var child in children)
+        {
+            await EmitAsync(tenantId, actor, child.CorrelationId,
+                "nickerp.inspection.case_split_child_opened", "InspectionCase",
+                child.Id.ToString(),
+                new { ChildId = child.Id, ParentId = parentCaseId, child.SubjectIdentifier }, ct);
+            // Sprint A2 — count split-spawned cases as Open transitions
+            // (matches the OpenCaseAsync side-effect).
+            NickErpActivity.CaseStateTransitions.Add(1,
+                new KeyValuePair<string, object?>("from", "split"),
+                new KeyValuePair<string, object?>("to", InspectionWorkflowState.Open.ToString()));
+
+            // Open SLA windows on each fresh child case.
+            if (_slaTracker is not null)
+            {
+                try { await _slaTracker.OpenStandardWindowsAsync(child.Id, now, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex,
+                        "SlaTracker failed to open standard windows on split-child case {CaseId}.",
+                        child.Id);
+                }
+            }
+        }
+
+        // Audit the split itself — single event on the parent so the
+        // dashboard can render the link without scanning N children.
+        await EmitAsync(tenantId, actor, parent.CorrelationId,
+            "nickerp.inspection.case_split", "InspectionCase",
+            parentCaseId.ToString(),
+            new { ParentId = parentCaseId, ChildIds = children.Select(c => c.Id).ToArray() }, ct);
+
+        return children.Select(c => c.Id).ToList();
     }
 
     // ---------------------------------------------------------------------
@@ -1069,6 +1290,18 @@ public sealed class CaseWorkflowService
         NickErpActivity.CaseStateTransitions.Add(1,
             new KeyValuePair<string, object?>("from", priorState.ToString()),
             new KeyValuePair<string, object?>("to", InspectionWorkflowState.Closed.ToString()));
+
+        // Sprint 31 / B5.1 — close all remaining open SLA windows on
+        // terminal-state transition. Best-effort.
+        if (_slaTracker is not null)
+        {
+            try { await _slaTracker.CloseAllOpenWindowsAsync(caseId, now, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "SlaTracker failed to close all open windows for case {CaseId} on Close.", caseId);
+            }
+        }
     }
 
     // ---------------------------------------------------------------------

@@ -1,0 +1,155 @@
+@page "/admin/sla"
+@* Sprint 31 / B5.1 — SLA dashboard. Reads sla_window via
+   SlaDashboardService and renders summary cards, a per-window
+   breakdown table, and the top-50 breached drill-in. Vendor-neutral —
+   port codes / regime codes are display-only here; the underlying
+   data identifiers are vendor-neutral. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject SlaDashboardService Dashboard
+@inject ITenantContext Tenant
+
+<PageTitle>SLA dashboard - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>SLA dashboard</h1>
+        <p class="inspection-page-subtitle">
+            Wall-clock SLA windows tracked per case-state transition.
+            Open windows recompute live (refresh the page to update);
+            closed windows show the historical breach status.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_summary is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card-grid">
+            <div class="inspection-card">
+                <h2 class="inspection-card-title">Open</h2>
+                <p class="inspection-card-metric">@(_summary.OpenOnTime + _summary.OpenAtRisk + _summary.OpenBreached)</p>
+                <ul>
+                    <li>On time: @_summary.OpenOnTime</li>
+                    <li>At risk: @_summary.OpenAtRisk</li>
+                    <li>Breached: @_summary.OpenBreached</li>
+                </ul>
+            </div>
+            <div class="inspection-card">
+                <h2 class="inspection-card-title">Closed (7d)</h2>
+                <p class="inspection-card-metric">@(_summary.ClosedOnTime + _summary.ClosedBreached)</p>
+                <ul>
+                    <li>On time: @_summary.ClosedOnTime</li>
+                    <li>Breached: @_summary.ClosedBreached</li>
+                </ul>
+            </div>
+            <div class="inspection-card">
+                <h2 class="inspection-card-title">Trend</h2>
+                <p class="inspection-empty">Chart placeholder - wire to a sparkline once Sprint 33 reports ships.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <h2>By window</h2>
+        @if (_summary.ByWindow.Count == 0)
+        {
+            <p class="inspection-empty">No SLA windows have been recorded yet.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Window</th>
+                        <th>Open: on-time</th>
+                        <th>Open: at-risk</th>
+                        <th>Open: breached</th>
+                        <th>Closed: on-time</th>
+                        <th>Closed: breached</th>
+                        <th>Avg duration (min)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var b in _summary.ByWindow)
+                    {
+                        <tr>
+                            <td><code>@b.WindowName</code></td>
+                            <td>@b.OpenOnTime</td>
+                            <td>@b.OpenAtRisk</td>
+                            <td>@b.OpenBreached</td>
+                            <td>@b.ClosedOnTime</td>
+                            <td>@b.ClosedBreached</td>
+                            <td>@(b.AverageDurationMinutes is null ? "-" : b.AverageDurationMinutes.Value.ToString("0.0"))</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="inspection-section">
+        <h2>Top breaches</h2>
+        @if (_breached is null || _breached.Count == 0)
+        {
+            <p class="inspection-empty">No breached windows. Either everything is on time or there is no SLA traffic yet.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Case</th>
+                        <th>Window</th>
+                        <th>Started</th>
+                        <th>Due</th>
+                        <th>Closed</th>
+                        <th>Budget (min)</th>
+                        <th>Over (min)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _breached)
+                    {
+                        <tr>
+                            <td><a href="/cases/@r.CaseId">@r.CaseId.ToString().Substring(0, 8)</a></td>
+                            <td><code>@r.WindowName</code></td>
+                            <td>@r.StartedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@r.DueAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@(r.ClosedAt is null ? "open" : r.ClosedAt.Value.ToString("yyyy-MM-dd HH:mm"))</td>
+                            <td>@r.BudgetMinutes</td>
+                            <td>@r.MinutesOver.ToString("0.0")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private SlaDashboardSummary? _summary;
+    private List<SlaBreachedRow>? _breached;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _summary = await Dashboard.BuildSummaryAsync();
+        _breached = (await Dashboard.ListBreachedAsync()).ToList();
+    }
+}

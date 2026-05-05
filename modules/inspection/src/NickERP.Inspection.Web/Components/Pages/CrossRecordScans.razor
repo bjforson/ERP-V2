@@ -1,0 +1,223 @@
+@page "/admin/cross-record-scans"
+@* Sprint 31 / B5.2 — admin queue for cross-record-scan detection.
+   Lists pending detections; analyst confirms, dismisses, or executes
+   the split via CrossRecordScanService. Vendor-neutral; no Ghana
+   strings here. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Application.Detection
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject CrossRecordScanService Service
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Cross-record scans - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Cross-record scans</h1>
+        <p class="inspection-page-subtitle">
+            Multi-subject case detection (Sprint 31 / B5.2; v1 NSCIM
+            2.15.4 parity). The detector flags cases whose authority
+            documents or scan metadata reference more than one
+            subject identifier. Confirm + execute the split to spawn
+            child cases per subject; dismiss to close as a false
+            positive.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_rows is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-filter-bar">
+            <label>State:
+                <select @bind="_stateFilter" @bind:after="ReloadAsync">
+                    <option value="">all</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Confirmed">Confirmed</option>
+                    <option value="Dismissed">Dismissed</option>
+                    <option value="Split">Split</option>
+                </select>
+            </label>
+        </div>
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="inspection-form-message">@_message</p>
+        }
+        @if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No detections match the current filter.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Detected</th>
+                        <th>Case</th>
+                        <th>Detector</th>
+                        <th>State</th>
+                        <th>Subjects</th>
+                        <th>Notes</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr>
+                            <td><span title="@r.DetectedAt.ToString("O")">@r.DetectedAt.ToString("yyyy-MM-dd HH:mm")</span></td>
+                            <td><a href="/cases/@r.CaseId">@r.CaseId.ToString().Substring(0, 8)</a></td>
+                            <td><code>@r.DetectorVersion</code></td>
+                            <td>@StateBadge(r.State)</td>
+                            <td>
+                                @if (r.Subjects.Count == 0)
+                                {
+                                    <span class="inspection-empty">-</span>
+                                }
+                                else
+                                {
+                                    <ul class="inspection-inline-list">
+                                        @foreach (var s in r.Subjects)
+                                        {
+                                            <li><code>@s.SubjectIdentifier</code> <small>@s.Evidence</small></li>
+                                        }
+                                    </ul>
+                                }
+                            </td>
+                            <td>@r.Notes</td>
+                            <td>
+                                @if (r.State == CrossRecordDetectionState.Pending)
+                                {
+                                    <button type="button" class="inspection-button" @onclick="() => ConfirmAsync(r.Id)">Confirm</button>
+                                    <button type="button" class="inspection-button" @onclick="() => DismissAsync(r.Id)">Dismiss</button>
+                                }
+                                else if (r.State == CrossRecordDetectionState.Confirmed)
+                                {
+                                    <button type="button" class="inspection-button" @onclick="() => SplitAsync(r.Id)">Execute split</button>
+                                    <button type="button" class="inspection-button" @onclick="() => DismissAsync(r.Id)">Dismiss</button>
+                                }
+                                else if (r.State == CrossRecordDetectionState.Split && r.SplitCaseIds.Count > 0)
+                                {
+                                    <span>
+                                        Split into:
+                                        @foreach (var cid in r.SplitCaseIds)
+                                        {
+                                            <a href="/cases/@cid">@cid.ToString().Substring(0, 8)</a>
+                                            <span> </span>
+                                        }
+                                    </span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private List<CrossRecordDetectionRow>? _rows;
+    private string? _stateFilter = "Pending";
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        CrossRecordDetectionState? filter = null;
+        if (!string.IsNullOrEmpty(_stateFilter)
+            && Enum.TryParse<CrossRecordDetectionState>(_stateFilter, out var parsed))
+        {
+            filter = parsed;
+        }
+        _rows = (await Service.ListAsync(filter)).ToList();
+    }
+
+    private async Task ConfirmAsync(Guid id)
+    {
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            await Service.ConfirmAsync(id, actor, notes: null);
+            _message = $"Detection {id.ToString().Substring(0, 8)} confirmed.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Failed: {ex.Message}";
+        }
+    }
+
+    private async Task DismissAsync(Guid id)
+    {
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            await Service.DismissAsync(id, actor, notes: null);
+            _message = $"Detection {id.ToString().Substring(0, 8)} dismissed.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Failed: {ex.Message}";
+        }
+    }
+
+    private async Task SplitAsync(Guid id)
+    {
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            var row = await Service.ExecuteSplitAsync(id, actor);
+            _message = $"Detection split into {row.SplitCaseIdsJson} child case(s).";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Failed: {ex.Message}";
+        }
+    }
+
+    private async Task<Guid?> CurrentUserIdAsync()
+    {
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+            return Guid.TryParse(idClaim, out var g) ? g : null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static MarkupString StateBadge(CrossRecordDetectionState state)
+    {
+        var (label, css) = state switch
+        {
+            CrossRecordDetectionState.Pending => ("Pending", "inspection-badge inspection-badge-warning"),
+            CrossRecordDetectionState.Confirmed => ("Confirmed", "inspection-badge inspection-badge-good"),
+            CrossRecordDetectionState.Dismissed => ("Dismissed", "inspection-badge"),
+            CrossRecordDetectionState.Split => ("Split", "inspection-badge inspection-badge-good"),
+            _ => (state.ToString(), "inspection-badge")
+        };
+        return new MarkupString($"<span class=\"{css}\">{label}</span>");
+    }
+}

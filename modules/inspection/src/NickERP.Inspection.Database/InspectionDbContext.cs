@@ -41,6 +41,21 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<AnalysisServiceUser> AnalysisServiceUsers => Set<AnalysisServiceUser>();
     public DbSet<CaseClaim> CaseClaims => Set<CaseClaim>();
 
+    /// <summary>
+    /// Sprint 31 / B5.1 — wall-clock SLA window rows; one per
+    /// (CaseId, WindowName). Auto-opened on case creation and
+    /// auto-closed on terminal-state transitions by
+    /// <c>SlaTracker</c>.
+    /// </summary>
+    public DbSet<SlaWindow> SlaWindows => Set<SlaWindow>();
+
+    /// <summary>
+    /// Sprint 31 / B5.2 — cross-record-scan detection rows for
+    /// multi-container case candidates. One row per detection event;
+    /// state transitions via <c>CrossRecordScanService</c>.
+    /// </summary>
+    public DbSet<CrossRecordDetection> CrossRecordDetections => Set<CrossRecordDetection>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -670,6 +685,82 @@ public sealed class InspectionDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.AnalysisServiceId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ----- SlaWindow (Sprint 31 / B5.1) ----------------------------------------
+        // One row per (CaseId, WindowName) per case. Auto-opened on
+        // case creation; auto-closed on terminal-state transitions.
+        // Composite index (TenantId, State, DueAt) backs the SLA
+        // dashboard's hottest query — "open windows past their
+        // deadline, ordered by oldest" — without a sort.
+        modelBuilder.Entity<SlaWindow>(e =>
+        {
+            e.ToTable("sla_window");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.WindowName).IsRequired().HasMaxLength(128);
+            e.Property(x => x.StartedAt).IsRequired();
+            e.Property(x => x.DueAt).IsRequired();
+            e.Property(x => x.ClosedAt);
+            e.Property(x => x.State).HasConversion<int>().IsRequired();
+            e.Property(x => x.BudgetMinutes).IsRequired();
+            e.Property(x => x.TenantId).IsRequired();
+
+            // One open window per (Case, WindowName) — the unique
+            // partial index lets the SlaTracker idempotency-guard the
+            // open path without a transactional read-then-write race.
+            e.HasIndex(x => new { x.CaseId, x.WindowName })
+                .IsUnique()
+                .HasFilter("\"ClosedAt\" IS NULL")
+                .HasDatabaseName("ux_sla_window_open_per_case_window");
+
+            // Dashboard "all open / breached for tenant" page; covered
+            // by (TenantId, State, DueAt).
+            e.HasIndex(x => new { x.TenantId, x.State, x.DueAt })
+                .HasDatabaseName("ix_sla_window_tenant_state_due");
+
+            // Per-case scan; useful for the case-detail SLA pane.
+            e.HasIndex(x => new { x.TenantId, x.CaseId })
+                .HasDatabaseName("ix_sla_window_tenant_case");
+        });
+
+        // ----- CrossRecordDetection (Sprint 31 / B5.2) ------------------------------
+        // One row per detector hit. Composite (TenantId, State,
+        // DetectedAt DESC) backs the admin /admin/cross-record-scans
+        // page's "pending review, newest first" query.
+        modelBuilder.Entity<CrossRecordDetection>(e =>
+        {
+            e.ToTable("cross_record_detection");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.DetectedAt).IsRequired();
+            e.Property(x => x.DetectorVersion).IsRequired().HasMaxLength(32);
+            e.Property(x => x.State).HasConversion<int>().IsRequired();
+            e.Property(x => x.DetectedSubjectsJson)
+                .IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
+            e.Property(x => x.SplitCaseIdsJson).HasColumnType("jsonb");
+            e.Property(x => x.Notes).HasMaxLength(2000);
+            e.Property(x => x.ReviewedByUserId);
+            e.Property(x => x.ReviewedAt);
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Idempotent re-detection — at most one row per (CaseId,
+            // DetectorVersion) keeps the table small and lets the
+            // detector use ON CONFLICT semantics without a separate
+            // dedupe table.
+            e.HasIndex(x => new { x.CaseId, x.DetectorVersion })
+                .IsUnique()
+                .HasDatabaseName("ux_cross_record_detection_case_version");
+
+            // Admin queue: pending detections newest first.
+            e.HasIndex(x => new { x.TenantId, x.State, x.DetectedAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("ix_cross_record_detection_tenant_state_detected");
+
+            e.HasIndex(x => new { x.TenantId, x.CaseId })
+                .HasDatabaseName("ix_cross_record_detection_tenant_case");
         });
     }
 }

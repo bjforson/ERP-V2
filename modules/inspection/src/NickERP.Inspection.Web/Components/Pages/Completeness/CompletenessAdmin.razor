@@ -1,0 +1,161 @@
+@page "/admin/completeness"
+@* Sprint 31 / B5.1 — admin index for vendor-neutral completeness
+   requirements. Mirrors the Sprint 28 RulesAdmin layout: list every
+   registered ICompletenessRequirement with the current tenant's
+   enabled flag + threshold override + recent miss counts; toggling
+   Enabled persists to tenancy.tenant_completeness_settings via
+   CompletenessService and emits an
+   inspection.completeness_setting.toggled audit event. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using System.Security.Claims
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject CompletenessService AdminService
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Completeness requirements - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Completeness requirements</h1>
+        <p class="inspection-page-subtitle">
+            Vendor-neutral completeness rollup engine (Sprint 31 / B5).
+            Toggle a requirement off to silence it for this tenant.
+            Misses (Incomplete + PartiallyComplete) over the last 7
+            days appear in the rightmost column.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_rows is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <section class="inspection-section">
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="inspection-form-message">@_message</p>
+        }
+        @if (_rows.Count == 0)
+        {
+            <p class="inspection-empty">No completeness requirements are registered. Confirm <code>AddNickErpInspectionCompleteness()</code> ran during host startup.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Requirement</th>
+                        <th>Description</th>
+                        <th>Enabled</th>
+                        <th>Threshold</th>
+                        <th>Misses (7d)</th>
+                        <th>Last toggled</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr>
+                            <td><code>@r.RequirementId</code></td>
+                            <td>@r.Description</td>
+                            <td>
+                                @if (r.Enabled)
+                                {
+                                    <span class="inspection-badge inspection-badge-good">Enabled</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-badge inspection-badge-warning">Disabled</span>
+                                }
+                            </td>
+                            <td>
+                                @if (r.MinThreshold is { } t)
+                                {
+                                    <span>@t.ToString("0.####")</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-empty">default</span>
+                                }
+                            </td>
+                            <td>@r.RecentMissCount</td>
+                            <td>
+                                @if (r.LastUpdatedAt is { } u)
+                                {
+                                    <span title="@u.ToString("O")">@u.ToString("yyyy-MM-dd HH:mm")</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-empty">-</span>
+                                }
+                            </td>
+                            <td>
+                                <button type="button"
+                                        class="inspection-button"
+                                        @onclick="() => ToggleAsync(r.RequirementId, !r.Enabled, r.MinThreshold)">
+                                    @(r.Enabled ? "Disable" : "Enable")
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private List<CompletenessRequirementRow>? _rows;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _rows = (await AdminService.ListRequirementsAsync(Tenant.TenantId))
+            .OrderBy(r => r.RequirementId, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private async Task ToggleAsync(string requirementId, bool enabled, decimal? threshold)
+    {
+        try
+        {
+            var actor = await CurrentUserIdAsync();
+            await AdminService.SetRequirementEnabledAsync(
+                Tenant.TenantId, requirementId, enabled, threshold, actor);
+            _message = $"Requirement '{requirementId}' is now {(enabled ? "enabled" : "disabled")}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Failed: {ex.Message}";
+        }
+    }
+
+    private async Task<Guid?> CurrentUserIdAsync()
+    {
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+            return Guid.TryParse(idClaim, out var g) ? g : null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+}

@@ -46,6 +46,24 @@ public sealed class TenancyDbContext : DbContext
     /// </summary>
     public DbSet<TenantModuleSetting> TenantModuleSettings => Set<TenantModuleSetting>();
 
+    /// <summary>
+    /// Sprint 31 / B5.1 — per-tenant on/off flags + threshold overrides
+    /// for inspection completeness requirements. Tenant-scoped
+    /// (<see cref="ITenantOwned"/>); under tenancy RLS via the
+    /// <c>tenant_isolation_tenant_completeness_settings</c> policy added
+    /// in <c>Add_TenantCompletenessSettings</c>. Sparse rows — a missing
+    /// row implies Enabled=true at the requirement's default threshold.
+    /// </summary>
+    public DbSet<TenantCompletenessSetting> TenantCompletenessSettings => Set<TenantCompletenessSetting>();
+
+    /// <summary>
+    /// Sprint 31 / B5.2 — per-tenant SLA-window budget overrides for
+    /// inspection. Tenant-scoped + RLS-enforced (mirrors the Sprint 28
+    /// validation-rule settings posture). Sparse rows — a missing row
+    /// implies "use the engine default budget".
+    /// </summary>
+    public DbSet<TenantSlaSetting> TenantSlaSettings => Set<TenantSlaSetting>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -215,6 +233,56 @@ public sealed class TenancyDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.ModuleId })
                 .IsUnique()
                 .HasDatabaseName("ux_tenant_module_settings_tenant_module");
+        });
+
+        // Sprint 31 / B5.1 — per-tenant completeness-requirement settings.
+        // Mirrors the Sprint 28 TenantValidationRuleSetting posture
+        // (sparse rows, RLS-enforced, ITenantOwned). Adds an optional
+        // numeric MinThreshold override so percent-based + count-based
+        // requirements can share the same row shape without a
+        // discriminator column.
+        modelBuilder.Entity<TenantCompletenessSetting>(e =>
+        {
+            e.ToTable("tenant_completeness_settings");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.RequirementId).IsRequired().HasMaxLength(128);
+            e.Property(x => x.Enabled).HasDefaultValue(true);
+            // numeric(9,4) — generous for percent (0..100.0000) and
+            // count-style thresholds (up to 99999.9999) without the
+            // serialisation cost of decimal(38).
+            e.Property(x => x.MinThreshold).HasColumnType("numeric(9,4)");
+            e.Property(x => x.UpdatedAt).IsRequired();
+            e.Property(x => x.UpdatedByUserId);
+
+            // Unique index — one row per (TenantId, RequirementId).
+            // Backs the upsert path in CompletenessService.SetEnabledAsync.
+            e.HasIndex(x => new { x.TenantId, x.RequirementId })
+                .IsUnique()
+                .HasDatabaseName("ux_tenant_completeness_settings_tenant_req");
+        });
+
+        // Sprint 31 / B5.2 — per-tenant SLA-window budget overrides.
+        // Same shape as TenantCompletenessSetting; kept as a separate
+        // entity so SLA budgets ("how long is the window?") and
+        // completeness requirements ("does the case have an X?") stay
+        // disjoint for analytics queries.
+        modelBuilder.Entity<TenantSlaSetting>(e =>
+        {
+            e.ToTable("tenant_sla_settings");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.WindowName).IsRequired().HasMaxLength(128);
+            e.Property(x => x.TargetMinutes).IsRequired();
+            e.Property(x => x.Enabled).HasDefaultValue(true);
+            e.Property(x => x.UpdatedAt).IsRequired();
+            e.Property(x => x.UpdatedByUserId);
+
+            e.HasIndex(x => new { x.TenantId, x.WindowName })
+                .IsUnique()
+                .HasDatabaseName("ux_tenant_sla_settings_tenant_window");
         });
     }
 }
