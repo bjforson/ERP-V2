@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NickERP.Platform.Audit;
 using NickERP.Platform.Audit.Events;
+using NickERP.Platform.Tenancy.Database.Workers;
 using NickERP.Platform.Tenancy.Entities;
 using Npgsql;
 
@@ -17,6 +18,10 @@ namespace NickERP.Platform.Tenancy.Database.Services;
 /// <c>FU-tenant-lifecycle</c> followup with platform-admin-generated
 /// scoped exports of a tenant's data. Each request is audit-trailed
 /// through Pending / Running / Completed / Failed / Expired / Revoked.
+/// Sprint 51 / Phase B added the LISTEN/NOTIFY pickup channel
+/// (<see cref="TenantExportRunner.NotifyChannel"/>) so the runner
+/// dispatches new requests within a second instead of waiting for the
+/// 30 s poll.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -234,6 +239,15 @@ public sealed class TenantExportService : ITenantExportService
         _db.TenantExportRequests.Add(entity);
         await _db.SaveChangesAsync(ct);
 
+        // Sprint 51 / Phase B — emit a Postgres NOTIFY so the runner
+        // can dispatch within a second instead of waiting on the next
+        // 30 s poll. NOTIFY is buffered until tx commit; here we're
+        // outside an explicit tx (SaveChanges committed), so the
+        // notification fires immediately. Best-effort: the 30 s poll
+        // remains as the fallback if the channel is missed (listener
+        // restart, network blip, in-memory provider in tests).
+        await TryNotifyRequestedAsync(entity.Id, ct);
+
         await EmitAsync(tenant, "nickerp.tenancy.tenant_export_requested",
             JsonSerializer.SerializeToElement(new
             {
@@ -406,6 +420,43 @@ public sealed class TenantExportService : ITenantExportService
             .OrderByDescending(r => r.RequestedAt)
             .Take(50) // hard cap so the admin UI doesn't accidentally pull a year of history
             .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Sprint 51 / Phase B — best-effort NOTIFY emit on
+    /// <see cref="TenantExportRunner.NotifyChannel"/>. Skipped silently
+    /// when the underlying connection is not Postgres (in-memory
+    /// provider in tests). The 30 s poll on the runner remains as
+    /// the fallback so a missed notification does not strand a
+    /// Pending row.
+    /// </summary>
+    private async Task TryNotifyRequestedAsync(Guid exportId, CancellationToken ct)
+    {
+        try
+        {
+            // Detect the in-memory provider; SQL execution against it
+            // throws. The provider name check is the cheapest way.
+            if (!_db.Database.IsNpgsql())
+            {
+                return;
+            }
+            // Channel name + payload are bounded ASCII. The payload is
+            // the export id only — listeners look the row up themselves
+            // so payload size stays under Postgres's 8 KB NOTIFY cap.
+            var channel = TenantExportRunner.NotifyChannel;
+            var payload = exportId.ToString("N");
+            // NOTIFY identifiers + payloads must be inline-quoted; EF's
+            // ExecuteSqlRawAsync without parameters is fine because both
+            // values are constructed by us, not user input.
+            var sql = $"NOTIFY {channel}, '{payload}';";
+            await _db.Database.ExecuteSqlRawAsync(sql, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex,
+                "TenantExport NOTIFY emit failed for export {ExportId}; falling back to poll-driven pickup.",
+                exportId);
+        }
     }
 
     private async Task EmitAsync(Tenant tenant, string eventType, JsonElement payload, Guid? actorUserId, CancellationToken ct)

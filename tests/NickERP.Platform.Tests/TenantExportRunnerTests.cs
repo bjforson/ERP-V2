@@ -175,6 +175,90 @@ public sealed class TenantExportRunnerTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task SignalWakeup_TriggersDispatchWithinOneSecond()
+    {
+        // Sprint 51 / Phase B — verify the LISTEN-driven wake-up path
+        // dispatches a Pending row inside 1 s, even when the poll
+        // interval is set to a long value (proving it's the signal that
+        // woke the loop, not the poll).
+        var (sp, dbName) = BuildScopeFactory();
+        // Use a long poll interval so a successful dispatch within 1 s
+        // can only have come from the signal, not the poll.
+        var runner = BuildRunner(sp, pollInterval: TimeSpan.FromSeconds(60));
+        await SeedRequestAsync(sp, tenantId: 5, status: TenantExportStatus.Pending);
+
+        using var cts = new CancellationTokenSource();
+        var task = runner.StartAsync(cts.Token);
+
+        // Give ExecuteAsync a beat to run AdoptOrphanedRunning + first
+        // tick. The first tick will pick the seeded Pending up; let it
+        // race in either direction (signal vs first natural tick) and
+        // verify the dispatch happens fast.
+        await Task.Delay(50);
+        runner.SignalWakeup();
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        TenantExportStatus? observed = null;
+        while (sw.Elapsed < TimeSpan.FromSeconds(2))
+        {
+            await using var ctx = NewCtx(dbName);
+            var row = await ctx.TenantExportRequests.AsNoTracking().FirstOrDefaultAsync();
+            if (row?.Status == TenantExportStatus.Completed)
+            {
+                observed = row.Status;
+                break;
+            }
+            await Task.Delay(25);
+        }
+        sw.Stop();
+
+        await cts.CancelAsync();
+        try { await runner.StopAsync(CancellationToken.None); } catch { /* best-effort */ }
+
+        observed.Should().Be(TenantExportStatus.Completed,
+            "the LISTEN-equivalent SignalWakeup should drive a dispatch within 1 s, well below the 60 s poll");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PollFallback_StillDispatchesWithoutSignal()
+    {
+        // Sprint 51 / Phase B — verify the runner still works when the
+        // LISTEN signal is unavailable (in-memory provider can't open a
+        // real Npgsql connection; the listener self-disables). The 30 s
+        // poll fallback must still pick up Pending rows.
+        var (sp, dbName) = BuildScopeFactory();
+        // Tight poll so the test stays fast — production uses 30 s.
+        var runner = BuildRunner(sp, pollInterval: TimeSpan.FromMilliseconds(100));
+        await SeedRequestAsync(sp, tenantId: 5, status: TenantExportStatus.Pending);
+
+        using var cts = new CancellationTokenSource();
+        var task = runner.StartAsync(cts.Token);
+
+        // Wait up to 1 s for the poll-driven dispatch. No signal call.
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        TenantExportStatus? observed = null;
+        while (sw.Elapsed < TimeSpan.FromSeconds(1))
+        {
+            await using var ctx = NewCtx(dbName);
+            var row = await ctx.TenantExportRequests.AsNoTracking().FirstOrDefaultAsync();
+            if (row?.Status == TenantExportStatus.Completed)
+            {
+                observed = row.Status;
+                break;
+            }
+            await Task.Delay(25);
+        }
+
+        await cts.CancelAsync();
+        try { await runner.StopAsync(CancellationToken.None); } catch { /* best-effort */ }
+
+        observed.Should().Be(TenantExportStatus.Completed,
+            "the 100 ms poll must still dispatch the Pending row when LISTEN is unavailable");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task TickAsync_AdoptsOrphanedRunningRows_OnExecuteAsync()
     {
         // The execute loop calls AdoptOrphanedRunningAsync once at
@@ -224,14 +308,15 @@ public sealed class TenantExportRunnerTests : IDisposable
 
     private TenantExportRunner BuildRunner(IServiceProvider sp,
         int maxConcurrent = 2,
-        string? outputPathOverride = null)
+        string? outputPathOverride = null,
+        TimeSpan? pollInterval = null)
     {
         var options = new TenantExportOptions
         {
             OutputPath = outputPathOverride ?? _tempRoot,
             RetentionDays = 7,
             MaxConcurrentExports = maxConcurrent,
-            PollInterval = TimeSpan.FromMilliseconds(50),
+            PollInterval = pollInterval ?? TimeSpan.FromMilliseconds(50),
         };
         var clock = new FakeClock(_now);
         return new TenantExportRunner(

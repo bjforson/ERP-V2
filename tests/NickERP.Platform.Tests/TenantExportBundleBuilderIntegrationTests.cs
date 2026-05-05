@@ -284,6 +284,64 @@ public sealed class TenantExportBundleBuilderIntegrationTests : IAsyncLifetime
         json.Should().NotContain("T99-LEAK", "tenant-99 row must not appear in tenant-1's export bundle");
     }
 
+    [Fact]
+    [Trait("Category", "RequiresLiveDb")]
+    public async Task ListenNotify_RoundTrip_DeliversWithinOneSecond()
+    {
+        // Sprint 51 / Phase B — verify that issuing a NOTIFY on the
+        // dedicated channel reaches a LISTEN-ing connection within ~1 s.
+        // This is the underlying primitive both halves of the Phase B
+        // wireup depend on; the runner tests cover the dispatch
+        // semantics, this one proves the channel name + payload flow.
+        if (!_enabled) return;
+
+        await using var listenConn = new NpgsqlConnection(_testDbConn);
+        await listenConn.OpenAsync();
+        var channel = NickERP.Platform.Tenancy.Database.Workers.TenantExportRunner.NotifyChannel;
+        await using (var cmd = listenConn.CreateCommand())
+        {
+            cmd.CommandText = $"LISTEN {channel};";
+            await cmd.ExecuteNonQueryAsync();
+        }
+        var received = new TaskCompletionSource<string>();
+        listenConn.Notification += (_, e) =>
+        {
+            if (string.Equals(e.Channel, channel, StringComparison.Ordinal))
+            {
+                received.TrySetResult(e.Payload);
+            }
+        };
+
+        // WaitAsync drains pending notifications; run in the background.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var listenTask = Task.Run(async () =>
+        {
+            try { while (!cts.IsCancellationRequested) await listenConn.WaitAsync(cts.Token); }
+            catch (OperationCanceledException) { /* expected on shutdown */ }
+        });
+
+        await Task.Delay(50);
+
+        // Issue the NOTIFY on a separate connection.
+        await using (var pubConn = new NpgsqlConnection(_testDbConn))
+        {
+            await pubConn.OpenAsync();
+            var payload = "abc123";
+            await using var cmd = pubConn.CreateCommand();
+            cmd.CommandText = $"NOTIFY {channel}, '{payload}';";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var deliveredTask = await Task.WhenAny(received.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+        deliveredTask.Should().Be(received.Task,
+            "the NOTIFY should reach the LISTEN connection inside 2 s; the runner uses the same primitive for sub-second dispatch");
+        var payloadReceived = await received.Task;
+        payloadReceived.Should().Be("abc123");
+
+        cts.Cancel();
+        try { await listenTask; } catch { /* best-effort */ }
+    }
+
     private async Task SeedRowAsync(long tenantId, string code, string payload)
     {
         await using var conn = new NpgsqlConnection(_testDbConn);
