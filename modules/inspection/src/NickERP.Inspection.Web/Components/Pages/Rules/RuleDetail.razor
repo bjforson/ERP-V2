@@ -3,8 +3,12 @@
    recent failures for THIS rule on THIS tenant by querying audit.events
    where EventType='inspection.validation.failed' AND Payload->>'ruleId' =
    {RuleId}. Each row hyperlinks to the case detail so the analyst can hop
-   from a failure straight to the case. *@
-@attribute [Authorize(Roles = "Inspection.Admin")]
+   from a failure straight to the case.
+
+   Sprint 37 / FU-rules-admin-role — gates on Inspection.RulesAdmin
+   (any-of with Inspection.Admin for back-compat). Role constants in
+   platform/NickERP.Platform.Identity/Auth/InspectionRoles.cs. *@
+@attribute [Authorize(Roles = "Inspection.RulesAdmin,Inspection.Admin")]
 @using NickERP.Inspection.Web.Services
 @using NickERP.Platform.Tenancy
 @inject RulesAdminService AdminService
