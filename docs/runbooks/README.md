@@ -23,7 +23,8 @@ Are you responding to an alert / user report / log line?
 │   ├── Standing up Postgres HA (primary + standby) 09-postgres-ha-setup.md
 │   ├── Configuring pgbackrest backups ............ 10-pgbackrest-backup-restore.md
 │   ├── Quarterly restore drill ................... 10-pgbackrest-backup-restore.md §8
-│   └── Upgrading an older PG to PG17 ............. 11-postgres-version-lock-pg17.md
+│   ├── Upgrading an older PG to PG17 ............. 11-postgres-version-lock-pg17.md
+│   └── Operating NickFinance (G2 pathfinder) ..... 12-nickfinance-runbook.md
 │
 └── Yes — what's the failure shape?
     ├── /healthz/ready is Unhealthy
@@ -59,6 +60,12 @@ Are you responding to an alert / user report / log line?
     ├── Data loss / corruption / "I dropped a
     │   table" — need point-in-time restore ....... 10-pgbackrest-backup-restore.md §7
     │
+    ├── NickFinance specific:
+    │   ├── postgres-nickfinance Unhealthy ........ 12-nickfinance-runbook.md §4
+    │   ├── voucher stuck / disbursement failing .. 12-nickfinance-runbook.md §8.2
+    │   ├── period-locked back-post needed ........ 12-nickfinance-runbook.md §8.3
+    │   └── FX rate published wrong ............... 12-nickfinance-runbook.md §8.1
+    │
     └── A capability silently disappeared
         (admin UI option missing, scanner
          no longer picks up files) ................ 04-plugin-load-failure.md
@@ -79,6 +86,7 @@ Are you responding to an alert / user report / log line?
 | [09](09-postgres-ha-setup.md) | Postgres HA setup (primary + streaming standby + manual failover) | n/a — operator-initiated; or primary down + manual failover | P1 (failover) |
 | [10](10-pgbackrest-backup-restore.md) | pgbackrest backup + restore (full + incremental + PITR) | n/a — operator-initiated; or backup-failed alert | P1 (data-loss restore; 7-day-no-backup) |
 | [11](11-postgres-version-lock-pg17.md) | PG17 version lock + upgrade-from-older procedure | n/a — operator-initiated | P1 (failed upgrade rollback) |
+| [12](12-nickfinance-runbook.md) | NickFinance (G2 pathfinder) operations — deploy / health / migrations / backup / FX-rate publish | n/a — operator-initiated; or `postgres-nickfinance` Unhealthy | P2 (`postgres-nickfinance` Unhealthy) / P1 (data loss → runbook 10 §7) |
 
 > Slots 07 + 08 are post-incident / analytical runbooks (sprint-13
 > live-deploy backlog and 2026-05-04 OCR baseline) — they sit
@@ -187,9 +195,14 @@ warrant them:
   ([`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
   §5.6) is the v0 off-site posture; full DR with hot standby in a
   second region is post-pilot.
-- **NickFinance / NickHR runbooks.** Out of scope until those modules
-  ship in v2 (today they live only in v1, which has its own runbooks
-  under `C:\Shared\NSCIM_PRODUCTION\docs\migration\RUNBOOK.md`).
+- **NickHR runbook.** Out of scope until NickHR is folded into
+  v2-native (today it lives only in v1 and under `v1-clone/nickhr/`,
+  which has its own runbooks under
+  `C:\Shared\NSCIM_PRODUCTION\docs\migration\RUNBOOK.md`).
+  NickFinance's G2 pathfinder shipped in Sprint 10 and now has its
+  own runbook at [`12-nickfinance-runbook.md`](12-nickfinance-runbook.md);
+  the v1-clone NickFinance modules (AP / AR / Banking / Budgeting /
+  CoA) still ship from v1 until the post-pilot fold-in lands.
 - **Audit projection / notifications inbox.** Sprint 8 / P3 work.
 
 When those arrive, add a runbook under the same eight-section
