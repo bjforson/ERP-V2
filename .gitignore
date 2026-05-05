@@ -90,3 +90,12 @@ tools/inference-training/**/checkpoints/
 # shape) are source-tracked; the .onnx.data weight blobs (~55MB each,
 # regenerable from a 1-epoch training run on 88 samples) are not.
 storage/**/*.onnx.data
+
+# Worktrees for parallel sprint masters — never tracked
+.worktrees/
+
+# Generated migration scripts — operator-applied, not source-tracked
+tools/migrations/*.sql
+
+# External design docs ingested as reference material
+*.docx
