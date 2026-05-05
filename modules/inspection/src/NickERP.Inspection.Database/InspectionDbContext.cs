@@ -228,6 +228,10 @@ public sealed class InspectionDbContext : DbContext
                 .HasDefaultValue(NickERP.Inspection.Core.Retention.RetentionClass.Standard);
             e.Property(x => x.LegalHold).IsRequired().HasDefaultValue(false);
             e.Property(x => x.LegalHoldReason).HasMaxLength(500);
+            // Sprint 38 — synthetic-data marker for pilot readiness gate.
+            // Default false; tests opt-in to true so the
+            // gate.analyst.decisioned_real_case probe can ignore them.
+            e.Property(x => x.IsSynthetic).IsRequired().HasDefaultValue(false);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => new { x.TenantId, x.LocationId, x.State, x.OpenedAt }).HasDatabaseName("ix_cases_tenant_loc_state_time");
