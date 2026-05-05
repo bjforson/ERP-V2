@@ -24,10 +24,11 @@ namespace NickERP.Platform.Tenancy.Database.Services;
 /// </para>
 /// <para>
 /// Gate 5 (multi-tenant invariants) delegates to
-/// <see cref="MultiTenantInvariantProbe"/> which IS allowed to flip
-/// system context — that probe is the active-defence test for the
-/// system-context register itself, so the flip is part of the
-/// experiment rather than the side effect.
+/// <see cref="MultiTenantInvariantProbe"/>. As of Phase C the probe
+/// runs three real sub-checks (RLS read isolation, system-context
+/// register integrity, cross-tenant export gate refusal) and emits
+/// a <c>nickerp.tenancy.invariant_probe_run</c> audit event per
+/// run.
 /// </para>
 /// <para>
 /// Probe failures never throw out of this service. Each gate is wrapped
