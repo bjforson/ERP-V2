@@ -195,6 +195,10 @@ public sealed class InspectionDbContext : DbContext
             // Sprint 34 / B6 — review queue priority bucket. Persisted
             // as int via HasConversion<int>() for stable wire format.
             e.Property(x => x.ReviewQueue).HasConversion<int>().IsRequired().HasDefaultValue(ReviewQueue.Standard);
+            // Sprint 38 — synthetic-data marker for pilot readiness gate.
+            // Default false; tests opt-in to true so the
+            // gate.analyst.decisioned_real_case probe can ignore them.
+            e.Property(x => x.IsSynthetic).IsRequired().HasDefaultValue(false);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => new { x.TenantId, x.LocationId, x.State, x.OpenedAt }).HasDatabaseName("ix_cases_tenant_loc_state_time");

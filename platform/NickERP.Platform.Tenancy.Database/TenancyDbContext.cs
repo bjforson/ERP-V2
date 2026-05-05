@@ -344,6 +344,13 @@ public sealed class TenancyDbContext : DbContext
                 .IsUnique()
                 .HasDatabaseName("ux_tenant_settings_tenant_key");
         });
+
+        // Sprint 38 — PilotReadinessSnapshot persistence DEFERRED to
+        // fix-forward (master rate-limited before completing the service
+        // impl + migration). The entity types in
+        // platform/NickERP.Platform.Tenancy/Pilot/ are scaffolding ready
+        // for the deferred sprint to wire up here + add the matching
+        // tenancy migration.
     }
 }
 

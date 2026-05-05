@@ -62,6 +62,16 @@ public sealed class InspectionCase : ITenantOwned
     /// </summary>
     public ReviewQueue ReviewQueue { get; set; } = ReviewQueue.Standard;
 
+    /// <summary>
+    /// Sprint 38 — flag a case as synthetic test data so the pilot
+    /// readiness probes (<c>gate.analyst.decisioned_real_case</c>) can
+    /// distinguish "the system has demonstrated end-to-end correctness
+    /// on production data" from "tests + seeders set the table on fire".
+    /// Defaults to <c>false</c> — production / pilot creation paths leave
+    /// this alone; unit + integration tests opt in to <c>true</c>.
+    /// </summary>
+    public bool IsSynthetic { get; set; }
+
     public long TenantId { get; set; }
 
     public List<Scan> Scans { get; set; } = new();
