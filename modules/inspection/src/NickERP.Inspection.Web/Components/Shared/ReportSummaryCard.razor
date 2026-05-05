@@ -1,0 +1,89 @@
+@* Sprint 33 / B7.1 — reusable summary card for the Reports dashboard.
+
+   Renders a heading + headline value + (optional) sub-detail rows + a
+   drill-into link. Visual style follows the existing
+   `.inspection-stat-card` (compact) and `.inspection-card` (wide)
+   conventions used by IcumsDashboard so the dashboard reads as one
+   coherent UI rather than a fresh component family.
+
+   Lives in Components/Shared so the per-card detail pages can reuse
+   it for their "summary at top" panels. Promote to platform/Web.Shared
+   only if a sibling module wants the same shape (none today). *@
+
+<div class="inspection-card inspection-report-card">
+    <header class="inspection-report-card-header">
+        <h2 class="inspection-card-title">@Title</h2>
+        @if (!string.IsNullOrEmpty(BadgeText))
+        {
+            <span class="inspection-badge inspection-badge-@(BadgeKind ?? "neutral")">@BadgeText</span>
+        }
+    </header>
+
+    @if (!string.IsNullOrEmpty(Headline))
+    {
+        <div class="inspection-report-card-headline">
+            <span class="value">@Headline</span>
+            @if (!string.IsNullOrEmpty(HeadlineSubtitle))
+            {
+                <span class="subtitle">@HeadlineSubtitle</span>
+            }
+        </div>
+    }
+
+    @if (Rows is { Count: > 0 })
+    {
+        <dl class="inspection-report-card-rows">
+            @foreach (var r in Rows)
+            {
+                <div class="inspection-report-card-row">
+                    <dt>@r.Label</dt>
+                    <dd>@r.Value</dd>
+                </div>
+            }
+        </dl>
+    }
+
+    @if (ChildContent is not null)
+    {
+        <div class="inspection-report-card-body">@ChildContent</div>
+    }
+
+    @if (!string.IsNullOrEmpty(DetailHref))
+    {
+        <footer class="inspection-report-card-footer">
+            <a class="inspection-button" href="@DetailHref">@(DetailLinkText ?? "Drill into details")</a>
+        </footer>
+    }
+</div>
+
+@code {
+    /// <summary>Card heading (e.g. "Throughput", "SLA windows").</summary>
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+
+    /// <summary>Optional headline value rendered large (e.g. "127 cases").</summary>
+    [Parameter] public string? Headline { get; set; }
+
+    /// <summary>Optional sub-text under the headline (e.g. "in the last 24h").</summary>
+    [Parameter] public string? HeadlineSubtitle { get; set; }
+
+    /// <summary>Optional small badge in the card header (e.g. "Healthy", "Disabled").</summary>
+    [Parameter] public string? BadgeText { get; set; }
+
+    /// <summary>
+    /// Badge variant — matches the existing inspection badge classes:
+    /// <c>success</c>, <c>info</c>, <c>warning</c>, <c>error</c>, <c>neutral</c>.
+    /// </summary>
+    [Parameter] public string? BadgeKind { get; set; }
+
+    /// <summary>Optional structured rows rendered as a compact label/value list.</summary>
+    [Parameter] public IReadOnlyList<ReportSummaryRow>? Rows { get; set; }
+
+    /// <summary>Free-form body slotted into the card under the rows.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Drill-into link target (e.g. "/admin/reports/throughput").</summary>
+    [Parameter] public string? DetailHref { get; set; }
+
+    /// <summary>Override for the drill link's label. Default: "Drill into details".</summary>
+    [Parameter] public string? DetailLinkText { get; set; }
+}

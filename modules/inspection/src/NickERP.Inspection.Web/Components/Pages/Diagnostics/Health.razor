@@ -1,0 +1,156 @@
+@page "/admin/diagnostics/health"
+@* Sprint 33 / B7.2 — diagnostics health page.
+
+   Surfaces the same dependency checks as /healthz/ready but renders
+   them in a tenant admin's browser-friendly view (status chips,
+   per-check duration). Pulls directly from the in-process
+   HealthCheckService — no HTTP round-trip — so the page works even
+   if the host isn't routable from the Blazor server's network. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Inspection.Web.Services
+@inject DiagnosticsService Diagnostics
+
+<PageTitle>Health — Diagnostics — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Diagnostics — health</h1>
+        <p class="inspection-page-subtitle">
+            Live readiness check pulled from the host's <code>HealthCheckService</code>. Mirrors the JSON served at <code>/healthz/ready</code>.
+            Sister pages: <a href="/admin/diagnostics/workers">workers</a>, <a href="/admin/diagnostics/logs">logs</a>.
+        </p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-button-row">
+        <button class="inspection-button" type="button" @onclick="ReloadAsync"
+                disabled="@_isLoading">
+            @(_isLoading ? "Refreshing…" : "Refresh")
+        </button>
+        @if (_snapshot is not null)
+        {
+            <span class="inspection-page-subtitle">
+                Last checked @_snapshot.CheckedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC
+            </span>
+        }
+    </div>
+</section>
+
+@if (_snapshot is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <section class="inspection-section">
+        <ReportSummaryCard
+            Title="Overall"
+            Headline="@_snapshot.Overall"
+            HeadlineSubtitle="aggregate of all checks"
+            BadgeText="@_snapshot.Overall"
+            BadgeKind="@OverallBadgeKind(_snapshot.Overall)">
+            @if (!string.IsNullOrEmpty(_snapshot.Note))
+            {
+                <p class="inspection-page-subtitle">@_snapshot.Note</p>
+            }
+        </ReportSummaryCard>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Checks</h2>
+            @if (_snapshot.Entries.Count == 0)
+            {
+                <p class="inspection-empty">No health checks registered.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Tags</th>
+                            <th>Duration</th>
+                            <th>Description / error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in _snapshot.Entries)
+                        {
+                            <tr>
+                                <td><code>@e.Name</code></td>
+                                <td><span class="inspection-badge inspection-badge-@StatusBadgeKind(e.Status)">@e.Status</span></td>
+                                <td>
+                                    @foreach (var t in e.Tags)
+                                    {
+                                        <span class="inspection-badge inspection-badge-neutral">@t</span>
+                                    }
+                                </td>
+                                <td>@FormatDuration(e.Duration)</td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(e.ErrorMessage))
+                                    {
+                                        <strong>@e.ErrorMessage</strong>
+                                    }
+                                    else if (!string.IsNullOrEmpty(e.Description))
+                                    {
+                                        @e.Description
+                                    }
+                                    else
+                                    {
+                                        <span class="inspection-page-subtitle">—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private HealthSnapshot? _snapshot;
+    private bool _isLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _snapshot = await Diagnostics.GetHealthSnapshotAsync();
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string OverallBadgeKind(string status) => status switch
+    {
+        "Healthy" => "success",
+        "Degraded" => "warning",
+        "Unhealthy" => "error",
+        _ => "neutral"
+    };
+
+    private static string StatusBadgeKind(string status) => status switch
+    {
+        "Healthy" => "success",
+        "Degraded" => "warning",
+        "Unhealthy" => "error",
+        _ => "neutral"
+    };
+
+    private static string FormatDuration(TimeSpan d)
+        => d.TotalMilliseconds < 1 ? "<1 ms" : $"{d.TotalMilliseconds:N0} ms";
+}

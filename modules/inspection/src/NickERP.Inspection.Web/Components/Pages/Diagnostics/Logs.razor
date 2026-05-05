@@ -1,0 +1,90 @@
+@page "/admin/diagnostics/logs"
+@* Sprint 33 / B7.2 — diagnostics logs page.
+
+   Per the master spec we redirect to Seq (the structured-log sink the
+   v2 platform standardises on) when configured; otherwise we surface
+   a "configure Seq for log viewing" placeholder + a P2 follow-up
+   note. Inline log rendering is a separate follow-up
+   (FU-inline-log-viewer) — don't half-ship a partial implementation. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Inspection.Web.Services
+@inject DiagnosticsService Diagnostics
+
+<PageTitle>Logs — Diagnostics — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Diagnostics — logs</h1>
+        <p class="inspection-page-subtitle">
+            Live log viewer. Sister pages: <a href="/admin/diagnostics/health">health</a>, <a href="/admin/diagnostics/workers">workers</a>.
+        </p>
+    </div>
+</header>
+
+@if (_info is null)
+{
+    <p>Loading…</p>
+}
+else if (_info.IsConfigured)
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Open Seq</h2>
+            <p>
+                Structured logs for this host are shipped to Seq. Click the link below to open the Seq UI in a new tab — filters,
+                full-text search, and the Inspection meter histograms live there.
+            </p>
+            <p>
+                <a class="inspection-button inspection-button-primary" href="@_info.SeqUrl" target="_blank" rel="noopener noreferrer">
+                    Open Seq → @_info.SeqUrl
+                </a>
+            </p>
+            <p class="inspection-page-subtitle">
+                Resolved from <code>@_info.ConfiguredVia</code>.
+            </p>
+        </div>
+
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Inline log render</h2>
+            <p class="inspection-page-subtitle">
+                Inline log rendering inside the portal is a parked follow-up (<code>FU-inline-log-viewer</code>).
+                The decision was to keep Sprint 33 thin: link out to Seq for the canonical log experience rather than
+                ship a partial implementation that risks diverging from the structured-log shape.
+            </p>
+        </div>
+    </section>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card inspection-card-warning">
+            <h2 class="inspection-card-title">Seq is not configured</h2>
+            <p>
+                The diagnostics log viewer redirects to Seq for the canonical log experience. To enable, set one of:
+            </p>
+            <ul>
+                <li>
+                    <code>NickErp:Logging:SeqUiUrl</code> — the browser-routable Seq UI URL (preferred when the ingestion endpoint and UI live behind separate hosts).
+                </li>
+                <li>
+                    <code>NickErp:Logging:SeqUrl</code> — falls back to the ingestion endpoint when no separate UI URL is configured.
+                </li>
+            </ul>
+            <p class="inspection-page-subtitle">
+                <strong>Follow-up:</strong> in environments where Seq is not available, a tail-of-file inline log
+                renderer is parked as <code>FU-inline-log-viewer</code>. Sprint 33 deliberately avoids shipping a
+                partial implementation.
+            </p>
+        </div>
+    </section>
+}
+
+@code {
+    private LogViewerInfo? _info;
+
+    protected override void OnInitialized()
+    {
+        _info = Diagnostics.GetLogViewerInfo();
+    }
+}

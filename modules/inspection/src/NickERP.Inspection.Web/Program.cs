@@ -374,6 +374,16 @@ builder.Services.AddHostedService(
 builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
 
+// ---------------------------------------------------------------------------
+// Sprint 33 / B7 — reports + diagnostics services. Both scoped because
+// they consume the per-request InspectionDbContext (and AuditDbContext
+// for the reports service). Read-only by design — neither service
+// performs writes; the dashboard pages only project existing data.
+// ADDITIVE registration; doesn't touch any existing line.
+// ---------------------------------------------------------------------------
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.ReportsService>();
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.DiagnosticsService>();
+
 // Sprint 29 — wire shared chrome (SharedHeader + SharedFooter +
 // IModuleContext). ADDITIVE: doesn't touch any existing registration.
 // ModuleId pinned to "inspection" so the back-to-launcher link in the

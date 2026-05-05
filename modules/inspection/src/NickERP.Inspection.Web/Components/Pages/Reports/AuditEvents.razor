@@ -1,0 +1,203 @@
+@page "/admin/reports/audit"
+@* Sprint 33 / B7.1 — audit-event browser drill-down page.
+
+   Paged list of every audit event for the current tenant. Filters:
+   event-type substring, actor user id, date range. Read-only — does
+   not emit new audit events. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using Microsoft.AspNetCore.Components
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject ReportsService Reports
+@inject ITenantContext Tenant
+
+<PageTitle>Audit events — Reports — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Audit-event browser</h1>
+        <p class="inspection-page-subtitle">
+            Tenant-scoped audit log. Filter by event type, actor, and date range. <a href="/admin/reports">Back to dashboard</a>.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved.</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Filters</h2>
+            <div class="inspection-filter-bar">
+                <label>
+                    Event type contains
+                    <input type="text" @bind="_eventTypeFilter" @bind:after="ReloadAsync" />
+                </label>
+                <label>
+                    Actor (user id)
+                    <input type="text" @bind="_actorRaw" @bind:after="ReloadAsync" placeholder="Guid" />
+                </label>
+                <label>
+                    From (UTC)
+                    <input type="datetime-local" @bind="_from" @bind:after="ReloadAsync" />
+                </label>
+                <label>
+                    To (UTC)
+                    <input type="datetime-local" @bind="_to" @bind:after="ReloadAsync" />
+                </label>
+                <button class="inspection-button" type="button" @onclick="ResetFiltersAsync">Reset</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <header class="inspection-button-row">
+                <h2 class="inspection-card-title">Audit events</h2>
+                <span class="inspection-page-subtitle">@_total total — page @_page</span>
+            </header>
+
+            @if (_loadError is not null)
+            {
+                <p class="inspection-empty">Failed to load: @_loadError</p>
+            }
+            else if (_rows is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (_rows.Count == 0)
+            {
+                <p class="inspection-empty">No audit events match the current filters.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead>
+                        <tr>
+                            <th>When (UTC)</th>
+                            <th>Event type</th>
+                            <th>Entity</th>
+                            <th>Actor</th>
+                            <th>Correlation</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in _rows)
+                        {
+                            <tr class="@(_expandedId == r.EventId ? "inspection-row-expanded" : "")">
+                                <td>@r.OccurredAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td><code>@r.EventType</code></td>
+                                <td>
+                                    <code>@r.EntityType</code>
+                                    <br />
+                                    <span class="inspection-page-subtitle">@r.EntityId</span>
+                                </td>
+                                <td>@(r.ActorUserId?.ToString() ?? "—")</td>
+                                <td><code>@(r.CorrelationId ?? "—")</code></td>
+                                <td>
+                                    <button class="inspection-button" type="button" @onclick="() => ToggleExpand(r.EventId)">
+                                        @(_expandedId == r.EventId ? "Hide" : "View") payload
+                                    </button>
+                                </td>
+                            </tr>
+                            @if (_expandedId == r.EventId)
+                            {
+                                <tr class="inspection-row-detail">
+                                    <td colspan="6">
+                                        <JsonPayloadViewer Title="Payload" Json="@r.PayloadJson" />
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+
+                <div class="inspection-button-row">
+                    <button class="inspection-button" type="button"
+                            disabled="@(_page <= 1)"
+                            @onclick="PreviousPageAsync">‹ Previous</button>
+                    <span class="inspection-page-subtitle">Page @_page</span>
+                    <button class="inspection-button" type="button"
+                            disabled="@(_rows.Count < _pageSize)"
+                            @onclick="NextPageAsync">Next ›</button>
+                </div>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private const int _pageSize = 25;
+    private int _page = 1;
+    private int _total;
+    private string? _eventTypeFilter;
+    private string? _actorRaw;
+    private DateTime? _from;
+    private DateTime? _to;
+    private IReadOnlyList<AuditEventRow>? _rows;
+    private Guid? _expandedId;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            if (!Tenant.IsResolved) return;
+            Guid? actor = null;
+            if (!string.IsNullOrWhiteSpace(_actorRaw) && Guid.TryParse(_actorRaw, out var g))
+                actor = g;
+            DateTimeOffset? from = _from.HasValue ? new DateTimeOffset(_from.Value, TimeSpan.Zero) : null;
+            DateTimeOffset? to = _to.HasValue ? new DateTimeOffset(_to.Value, TimeSpan.Zero) : null;
+            var paged = await Reports.ListAuditEventsAsync(
+                _eventTypeFilter, actor, from, to, _page, _pageSize);
+            _total = paged.Total;
+            _rows = paged.Rows;
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"{ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _eventTypeFilter = null;
+        _actorRaw = null;
+        _from = null;
+        _to = null;
+        _page = 1;
+        _expandedId = null;
+        await ReloadAsync();
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_page <= 1) return;
+        _page--;
+        _expandedId = null;
+        await ReloadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        _page++;
+        _expandedId = null;
+        await ReloadAsync();
+    }
+
+    private void ToggleExpand(Guid id)
+    {
+        _expandedId = _expandedId == id ? null : id;
+    }
+}

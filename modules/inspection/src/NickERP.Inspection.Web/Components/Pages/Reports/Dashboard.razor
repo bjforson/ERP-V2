@@ -1,0 +1,224 @@
+@page "/admin/reports"
+@* Sprint 33 / B7.1 — reports dashboard landing page.
+
+   Surfaces four cards: throughput, SLA, errors, audit-events summary.
+   Each card has a "drill into details" link to a dedicated per-card
+   page. v1 NickScanWebApp.New had a "Reports & Analytics" page driven
+   by a hard-coded list of canned reports — v2 reframes this as live
+   summary cards keyed on the v2 case + audit shape (vendor-neutral). *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject ReportsService Reports
+@inject ITenantContext Tenant
+
+<PageTitle>Reports — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Reports</h1>
+        <p class="inspection-page-subtitle">
+            Live operational metrics — throughput, SLA windows, error pulse, and audit-event activity. Click "drill into details" on any card for the per-card breakdown.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_summary is null && _loadError is null)
+{
+    <p>Loading…</p>
+}
+else if (_loadError is not null)
+{
+    <div class="inspection-card inspection-card-error">
+        <h2 class="inspection-card-title">Failed to load reports</h2>
+        <p>@_loadError</p>
+        <button class="inspection-button" type="button" @onclick="ReloadAsync">Retry</button>
+    </div>
+}
+else if (_summary is not null)
+{
+    <section class="inspection-section">
+        <div class="inspection-stat-grid inspection-report-grid">
+
+            @* Throughput card *@
+            <ReportSummaryCard
+                Title="Throughput"
+                Headline="@FormatNumber(_summary.Throughput.CreatedLast24h)"
+                HeadlineSubtitle="cases created in the last 24h"
+                Rows="@_throughputRows"
+                DetailHref="/admin/reports/throughput" />
+
+            @* SLA card — defensive; Sprint 31 may or may not have shipped sla_window. *@
+            <ReportSummaryCard
+                Title="SLA windows"
+                Headline="@_slaHeadline"
+                HeadlineSubtitle="@_slaHeadlineSubtitle"
+                BadgeText="@_slaBadge"
+                BadgeKind="@_slaBadgeKind"
+                Rows="@_slaRows">
+                @if (!string.IsNullOrEmpty(_summary.Sla.Note))
+                {
+                    <p class="inspection-page-subtitle">@_summary.Sla.Note</p>
+                }
+            </ReportSummaryCard>
+
+            @* Errors card *@
+            <ReportSummaryCard
+                Title="Errors"
+                Headline="@FormatNumber(_summary.Errors.CountLast24h)"
+                HeadlineSubtitle="error events in the last 24h"
+                BadgeText="@(_summary.Errors.CountLast24h > 0 ? "Active" : "Quiet")"
+                BadgeKind="@(_summary.Errors.CountLast24h > 0 ? "error" : "success")"
+                Rows="@_errorsRows"
+                DetailHref="/admin/reports/errors">
+                @if (_summary.Errors.TopTypesLast7d.Count > 0)
+                {
+                    <details>
+                        <summary>Top types (last 7d)</summary>
+                        <table class="inspection-table inspection-table-compact">
+                            <thead><tr><th>Event type</th><th>Count</th></tr></thead>
+                            <tbody>
+                                @foreach (var t in _summary.Errors.TopTypesLast7d)
+                                {
+                                    <tr>
+                                        <td><code>@t.EventType</code></td>
+                                        <td>@t.Count</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </details>
+                }
+            </ReportSummaryCard>
+
+            @* Audit summary card *@
+            <ReportSummaryCard
+                Title="Audit activity"
+                Headline="@FormatNumber(_summary.Audit.TotalLast24h)"
+                HeadlineSubtitle="audit events in the last 24h"
+                DetailHref="/admin/reports/audit">
+                @if (_summary.Audit.TopTypesLast24h.Count > 0)
+                {
+                    <details>
+                        <summary>Top types (last 24h)</summary>
+                        <table class="inspection-table inspection-table-compact">
+                            <thead><tr><th>Event type</th><th>Count</th></tr></thead>
+                            <tbody>
+                                @foreach (var t in _summary.Audit.TopTypesLast24h)
+                                {
+                                    <tr>
+                                        <td><code>@t.EventType</code></td>
+                                        <td>@t.Count</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </details>
+                }
+                else
+                {
+                    <p class="inspection-empty">No audit events in the last 24 hours.</p>
+                }
+            </ReportSummaryCard>
+
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Operations</h2>
+            <p class="inspection-page-subtitle">Sibling tools for triage + diagnostics:</p>
+            <div class="inspection-button-row">
+                <a class="inspection-button" href="/admin/reports/throughput">Throughput drill-down</a>
+                <a class="inspection-button" href="/admin/reports/errors">Errors investigation</a>
+                <a class="inspection-button" href="/admin/reports/audit">Audit-event browser</a>
+                <a class="inspection-button" href="/admin/diagnostics/health">Diagnostics — health</a>
+                <a class="inspection-button" href="/admin/diagnostics/workers">Diagnostics — workers</a>
+                <a class="inspection-button" href="/admin/diagnostics/logs">Diagnostics — logs</a>
+            </div>
+        </div>
+    </section>
+}
+
+@code {
+    private ReportsDashboardSummary? _summary;
+    private string? _loadError;
+
+    // Card rows + computed strings — staged here so the markup stays
+    // free of Razor-vs-quote escaping noise.
+    private List<ReportSummaryRow> _throughputRows = new();
+    private List<ReportSummaryRow> _errorsRows = new();
+    private List<ReportSummaryRow>? _slaRows;
+    private string _slaHeadline = "—";
+    private string _slaHeadlineSubtitle = string.Empty;
+    private string _slaBadge = string.Empty;
+    private string _slaBadgeKind = "neutral";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loadError = null;
+        _summary = null;
+        try
+        {
+            if (!Tenant.IsResolved) return;
+            _summary = await Reports.GetDashboardSummaryAsync();
+            BuildCardRows();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"{ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    private void BuildCardRows()
+    {
+        if (_summary is null) return;
+
+        var t = _summary.Throughput;
+        _throughputRows = new()
+        {
+            new("Created (24h / 7d / 30d)", $"{FormatNumber(t.CreatedLast24h)} / {FormatNumber(t.CreatedLast7d)} / {FormatNumber(t.CreatedLast30d)}"),
+            new("Decided (24h / 7d / 30d)", $"{FormatNumber(t.DecidedLast24h)} / {FormatNumber(t.DecidedLast7d)} / {FormatNumber(t.DecidedLast30d)}"),
+            new("Submitted (24h / 7d / 30d)", $"{FormatNumber(t.SubmittedLast24h)} / {FormatNumber(t.SubmittedLast7d)} / {FormatNumber(t.SubmittedLast30d)}"),
+        };
+
+        _errorsRows = new()
+        {
+            new("Last 7d", FormatNumber(_summary.Errors.CountLast7d)),
+        };
+
+        var sla = _summary.Sla;
+        if (sla.IsEnabled)
+        {
+            _slaHeadline = FormatNumber(sla.OpenWindowCount);
+            _slaHeadlineSubtitle = "open SLA windows";
+            _slaBadge = "Live";
+            _slaBadgeKind = "success";
+            _slaRows = new()
+            {
+                new("Breached", FormatNumber(sla.BreachCount)),
+                new("At risk", FormatNumber(sla.AtRiskCount)),
+            };
+        }
+        else
+        {
+            _slaHeadline = "—";
+            _slaHeadlineSubtitle = "tracking not yet enabled";
+            _slaBadge = "Pending";
+            _slaBadgeKind = "warning";
+            _slaRows = null;
+        }
+    }
+
+    private static string FormatNumber(int value) => value.ToString("N0");
+}
