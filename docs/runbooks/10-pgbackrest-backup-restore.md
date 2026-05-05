@@ -219,9 +219,10 @@ If the production box is dual-boot or virtualised: prefer running
 the Postgres cluster on Linux. If the cluster must be Windows for
 licensing or domain reasons, the cleaner path is "Postgres on
 Windows, pgbackrest on a separate Linux backup host that pulls via
-SSH" — but that adds the cross-host SSH topology this runbook
-excludes from v0. Pick a deferred-action follow-up if Windows is
-the prod target.
+SSH" — see **[§5A](#5a-production-posture-for-windows-host-postgres)**
+for the full posture-decision (recommended / acceptable-v0 /
+acceptable-v1) and the SSH topology details. Pilot deployment on a
+Windows host MUST pick one of the §5A shapes before §5.4 runs.
 
 ### 5.2 Configure `/etc/pgbackrest/pgbackrest.conf`
 
@@ -377,6 +378,234 @@ Re-run the backup. **Do not** force-remove the lock if pgbackrest
 is actually still running — the resulting concurrent write to the
 repo can corrupt manifests.
 
+## 5A. Production posture for Windows-host Postgres
+
+> **Scope.** Pilot is locking on Kotoka (KIA Cargo) or Takoradi per
+> plan §13. Both candidate sites currently run NSCIM v1 on Windows
+> Server, and the v2 deployment will inherit that host shape unless
+> we move the Postgres cluster to Linux at pilot lock. This section
+> documents the three Windows-host postures pgbackrest can run under
+> and which one is recommended for production.
+>
+> **Read this BEFORE §5.4 if pilot is on Windows.** The posture
+> choice changes pgbackrest install + invocation + scheduling; it
+> does not change the §6 cadence or the §7 PITR shape.
+
+The Sprint 27 followup `FU-windows-pgbackrest-posture` flagged §5.1's
+"WSL2 is acceptable v0" line as the only Windows guidance in the
+runbook. That short line is honest about the v0 trade-off but doesn't
+spell out the cleaner long-term shape — this section closes that gap.
+
+### 5A.1 Posture comparison
+
+| Posture | Status | RPO | Recovery time | Operator complexity | Adopt when |
+|---|---|---|---|---|---|
+| **Postgres on Windows + pgbackrest on a separate Linux backup host (SSH)** | **Recommended** | 6 h (matches §6 cadence) | minutes-hours per §7 | medium — needs SSH key mgmt + cross-host firewall | pilot is Windows AND we have a Linux backup VM available |
+| WSL2-on-prod-host pgbackrest | Acceptable v0 | 6 h | matches recommended path | low — single host | dev box / first-pilot blast-radius / no Linux backup VM yet |
+| Native Windows pgbackrest binary | Acceptable v1 (future) | 6 h | matches recommended path | low — single host, no WSL | upstream ships a supported Windows release on the same cadence as the Linux build |
+
+The recommended path is the cleaner long-term shape because:
+- It isolates the backup tool from the production host's failure
+  modes (host disk dies → repo on a different machine survives).
+- WSL2 has historically been an awkward production dependency
+  (auto-shutdown when the parent Windows session ends, tricky
+  service-account integration, kernel upgrades that break the
+  distro). The Linux backup host is a regular Linux VM that the
+  operator's existing tooling already supports.
+- pgbackrest's authentication model (SSH key from primary to
+  backup host) is well-supported — `pg1-host` + `pg1-host-user` +
+  `pg1-host-config` keys in pgbackrest.conf cover the cross-host
+  case.
+
+The "v0 acceptable" WSL2 path stays valid for the dev box and for a
+first-pilot launch where the operator hasn't yet provisioned the
+Linux backup VM. **Do not stay on the WSL2 path past the first
+pilot quarter** — the §8 quarterly drill is the moment to migrate to
+the recommended shape.
+
+### 5A.2 Recommended — SSH-based Linux backup host
+
+**Topology:**
+
+```
+                +-----------------------+
+                |  Windows prod host     |          +--------------------+
+                |  Postgres 17           |          |  Linux backup VM    |
+                |  C:\PostgreSQL\17\data |          |  pgbackrest 2.50+   |
+                |  ssh-server installed  |  --SSH-->|  /var/lib/pgbackrest|
+                |  pgbackrest user       |  (rsync) |                     |
+                +-----------------------+          +--------------------+
+```
+
+**One-time setup:**
+
+1. **Install pgbackrest on the Linux backup VM** per §5.1 (Debian /
+   RHEL package). The Windows host gets **no** pgbackrest install —
+   only OpenSSH server.
+
+2. **Provision an SSH service account on the Windows host** that
+   pgbackrest can use to read `PGDATA`:
+
+   ```powershell
+   # Run as Administrator on the Windows host.
+   $secret = Read-Host -AsSecureString "Service account password"
+   New-LocalUser  -Name pgbackrest -Password $secret -PasswordNeverExpires `
+                  -UserMayNotChangePassword -Description "pgbackrest read-only PGDATA"
+   Add-LocalGroupMember -Group "Backup Operators" -Member pgbackrest
+   icacls "C:\Program Files\PostgreSQL\17\data" /grant "pgbackrest:(OI)(CI)R" /T
+   ```
+
+   The "Backup Operators" group + recursive read grant lets the
+   account read `PGDATA` without write privileges.
+
+3. **Install OpenSSH server on the Windows host** (Server 2022 / W11
+   ship with it as an optional feature):
+
+   ```powershell
+   Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+   Start-Service sshd
+   Set-Service -Name sshd -StartupType Automatic
+   New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' `
+                       -Enabled True -Direction Inbound -Protocol TCP `
+                       -Action Allow -LocalPort 22
+   ```
+
+4. **Generate an SSH key pair on the Linux backup VM**, install the
+   public half on the Windows host:
+
+   ```bash
+   # On the Linux backup VM (run as the pgbackrest user, NOT root).
+   sudo -u pgbackrest ssh-keygen -t ed25519 -f ~/.ssh/pgbackrest_id -N ""
+   ```
+
+   Copy `~/.ssh/pgbackrest_id.pub` content to the Windows host's
+   `C:\Users\pgbackrest\.ssh\authorized_keys`. Ensure `authorized_keys`
+   has the right ACLs — Windows OpenSSH is fussy:
+
+   ```powershell
+   icacls "C:\Users\pgbackrest\.ssh\authorized_keys" `
+       /inheritance:r /grant "pgbackrest:(R)" /grant "SYSTEM:(F)"
+   ```
+
+5. **Configure pgbackrest.conf on the Linux backup VM** with the
+   Windows host's Postgres path:
+
+   ```ini
+   [global]
+   repo1-path=/var/lib/pgbackrest
+   repo1-retention-full=12
+   repo1-retention-diff=4
+   repo1-retention-archive=14
+   repo1-retention-archive-type=incr
+   log-level-console=info
+   log-level-file=detail
+   start-fast=y
+   delta=y
+
+   # Cross-host: tell pgbackrest the cluster lives on the Windows host.
+   [nickerp]
+   pg1-host=windows-prod.example.internal
+   pg1-host-user=pgbackrest
+   pg1-host-config=/etc/pgbackrest/pgbackrest.conf
+   pg1-path=/c/Program Files/PostgreSQL/17/data
+   pg1-port=5432
+   pg1-user=postgres
+   ```
+
+   Note `pg1-path` uses the Linux-side translation of the Windows
+   path — pgbackrest's SSH transport reads files via the OpenSSH
+   server, which exposes `C:\` as `/c/`.
+
+6. **Configure the Postgres `archive_command` on the Windows host**
+   to push WAL to the Linux backup VM via SSH:
+
+   ```ini
+   # postgresql.conf on the Windows host
+   archive_mode = on
+   archive_command = 'ssh pgbackrest@linux-backup.example.internal "pgbackrest --stanza=nickerp archive-push" < %p'
+   ```
+
+   The trailing `< %p` redirects the WAL file content over stdin to
+   the remote `archive-push` invocation. This makes WAL archiving
+   another SSH round-trip per WAL switch — typically 1-2/min on a
+   write-heavy DB; fine over a LAN, watch latency over a WAN link.
+
+7. **First backup + verify:** §5.4 procedure runs unchanged from the
+   Linux backup VM:
+
+   ```bash
+   sudo -u pgbackrest pgbackrest --stanza=nickerp stanza-create
+   sudo -u pgbackrest pgbackrest --stanza=nickerp check
+   sudo -u pgbackrest pgbackrest --stanza=nickerp --type=full backup
+   ```
+
+   The check command ssh's into the Windows host, confirms the
+   archive_command is wired, and runs a one-shot WAL push to verify
+   the round-trip.
+
+### 5A.3 Acceptable v0 — WSL2 on the prod host
+
+This is the §5.1 path that already exists. Recap, with the cron /
+scheduler shape called out:
+
+1. Install a WSL2 distro on the Windows host (Ubuntu 22.04+).
+2. Inside the WSL2 distro: `sudo apt install pgbackrest`.
+3. Mount `C:\Program Files\PostgreSQL\17\data` into the WSL2 filesystem
+   — by default WSL2 exposes `C:\` as `/mnt/c/`, so `pg1-path =
+   /mnt/c/Program Files/PostgreSQL/17/data`.
+4. Run pgbackrest commands inside WSL2 via `wsl.exe -u postgres
+   pgbackrest ...` (see §6.3 for scheduled-task wiring).
+
+**Known failure modes:**
+- WSL2 auto-shutdown when no console session is active. Workaround:
+  `wsl.exe --set-default-version 2` then leave a `wsl.exe -d Ubuntu
+  -- /bin/true` running as a Windows service via NSSM, or use the
+  Windows 11 24H2+ "vmIdleTimeout=-1" setting in `.wslconfig`.
+- WSL2 distro upgrades occasionally rebuild the kernel and break
+  network paths to the Postgres host (localhost:5432) — re-test after
+  any WSL kernel update.
+- File system performance through `/mnt/c/` is 5-10x slower than
+  native Linux ext4. Backup wall-clock at scale will be noticeably
+  longer than the recommended path; tolerable for v0 cluster sizes.
+
+### 5A.4 Acceptable v1 — Native Windows pgbackrest
+
+Upstream pgbackrest builds Windows binaries periodically but does NOT
+treat them as production-ready (per the Quick Start docs, "the Windows
+release lags the Linux release, and several features rely on POSIX
+semantics that Windows does not provide identically").
+
+If a future upstream release lifts that caveat, the migration path is:
+
+1. Replace the WSL2 install with the native Windows binary.
+2. `pgbackrest.conf` and the `archive_command` switch from
+   `wsl.exe -u postgres pgbackrest ...` to `pgbackrest.exe ...`.
+3. Scheduled tasks lose the `wsl.exe` wrapper.
+4. Re-stanza only required if the major version changes (it
+   shouldn't on a same-version binary swap).
+
+Watch upstream release notes ([pgbackrest
+releases](https://github.com/pgbackrest/pgbackrest/releases)) for a
+"Windows: production-ready" line in the changelog. Until then, treat
+this posture as deferred-action.
+
+### 5A.5 Cross-link to runbook 09 (HA setup)
+
+Runbook 09 §5.5 calls "take a pgbackrest backup before initialising
+the standby" as a mandatory pre-flight. That step's invocation
+changes by posture:
+
+| Posture | §5.5 invocation |
+|---|---|
+| Recommended (SSH Linux backup host) | `sudo -u pgbackrest pgbackrest --stanza=nickerp --type=full backup` (on the Linux backup VM) |
+| WSL2 v0 | `wsl.exe -u postgres pgbackrest --stanza=nickerp --type=full backup` (on the Windows prod host) |
+| Native Windows v1 | `pgbackrest.exe --stanza=nickerp --type=full backup` (on the Windows prod host) |
+
+The standby's `pgbackrest archive-push` command (used post-failover
+when the standby is promoted) follows the same shape — runbook 09 §8.1
+already references runbook 10's `archive-push` line; that line is
+posture-aware via the §6.3 / §6.4 wrapper.
+
 ## 6. Routine cadence (cron / scheduled-task)
 
 After §5 finishes, daily operations are automated. The operator
@@ -399,7 +628,12 @@ Why this shape:
 - 6-hour incrementals = RPO of 6 h **without** WAL replay; with
   WAL replay (PITR) RPO is ≤ 1 minute.
 
-### 6.2 Cron (Linux)
+### 6.2 Cron (Linux native, OR Linux backup host per §5A.2)
+
+Same shape regardless of whether the cluster lives on the same host
+or pgbackrest is reaching across SSH per §5A.2. The cross-host
+config in pgbackrest.conf does the cross-host work; the cron stanza
+is unchanged.
 
 ```cron
 # /etc/cron.d/pgbackrest
@@ -415,28 +649,123 @@ Use `MAILTO=<ops-alias>` at the top of the cron file so failures
 land in an inbox; alternatively, wrap the commands in a script that
 sends to your alerting layer on non-zero exit.
 
-### 6.3 Scheduled tasks (Windows, via WSL2)
+For the §5A.2 SSH posture, the cron file lives on the **Linux
+backup VM**, not the Windows prod host. The `archive_command` on the
+Windows host runs continuously per WAL switch and is not in cron.
 
-If pgbackrest is in WSL2, the Windows-side scheduler invokes it via
-`wsl.exe`:
+### 6.3 Scheduled tasks (Windows host — both v0 and recommended posture)
+
+The shape depends on the §5A posture:
+
+#### 6.3.1 Recommended posture — SSH-based Linux backup host (§5A.2)
+
+In this posture **the Windows host has no scheduled tasks**. The
+Linux backup VM runs the §6.2 cron; all backup logic lives there.
+The Windows prod host's only contribution is:
+
+- Continuous WAL archive-push via the `archive_command` configured
+  in `postgresql.conf` (already running per §5A.2 step 6).
+- The OpenSSH server that the Linux backup VM SSH's into.
+
+Operator audit: `Get-ScheduledTask -TaskName 'pgbackrest-*'` on the
+Windows host should return **zero** entries in this posture. If
+there are leftover tasks from a prior WSL2 deployment, unregister
+them so they don't conflict with the Linux backup VM's runs:
 
 ```powershell
-$action = New-ScheduledTaskAction -Execute "wsl.exe" `
-  -Argument "-u postgres pgbackrest --stanza=nickerp --type=full backup"
-$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 2am
-Register-ScheduledTask -TaskName "pgbackrest-nickerp-full" `
-  -Action $action -Trigger $trigger -User "SYSTEM"
+Get-ScheduledTask -TaskName 'pgbackrest-*' | `
+    Unregister-ScheduledTask -Confirm:$false
 ```
 
-Repeat for the incremental schedule. Wrap in a PowerShell script
-that captures the exit code; route a non-zero exit to the alert
-layer (Seq, email, etc.).
+#### 6.3.2 WSL2 v0 posture (§5A.3)
+
+When pgbackrest is in WSL2, the Windows scheduled task invokes it
+via `wsl.exe`. Wrap each invocation in a PowerShell script so the
+exit code is captured and routed to the alert layer.
+
+`C:\PgBackRest\Run-Backup.ps1`:
+
+```powershell
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [ValidateSet('full', 'incr')]
+    [string]$Type
+)
+
+$ErrorActionPreference = 'Stop'
+$logFile = "C:\PgBackRest\logs\$(Get-Date -Format 'yyyy-MM-dd-HHmm')-$Type.log"
+New-Item -ItemType Directory -Path (Split-Path $logFile) -Force | Out-Null
+
+# Use --user so pgbackrest runs under the dedicated postgres role
+# inside WSL2 — same posture as a Linux deployment.
+$exitCode = (
+    Start-Process -FilePath 'wsl.exe' `
+        -ArgumentList @('-u', 'postgres', 'pgbackrest',
+                        "--stanza=nickerp", "--type=$Type", 'backup') `
+        -RedirectStandardOutput $logFile `
+        -RedirectStandardError "$logFile.err" `
+        -Wait -PassThru -NoNewWindow
+).ExitCode
+
+if ($exitCode -ne 0) {
+    # Route to alert layer. Replace the Send-MailMessage with whatever
+    # the operator's alerting backbone is (Seq, Pushover, PagerDuty).
+    Write-Error "pgbackrest $Type backup failed (exit $exitCode); see $logFile"
+    exit $exitCode
+}
+
+Write-Host "pgbackrest $Type backup OK; log: $logFile"
+exit 0
+```
+
+`C:\PgBackRest\Register-Tasks.ps1` (run once as Administrator):
+
+```powershell
+$scriptPath = 'C:\PgBackRest\Run-Backup.ps1'
+
+# Full backup, Sunday 02:00 UTC.
+$fullAction  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -Type full"
+$fullTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 2am
+Register-ScheduledTask -TaskName 'pgbackrest-nickerp-full' `
+    -Action $fullAction -Trigger $fullTrigger `
+    -User 'SYSTEM' -RunLevel Highest -Force
+
+# Incremental backup, every 6 hours.
+$incrAction  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -Type incr"
+$incrTrigger = New-ScheduledTaskTrigger -Daily -At 12am
+$incrTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At 12am `
+    -RepetitionInterval (New-TimeSpan -Hours 6) `
+    -RepetitionDuration (New-TimeSpan -Days 365)).Repetition
+Register-ScheduledTask -TaskName 'pgbackrest-nickerp-incr' `
+    -Action $incrAction -Trigger $incrTrigger `
+    -User 'SYSTEM' -RunLevel Highest -Force
+```
+
+After registration: `Get-ScheduledTask -TaskName 'pgbackrest-*'` lists
+both tasks. `Get-ScheduledTaskInfo -TaskName 'pgbackrest-nickerp-full'`
+shows last run + last result; integrate with §10 monitoring.
+
+#### 6.3.3 Native Windows v1 posture (§5A.4 — future)
+
+When upstream pgbackrest ships a production-ready Windows binary,
+swap `wsl.exe -u postgres pgbackrest` in `Run-Backup.ps1` for
+`pgbackrest.exe`. Otherwise the wrapper script + `Register-Tasks.ps1`
+shape stays identical.
 
 ### 6.4 Ongoing verification
 
-After cron runs for a week, `pgbackrest info` should show ~7
-incrementals chained off a single full. The §10 monitoring alerts
-fire if this stops being true.
+After cron / scheduled tasks run for a week, `pgbackrest info` should
+show ~7 incrementals chained off a single full. The §10 monitoring
+alerts fire if this stops being true.
+
+For the §5A.2 recommended posture, run `pgbackrest info` on the
+**Linux backup VM** — the Windows host has no pgbackrest install in
+that posture. For the §5A.3 / §5A.4 postures, run it on the Windows
+host (via `wsl.exe -u postgres pgbackrest --stanza=nickerp info` for
+WSL2 or `pgbackrest.exe info` for native).
 
 ## 7. PITR restore procedure
 

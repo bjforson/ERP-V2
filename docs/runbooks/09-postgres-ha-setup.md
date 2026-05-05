@@ -297,6 +297,13 @@ dir. Two reasons:
   point in case §5.6 fails halfway and you need to roll back the
   primary's WAL position.
 
+If the primary is on Windows, the §5.5 invocation depends on the
+pgbackrest posture per
+[`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+§5A.5. Recommended (SSH-Linux backup host) runs the backup on the
+Linux backup VM; WSL2 v0 runs it via `wsl.exe -u postgres pgbackrest
+…` on the prod host; native v1 runs `pgbackrest.exe …`.
+
 ### 5.6 Initialise standby — `pg_basebackup`
 
 On the **standby** box, with Postgres stopped:
