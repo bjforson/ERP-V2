@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NickERP.Inspection.Application.AnalysisServices;
 using NickERP.Inspection.Application.Completeness;
+using NickERP.Inspection.Application.Detection;
 using NickERP.Inspection.Application.Downloads;
 using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Application.Icums;
@@ -232,6 +233,14 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.CompletenessService>(
 builder.Services.AddNickErpInspectionSla(builder.Configuration);
 builder.Services.AddNickErpInspectionSlaDbProvider();
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.SlaDashboardService>();
+
+// Sprint 31 / B5.2 — cross-record-scan detector + admin service.
+// Detector reads scan + document state for multi-subject hints;
+// service drives the analyst confirm/dismiss/split workflow.
+// (CaseWorkflowService registered earlier; CrossRecordScanService
+// depends on it for the SplitCaseAsync hand-off.)
+builder.Services.AddNickErpInspectionDetection();
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.CrossRecordScanService>();
 
 // §6.5 admin actions — Approve / Reject for ScannerThresholdProfile.
 // Mirrors CaseWorkflowService — pages call this so the audit emission
