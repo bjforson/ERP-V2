@@ -16,6 +16,7 @@ using NickERP.Inspection.Application.Thresholds;
 using NickERP.Inspection.Application.Validation;
 using NickERP.Inspection.Application.Workers;
 using NickERP.Inspection.Database;
+using NickERP.Inspection.Webhooks.Abstractions;
 using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Web.Components;
 using NickERP.Inspection.Web.Endpoints;
@@ -439,6 +440,29 @@ builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>());
 builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>());
+
+// ---------------------------------------------------------------------------
+// Sprint 47 / Phase B — outbound webhook dispatcher. Reads new
+// audit.events rows whose EventType matches the WebhookEventTypes
+// vocabulary, builds a WebhookEvent, and invokes every registered
+// IOutboundWebhookAdapter per (tenant, adapter) per tick. Per-(tenant,
+// adapter) cursors live in inspection.webhook_cursors so each adapter
+// advances independently.
+//
+// AddNickErpInspectionWebhooks is a no-op today (no adapter projects
+// ship with v2 pre-pilot); the dispatcher discovers any adapter
+// contributed by a plugin assembly via IPluginRegistry.GetContributedTypes
+// at runtime. Default-disabled per Sprint 24 architectural decision;
+// opt-in per environment via Inspection:Workers:WebhookDispatch:Enabled=true.
+// ---------------------------------------------------------------------------
+builder.Services.AddNickErpInspectionWebhooks();
+builder.Services.Configure<WebhookDispatchOptions>(
+    builder.Configuration.GetSection(WebhookDispatchOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.WebhookDispatchWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.WebhookDispatchWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.WebhookDispatchWorker>());
 
 // ---------------------------------------------------------------------------
 // Sprint 33 / B7 — reports + diagnostics services. Both scoped because

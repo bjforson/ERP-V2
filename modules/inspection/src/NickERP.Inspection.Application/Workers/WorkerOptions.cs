@@ -314,3 +314,47 @@ public sealed class SlaStateRefresherOptions : WorkerOptionsBase
     /// </summary>
     public new TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
 }
+
+/// <summary>
+/// Sprint 47 / Phase B — options for <c>WebhookDispatchWorker</c>. The
+/// worker reads new <c>audit.events</c> rows whose <c>EventType</c>
+/// matches the <c>WebhookEventTypes</c> standard vocabulary, builds a
+/// <c>WebhookEvent</c>, and invokes every registered
+/// <c>IOutboundWebhookAdapter</c> per tenant per tick. Per-(TenantId,
+/// AdapterName) cursors live in <c>inspection.webhook_cursors</c> so
+/// each adapter advances independently.
+///
+/// <para>
+/// <b>Default-disabled.</b> Per Sprint 24 architectural decision,
+/// <see cref="WorkerOptionsBase.Enabled"/> defaults to <c>false</c>;
+/// operators opt in at deploy time once a host wires
+/// <c>IOutboundWebhookAdapter</c> plugins. Until then the worker
+/// returns immediately on start.
+/// </para>
+/// </summary>
+public sealed class WebhookDispatchOptions : WorkerOptionsBase
+{
+    /// <summary>Section root binding key.</summary>
+    public const string SectionName = "Inspection:Workers:WebhookDispatch";
+
+    /// <summary>
+    /// Override poll interval. Default 30 seconds — webhook dispatch
+    /// is intentionally near-real-time; longer than 1 minute risks
+    /// downstream subscribers complaining about freshness, shorter
+    /// than 30s starts to look like a tight loop on idle tenants. The
+    /// per-tick cost is one indexed query per adapter per tenant +
+    /// one outbound HTTP call per new event, so 30s holds even on a
+    /// 100-tenant deploy with multiple adapters.
+    /// </summary>
+    public new TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Maximum events to dispatch per (tenant, adapter) per cycle.
+    /// Hard cap; unbounded fan-out over a deep backlog (e.g. after a
+    /// long adapter outage) would burn memory + downstream rate
+    /// limits. Default 100. The cursor advances batch-by-batch so a
+    /// 10k-event backlog drains over 100 ticks (≈50 minutes at the
+    /// default poll interval) — not instant, but bounded + observable.
+    /// </summary>
+    public int BatchLimit { get; set; } = 100;
+}
