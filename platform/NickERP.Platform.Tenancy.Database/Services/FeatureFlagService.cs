@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NickERP.Platform.Audit;
@@ -75,6 +76,14 @@ public sealed class FeatureFlagService : IFeatureFlagService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(flagKey);
         var normalised = NormaliseKey(flagKey);
+        // Sprint 49 / FU-feature-flag-key-validation — defence-in-depth.
+        // The portal admin form runs the same regex client-side, but a
+        // crafted POST or any other caller (tests, scripts, future API)
+        // must also be rejected if the key doesn't match the curated
+        // shape. We validate AFTER NormaliseKey so trailing whitespace
+        // and casing aren't the cause of a rejection.
+        if (!IsValidFlagKey(normalised))
+            throw new InvalidFeatureFlagKeyException(normalised);
 
         var existing = await _db.FeatureFlags
             .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlagKey == normalised, ct);
@@ -176,4 +185,33 @@ public sealed class FeatureFlagService : IFeatureFlagService
 
     private static string NormaliseKey(string flagKey)
         => flagKey.Trim().ToLowerInvariant();
+
+    /// <summary>
+    /// Sprint 49 / FU-feature-flag-key-validation — curated regex for
+    /// feature flag keys. Lowercase ASCII letter start, alphanumerics +
+    /// underscores in each segment, dot-separated, at least one dot.
+    ///
+    /// <para>Examples accepted: <c>portal.test.flag</c>,
+    /// <c>inspection.cross_record_split.auto_resolve</c>,
+    /// <c>x.y</c>.</para>
+    ///
+    /// <para>Examples rejected: <c>UPPERCASE.flag</c>,
+    /// <c>flag-with-dash.x</c>, <c>singleSegment</c>,
+    /// <c>1leadingdigit.flag</c>, <c>.empty.first</c>.</para>
+    /// </summary>
+    public const string FlagKeyPattern = @"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$";
+
+    private static readonly Regex FlagKeyRegex = new(
+        FlagKeyPattern,
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(50));
+
+    /// <summary>
+    /// Returns true when <paramref name="flagKey"/> (already normalised
+    /// — trimmed + lowercased) matches the curated
+    /// <see cref="FlagKeyPattern"/>. Exposed for tests + the admin
+    /// page's client-side validation.
+    /// </summary>
+    public static bool IsValidFlagKey(string flagKey)
+        => !string.IsNullOrWhiteSpace(flagKey) && FlagKeyRegex.IsMatch(flagKey);
 }

@@ -63,3 +63,31 @@ public sealed record FeatureFlagDto(
     bool Enabled,
     DateTimeOffset UpdatedAt,
     Guid? UpdatedByUserId);
+
+/// <summary>
+/// Sprint 49 / FU-feature-flag-key-validation — thrown by
+/// <see cref="IFeatureFlagService.SetAsync"/> when the supplied
+/// flag-key does not match the curated regex
+/// <c>^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$</c>.
+///
+/// <para>The same regex backs the Razor admin form's client-side
+/// validation; this exception is the server-side defence-in-depth so a
+/// crafted POST cannot bypass the UI check. The keys store stays
+/// small + scannable: lowercase alphanumeric, underscore-allowed
+/// segments, dot-separated, must have at least one dot.</para>
+/// </summary>
+public sealed class InvalidFeatureFlagKeyException : ArgumentException
+{
+    /// <summary>The rejected key (already trimmed + lowercased).</summary>
+    public string FlagKey { get; }
+
+    public InvalidFeatureFlagKeyException(string flagKey)
+        : base(
+            $"Invalid feature flag key '{flagKey}'. Expected pattern " +
+            "'^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$' " +
+            "(lowercase letters, digits, underscores; dot-separated; at least one dot).",
+            paramName: nameof(flagKey))
+    {
+        FlagKey = flagKey;
+    }
+}

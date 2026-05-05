@@ -1,13 +1,16 @@
+@page "/"
 @page "/launcher"
 @* Sprint 29 — three-module co-deploy launcher. Tile grid driven by
    IModuleRegistry; one tile per module enabled for the caller's tenant.
    Click → opens the module BaseUrl in a new tab so the launcher window
    stays available for cross-module hops.
 
-   The launcher coexists with Home.razor at "/" — Home keeps the legacy
-   stats grid + platform-tools row; Launcher is the streamlined
-   module-only view linked from Home and from each module's
-   SharedHeader back-to-launcher link. *@
+   Sprint 49 / FU-launcher-route — Launcher is now the root route ("/")
+   so a fresh sign-in lands on the streamlined module grid. The dotted
+   stats + platform-tools view that used to live at "/" has moved to
+   "/dashboard" (Home.razor); the Launcher remains reachable at
+   "/launcher" for backward-compat with anything that hard-coded that
+   path. *@
 @attribute [Authorize]
 @using NickERP.Platform.Tenancy
 @using NickERP.Portal.Services.Modules

@@ -636,3 +636,172 @@ code {
     font-weight: 700;
     margin-top: 4px;
 }
+
+/* ---------------------------------------------------------------------
+ * Sprint 49 / FU-reviews-css — visual selectors for the Sprint 34
+ * review surfaces (MyQueue, BlReview, AiTriage, AuditReview). All
+ * purely cosmetic — the markup + behaviour are already shipped; this
+ * block adds the priority hue, badge shadow, monospace field grid, and
+ * is-mine / is-other claim distinction the original Sprint 34 brief
+ * deferred. Tokens are the existing inspection palette; no new design
+ * tokens introduced.
+ * ------------------------------------------------------------------- */
+
+/* MyQueue priority pill — rounded chip with priority-color hue. The
+   ReviewQueue enum lowercases to is-standard / is-highpriority /
+   is-urgent / is-exception / is-postclearance (see MyQueue.razor's
+   QueueBadge helper). */
+.inspection-pill-queue {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: var(--nickerp-radius-full);
+    font-size: var(--nickerp-font-size-xs);
+    font-weight: var(--nickerp-font-weight-medium);
+    background: var(--nickerp-color-bg-elevated);
+    color: var(--nickerp-color-text);
+    border: 1px solid var(--nickerp-color-border);
+    line-height: 1.4;
+    box-shadow: 0 1px 1px rgba(15, 23, 42, 0.04);
+}
+.inspection-pill-queue.is-standard      { background: rgba(100, 116, 139, 0.12); color: #475569;   border-color: rgba(100, 116, 139, 0.30); }
+.inspection-pill-queue.is-highpriority  { background: rgba(202, 138, 4, 0.12);   color: var(--nickerp-color-warning); border-color: rgba(202, 138, 4, 0.35); }
+.inspection-pill-queue.is-urgent        { background: rgba(220, 38, 38, 0.12);   color: var(--nickerp-color-danger);  border-color: rgba(220, 38, 38, 0.40); }
+.inspection-pill-queue.is-exception     { background: rgba(124, 58, 237, 0.12);  color: #7c3aed;   border-color: rgba(124, 58, 237, 0.35); }
+.inspection-pill-queue.is-postclearance { background: rgba(13, 148, 136, 0.12);  color: #0d9488;   border-color: rgba(13, 148, 136, 0.35); }
+
+/* MyQueue claim distinction — the row's "Claim" cell renders one of
+   inspection-pill.is-mine (green halo) or inspection-pill.is-other
+   (warning halo). Generic .inspection-pill chip with the claim hint as
+   the modifier. */
+.inspection-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--nickerp-radius-full);
+    font-size: var(--nickerp-font-size-xs);
+    font-weight: var(--nickerp-font-weight-medium);
+    background: var(--nickerp-color-bg-elevated);
+    color: var(--nickerp-color-text);
+    border: 1px solid var(--nickerp-color-border);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+.inspection-pill.is-mine {
+    background: rgba(22, 163, 74, 0.12);
+    color: var(--nickerp-color-success);
+    border-color: rgba(22, 163, 74, 0.40);
+}
+.inspection-pill.is-other {
+    background: rgba(202, 138, 4, 0.10);
+    color: var(--nickerp-color-warning);
+    border-color: rgba(202, 138, 4, 0.35);
+    /* Display the partial user id chip in monospace so the eight-char
+       prefix lines up across rows. */
+    font-family: var(--nickerp-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+/* BlReview field grid — table modifier that switches the "Reported
+   value" + "Field" cells to monospace so the analyst can scan keys +
+   values without alignment drift. The discrepancy column stays
+   proportional. */
+.inspection-bl-fields td:nth-child(1),
+.inspection-bl-fields td:nth-child(2) {
+    font-family: var(--nickerp-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: var(--nickerp-font-size-sm);
+}
+.inspection-bl-fields td:nth-child(3) {
+    width: 5rem;
+    text-align: center;
+}
+.inspection-bl-fields td:nth-child(4) input {
+    width: 100%;
+}
+.inspection-bl-fields tbody tr:hover {
+    background: rgba(15, 23, 42, 0.02);
+}
+
+/* AiTriage verdict table — verdict + severity columns share the
+   monospace treatment (so confidence + severity strings line up); the
+   "Your call" select gets a slim-width pill so the row stays compact. */
+.inspection-ai-verdicts td:nth-child(1),
+.inspection-ai-verdicts td:nth-child(3),
+.inspection-ai-verdicts td:nth-child(4) {
+    font-family: var(--nickerp-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: var(--nickerp-font-size-sm);
+}
+.inspection-ai-verdicts td:nth-child(5) select {
+    min-width: 7rem;
+}
+.inspection-ai-verdicts tbody tr:hover {
+    background: rgba(15, 23, 42, 0.02);
+}
+
+/* AuditReview prior-reviews table — supervisor scanning a stack of
+   prior analyst reviews. Compact rows + zebra striping + a subtle
+   shadow on the table itself so the audit feels distinct from the
+   ordinary inspection-table. */
+.inspection-prior-reviews {
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.inspection-prior-reviews tbody tr:nth-child(even) {
+    background: rgba(15, 23, 42, 0.015);
+}
+.inspection-prior-reviews tbody tr:hover {
+    background: rgba(15, 23, 42, 0.04);
+}
+.inspection-prior-reviews td {
+    font-size: var(--nickerp-font-size-sm);
+}
+
+/* Sprint 49 / FU-reviews-css — claim banner alias that mirrors the
+   .inspection-pill.is-mine / is-other treatment for the Sprint 14
+   claim-badge banner on /cases/{id}. Keeps the visual story consistent
+   between the queue (small chip) and the case-detail (banner). */
+.inspection-claim-badge.is-mine {
+    background: rgba(22, 163, 74, 0.10);
+    border-color: rgba(22, 163, 74, 0.45);
+}
+.inspection-claim-badge.is-other {
+    background: rgba(202, 138, 4, 0.10);
+    border-color: rgba(202, 138, 4, 0.45);
+}
+
+/* ---------------------------------------------------------------------
+ * Sprint 49 / FU-sla-trend-sparkline — server-rendered SVG sparkline on
+ * /admin/sla. Three coloured polylines stacked on the same baseline:
+ * opened (info blue), closed (success green), breached (danger red).
+ * The SVG element scales to the card width; aspect ratio is free
+ * (preserveAspectRatio="none") so it fills the card.
+ * ------------------------------------------------------------------- */
+.inspection-sparkline {
+    display: block;
+    width: 100%;
+    height: 50px;
+    margin-top: var(--nickerp-space-2);
+}
+.inspection-sparkline-opened   { stroke: var(--nickerp-color-info, #0284c7); }
+.inspection-sparkline-closed   { stroke: var(--nickerp-color-success, #16a34a); }
+.inspection-sparkline-breached { stroke: var(--nickerp-color-danger, #dc2626); }
+
+.inspection-sparkline-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--nickerp-space-2);
+    list-style: none;
+    padding: 0;
+    margin: var(--nickerp-space-2) 0 0 0;
+    font-size: var(--nickerp-font-size-xs);
+    color: var(--nickerp-color-text-muted);
+}
+.inspection-sparkline-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.inspection-sparkline-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 2px;
+    border-radius: 1px;
+}
+.inspection-sparkline-swatch.is-opened   { background: var(--nickerp-color-info, #0284c7); }
+.inspection-sparkline-swatch.is-closed   { background: var(--nickerp-color-success, #16a34a); }
+.inspection-sparkline-swatch.is-breached { background: var(--nickerp-color-danger, #dc2626); }

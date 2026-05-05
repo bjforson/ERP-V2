@@ -8,6 +8,13 @@
  * dev-bypass principal in development. No HttpContext dependency, so the
  * component renders cleanly under bunit.
  *
+ * Sprint 49 / FU-inspection-topnav-fold — extended with NotificationsSlot
+ * + AppSwitcherSlot named render-fragment slots so module hosts can fold
+ * their bell + app-switcher into the single header surface, eliminating
+ * the doubled TopNav above SharedHeader. When a slot is null the slot's
+ * region simply renders nothing (preserves the existing chrome for
+ * modules that haven't migrated yet).
+ *
  * Module label resolution order:
  *   1. The ModuleId/ModuleName component parameters (per-render override).
  *   2. The injected IModuleContext (host-configured at startup).
@@ -33,6 +40,24 @@
         </div>
 
         <div class="nickerp-shared-header-actions">
+            @* Sprint 49 / FU-inspection-topnav-fold — slots render in
+               app-switcher → notifications → identity order, mirroring
+               the legacy TopNav's right-aligned action chevron. Empty
+               slots render nothing so modules that haven't migrated yet
+               keep their existing chrome. *@
+            @if (AppSwitcherSlot is not null)
+            {
+                <div class="nickerp-shared-header-slot nickerp-shared-header-app-switcher">
+                    @AppSwitcherSlot
+                </div>
+            }
+            @if (NotificationsSlot is not null)
+            {
+                <div class="nickerp-shared-header-slot nickerp-shared-header-notifications">
+                    @NotificationsSlot
+                </div>
+            }
+
             @if (_signedIn)
             {
                 <details class="nickerp-shared-header-identity">
@@ -80,6 +105,24 @@
     /// logout endpoint — same default as <c>UserMenu</c>.
     /// </summary>
     [Parameter] public string SignOutHref { get; set; } = "/cdn-cgi/access/logout";
+
+    /// <summary>
+    /// Sprint 49 / FU-inspection-topnav-fold — optional notifications
+    /// bell slot. When supplied, renders before the identity dropdown
+    /// in the right-aligned actions row. Modules wire their existing
+    /// notifications-bell component here so they can drop the legacy
+    /// TopNav from MainLayout.
+    /// </summary>
+    [Parameter] public RenderFragment? NotificationsSlot { get; set; }
+
+    /// <summary>
+    /// Sprint 49 / FU-inspection-topnav-fold — optional cross-module
+    /// app-switcher slot. Rendered first in the actions row so the
+    /// switcher anchor sits to the left of the bell + identity, the
+    /// same position the legacy TopNav placed it. Empty slot renders
+    /// nothing.
+    /// </summary>
+    [Parameter] public RenderFragment? AppSwitcherSlot { get; set; }
 
     private bool _signedIn;
     private string _displayName = "Authenticated";

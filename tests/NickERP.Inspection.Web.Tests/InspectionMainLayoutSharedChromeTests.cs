@@ -120,6 +120,31 @@ public sealed class InspectionMainLayoutSharedChromeTests : IDisposable
         layout.Markup.Should().Contain("href=\"/admin/analysis-services\"");
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void MainLayout_RendersSingleHeaderSurface_AfterSprint49Fold()
+    {
+        // Sprint 49 / FU-inspection-topnav-fold — the legacy TopNav has
+        // been removed; only the SharedHeader chrome remains. Two
+        // assertions encode the fold:
+        //   1. No `nickerp-topnav` class hook (the legacy TopNav's
+        //      distinctive marker) is present in the rendered markup.
+        //   2. Exactly one `<header class="nickerp-shared-header">` is
+        //      present, and it carries the bell slot — the bell's
+        //      `nickerp-bell-link` aria-labelled anchor must live inside
+        //      the shared header rather than alongside it.
+        var layout = _ctx.RenderComponent<MainLayout>();
+
+        layout.Markup.Should().NotContain("nickerp-topnav");
+        layout.FindAll("header.nickerp-shared-header").Count.Should().Be(1);
+
+        // The notifications bell anchors live inside the shared header
+        // surface — the `nickerp-shared-header-notifications` slot
+        // wrapper proves the fold actually slots into the new chrome.
+        layout.Markup.Should().Contain("nickerp-shared-header-notifications");
+        layout.Markup.Should().Contain("nickerp-bell-link");
+    }
+
     private sealed class FakeAuthStateProvider : AuthenticationStateProvider
     {
         public override Task<AuthenticationState> GetAuthenticationStateAsync()

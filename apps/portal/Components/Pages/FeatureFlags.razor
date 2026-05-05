@@ -14,6 +14,11 @@
 @inject ITenantContext TenantCtx
 @inject AuthenticationStateProvider AuthState
 
+@* Sprint 49 / FU-feature-flag-key-validation — UI-side regex match
+   plus a defence-in-depth check inside FeatureFlagService.SetAsync.
+   The pattern + the admin-page validation copy share one source of
+   truth via the constants below. *@
+
 <PageTitle>Feature flags — NickERP Portal</PageTitle>
 
 <header class="portal-page-header">
@@ -58,8 +63,26 @@ else
                     </label>
                     <label>
                         <span>Flag key</span>
-                        <InputText class="portal-input" @bind-Value="_form.FlagKey"
+                        @* Sprint 49 / FU-feature-flag-key-validation —
+                           inline regex validation. The save button stays
+                           disabled until the key matches the curated
+                           pattern (lowercase, dot-separated, at least
+                           one dot). The portal-input-error class is
+                           applied when the user has typed a value that
+                           fails the regex; an empty input shows no
+                           error (the disabled button is sufficient). *@
+                        <InputText class="@FlagKeyInputClass"
+                                   @bind-Value="_form.FlagKey"
+                                   @bind-Value:after="ValidateFlagKey"
                                    placeholder="module.feature.aspect" />
+                        @if (_keyValidity == KeyValidity.Invalid)
+                        {
+                            <span class="portal-form-error">
+                                Flag keys must be lowercase + digits + underscores,
+                                dot-separated, with at least one dot
+                                (e.g. <code>module.feature.aspect</code>).
+                            </span>
+                        }
                     </label>
                     <label>
                         <span>Enabled</span>
@@ -67,7 +90,9 @@ else
                     </label>
                 </div>
                 <div class="portal-form-actions">
-                    <button type="submit" class="portal-button portal-button-primary">Save</button>
+                    <button type="submit"
+                            class="portal-button portal-button-primary"
+                            disabled="@(_keyValidity != KeyValidity.Valid)">Save</button>
                 </div>
             </EditForm>
         </div>
@@ -149,9 +174,28 @@ else
             "Override Email:Provider — force the noop / filesystem-outbox sender."),
     };
 
+    /// <summary>
+    /// Sprint 49 / FU-feature-flag-key-validation — the same pattern
+    /// the server-side <c>FeatureFlagService.IsValidFlagKey</c> enforces.
+    /// Kept in lock-step with the server constant; if you change one,
+    /// change both.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex FlagKeyRegex =
+        new("^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+            System.Text.RegularExpressions.RegexOptions.Compiled,
+            TimeSpan.FromMilliseconds(50));
+
+    private enum KeyValidity { Empty, Valid, Invalid }
+
     private List<FeatureFlagDto>? _rows;
     private string? _message;
     private FlagForm _form = new();
+    private KeyValidity _keyValidity = KeyValidity.Empty;
+
+    private string FlagKeyInputClass =>
+        _keyValidity == KeyValidity.Invalid
+            ? "portal-input portal-input-error"
+            : "portal-input";
 
     /// <inheritdoc />
     protected override async Task OnInitializedAsync()
@@ -171,7 +215,30 @@ else
         if (!string.IsNullOrEmpty(_form.SelectedKey))
         {
             _form.FlagKey = _form.SelectedKey;
+            ValidateFlagKey();
         }
+    }
+
+    /// <summary>
+    /// Sprint 49 / FU-feature-flag-key-validation — recompute the
+    /// validity tri-state on every key edit. Empty input shows no
+    /// error (the user hasn't typed anything yet) but disables Save.
+    /// </summary>
+    private void ValidateFlagKey()
+    {
+        var trimmed = _form.FlagKey?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            _keyValidity = KeyValidity.Empty;
+            return;
+        }
+        // Mirror the server-side normalisation (lowercase) so the user
+        // can type "Module.Feature.X" and see it accepted; the form
+        // submits the raw value and the service normalises the same way.
+        var normalised = trimmed.ToLowerInvariant();
+        _keyValidity = FlagKeyRegex.IsMatch(normalised)
+            ? KeyValidity.Valid
+            : KeyValidity.Invalid;
     }
 
     private async Task SaveAsync()

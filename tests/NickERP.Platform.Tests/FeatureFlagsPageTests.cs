@@ -62,6 +62,58 @@ public sealed class FeatureFlagsPageTests : IDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
+    public void FeatureFlags_SaveButton_DisabledOnEmptyKey()
+    {
+        // Sprint 49 / FU-feature-flag-key-validation — first render
+        // has _form.FlagKey empty so the save button is disabled and
+        // no error message renders.
+        var cut = _ctx.RenderComponent<FeatureFlags>();
+
+        var save = cut.Find("button[type=submit]");
+        save.HasAttribute("disabled").Should().BeTrue(
+            because: "Sprint 49 disables Save until the user types a valid key");
+        cut.Markup.Should().NotContain("portal-form-error");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void FeatureFlags_SaveButton_DisabledOnInvalidKey()
+    {
+        // Sprint 49 / FU-feature-flag-key-validation — typing a key
+        // that doesn't match the regex shows the inline error and
+        // keeps Save disabled. Bunit's @bind-Value triggers the
+        // ValidateFlagKey method on input change.
+        var cut = _ctx.RenderComponent<FeatureFlags>();
+
+        var input = cut.Find("input[placeholder='module.feature.aspect']");
+        // Type a single-segment key — fails the dot requirement.
+        input.Change("badkey");
+
+        var save = cut.Find("button[type=submit]");
+        save.HasAttribute("disabled").Should().BeTrue();
+        cut.Markup.Should().Contain("portal-form-error");
+        cut.Markup.Should().Contain("portal-input-error");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void FeatureFlags_SaveButton_EnabledOnValidKey()
+    {
+        // Typing a valid key flips _keyValidity to Valid → Save is
+        // enabled and the inline error is gone.
+        var cut = _ctx.RenderComponent<FeatureFlags>();
+
+        var input = cut.Find("input[placeholder='module.feature.aspect']");
+        input.Change("portal.test.flag");
+
+        var save = cut.Find("button[type=submit]");
+        save.HasAttribute("disabled").Should().BeFalse();
+        cut.Markup.Should().NotContain("portal-form-error");
+        cut.Markup.Should().NotContain("portal-input-error");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public void FeatureFlags_RendersPersistedRow()
     {
         using (var scope = _ctx.Services.CreateScope())

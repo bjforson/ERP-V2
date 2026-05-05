@@ -1,4 +1,9 @@
-@page "/"
+@page "/dashboard"
+@* Sprint 49 / FU-launcher-route — moved from "/" to "/dashboard". The
+   root route now resolves to Launcher.razor (streamlined module grid).
+   This page keeps the legacy stats tiles + platform-tools rollup for
+   admins/operators who want the at-a-glance view. Both routes coexist;
+   modules' SharedHeader back-to-launcher link still points at "/". *@
 @attribute [Authorize]
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Platform.Audit.Database
