@@ -80,6 +80,16 @@
     font-size: 0.85rem;
 }
 
+/* Sprint 49 / FU-inspection-topnav-fold — slot wrappers for the
+   notifications bell + cross-module app-switcher. The slot wrapper is
+   a no-op flex container (children inherit colour + spacing from the
+   actions row); we only need a stable hook so module CSS can target
+   the slot if it needs to. */
+.nickerp-shared-header-slot {
+    display: inline-flex;
+    align-items: center;
+}
+
 .nickerp-shared-header-identity {
     position: relative;
 }

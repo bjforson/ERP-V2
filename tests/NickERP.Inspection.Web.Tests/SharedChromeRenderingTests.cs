@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Bunit;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using NickERP.Platform.Web.Shared.Components;
@@ -82,6 +83,62 @@ public sealed class SharedChromeRenderingTests : IDisposable
         SharedHeader.ComputeInitials("alice m bondegaard").Should().Be("AB");
         SharedHeader.ComputeInitials("").Should().Be("?");
         SharedHeader.ComputeInitials("   ").Should().Be("?");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void SharedHeader_NotificationsSlot_RendersInActionsRow()
+    {
+        // Sprint 49 / FU-inspection-topnav-fold — when a host supplies
+        // a NotificationsSlot the wrapper hook is present and the slot
+        // content sits inside the actions div, before the identity
+        // dropdown. Empty slot ⇒ no wrapper rendered (covered by the
+        // existing slot-less render assertions above).
+        var header = _ctx.RenderComponent<SharedHeader>(ps => ps
+            .Add<RenderFragment>(p => p.NotificationsSlot, builder =>
+            {
+                builder.OpenElement(0, "div");
+                builder.AddAttribute(1, "class", "test-bell");
+                builder.AddContent(2, "BELL_3");
+                builder.CloseElement();
+            }));
+
+        header.Markup.Should().Contain("nickerp-shared-header-notifications");
+        header.Markup.Should().Contain("test-bell");
+        header.Markup.Should().Contain("BELL_3");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void SharedHeader_AppSwitcherSlot_RendersInActionsRow()
+    {
+        // Sprint 49 / FU-inspection-topnav-fold — same shape as the
+        // notifications-slot test, but for the app-switcher slot.
+        var header = _ctx.RenderComponent<SharedHeader>(ps => ps
+            .Add<RenderFragment>(p => p.AppSwitcherSlot, builder =>
+            {
+                builder.OpenElement(0, "div");
+                builder.AddAttribute(1, "class", "test-switcher");
+                builder.AddContent(2, "SWITCH_x");
+                builder.CloseElement();
+            }));
+
+        header.Markup.Should().Contain("nickerp-shared-header-app-switcher");
+        header.Markup.Should().Contain("test-switcher");
+        header.Markup.Should().Contain("SWITCH_x");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void SharedHeader_SlotsAbsent_RendersNoSlotWrappers()
+    {
+        // Defensive: a SharedHeader with no slot fragments does not
+        // emit empty slot wrappers (we use a null check, not always-on
+        // markup) so modules that haven't migrated keep clean chrome.
+        var header = _ctx.RenderComponent<SharedHeader>();
+
+        header.Markup.Should().NotContain("nickerp-shared-header-notifications");
+        header.Markup.Should().NotContain("nickerp-shared-header-app-switcher");
     }
 
     [Fact]

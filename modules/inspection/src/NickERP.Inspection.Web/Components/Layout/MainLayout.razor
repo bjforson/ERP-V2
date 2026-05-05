@@ -1,22 +1,21 @@
 @inherits LayoutComponentBase
 
-@* Sprint 29 — three-module co-deploy chrome. SharedHeader sits above
-   the legacy TopNav so the suite reads as one product (back-to-launcher
-   link + identity dropdown). The legacy TopNav stays for now — its
-   notifications-bell + AppSwitcher slots are too valuable to drop in
-   one sprint, and a future iteration can fold them into the shared
-   chrome's slots. SharedFooter anchors the bottom with the version
-   badge + portal link. *@
-<SharedHeader ModuleId="inspection" />
-
-<TopNav AppName="Inspection v2" AppHomeHref="/" SearchEnabled="false">
+@* Sprint 29 → Sprint 49 fold — SharedHeader is now the single header
+   surface. The legacy TopNav above it has been folded in: the
+   notifications bell slot used to live on the TopNav now plugs into
+   SharedHeader.NotificationsSlot. Result: one chrome bar instead of
+   two stacked bars (FU-inspection-topnav-fold).
+   SharedFooter still anchors the bottom with the version badge + portal
+   link. *@
+<SharedHeader ModuleId="inspection">
     <NotificationsSlot>
         @* Sprint 8 P3 — overrides the placeholder shared bell with one
            backed by audit.notifications. Shows unread count, links to
-           /notifications. *@
+           /notifications. Sprint 49 — slotted into SharedHeader so the
+           legacy TopNav can be removed entirely. *@
         <NotificationsBell />
     </NotificationsSlot>
-</TopNav>
+</SharedHeader>
 
 <div class="inspection-shell">
     <nav class="inspection-sidenav">
