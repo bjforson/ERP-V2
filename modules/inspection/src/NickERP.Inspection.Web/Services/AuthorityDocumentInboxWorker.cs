@@ -48,6 +48,19 @@ namespace NickERP.Inspection.Web.Services;
 /// </para>
 ///
 /// <para>
+/// <b>Sprint 50 / FU-inbox-multi-tenant — per-tenant subfolder
+/// routing.</b> Sprint 24 picked the first active tenant for every
+/// file; that worked for single-tenant deploys but a multi-tenant pilot
+/// needs each tenant's drop isolated. The new shape supports
+/// <c>&lt;DropFolder&gt;/&lt;TenantCode&gt;/&lt;Subfolder&gt;/*.json</c>
+/// — files under <c>tenant-a/ContainerData/</c> route to the tenant
+/// whose <see cref="Tenant.Code"/> matches <c>tenant-a</c>. When NO
+/// tenant-shaped subdirectories exist under the drop root, the worker
+/// falls back to the Sprint 24 single-tenant shape so existing deploys
+/// keep working unchanged. Unknown tenant codes log a warning + skip.
+/// </para>
+///
+/// <para>
 /// Default-disabled per Sprint 24 architectural decision. A fresh
 /// deploy without a drop folder configured logs once + idles.
 /// </para>
@@ -136,6 +149,24 @@ public sealed class AuthorityDocumentInboxWorker : BackgroundService, IBackgroun
     /// <summary>
     /// One scan cycle. Walks the configured subfolders + reads each new
     /// file. Returns the count of files ingested. Internal for tests.
+    ///
+    /// <para>
+    /// <b>Sprint 50 multi-tenant routing.</b> Two paths:
+    /// <list type="bullet">
+    ///   <item><description><b>Per-tenant subfolders (preferred).</b>
+    ///   When the drop root contains directories whose names match
+    ///   active <see cref="Tenant.Code"/> values, files under
+    ///   <c>&lt;TenantCode&gt;/&lt;ExpectedSubfolder&gt;/*.json</c>
+    ///   route to that tenant. Unknown tenant directories log a
+    ///   warning + skip (don't fall through to the legacy path —
+    ///   that would mis-route the file).</description></item>
+    ///   <item><description><b>Legacy single-tenant.</b> When no
+    ///   tenant-shaped directories exist at the drop root, the worker
+    ///   falls back to the Sprint 24 shape: scan
+    ///   <c>&lt;ExpectedSubfolder&gt;/*.json</c> directly under the
+    ///   root + route every file to the first active tenant.</description></item>
+    /// </list>
+    /// </para>
     /// </summary>
     internal async Task<int> ScanOnceAsync(CancellationToken ct)
     {
@@ -150,27 +181,136 @@ public sealed class AuthorityDocumentInboxWorker : BackgroundService, IBackgroun
             return 0;
         }
 
+        // Resolve every active tenant up front — used by both the
+        // multi-tenant + single-tenant paths.
+        var activeTenants = await ResolveActiveTenantsAsync(ct);
+        if (activeTenants.Count == 0)
+        {
+            _logger.LogWarning(
+                "AuthorityDocumentInboxWorker: no active tenants; cycle no-ops.");
+            return 0;
+        }
+
+        // Sprint 50 / FU-inbox-multi-tenant — detect tenant-shaped
+        // subdirectories. A tenant-shaped subdir is any direct child
+        // of the drop root whose name is a key in the
+        // <see cref="ITenantContext"/>-resolvable tenant code map. Any
+        // direct-child subdir that ISN'T a tenant code is logged + ignored
+        // when we're on the multi-tenant path; the existence of even one
+        // tenant-shaped subdir flips the worker to multi-tenant mode (so
+        // a deploy never accidentally double-ingests a file because both
+        // a tenant subdir + a top-level subdir exist).
+        var directChildDirs = Directory.GetDirectories(opts.DropFolder)
+            .Select(p => new DropChildDir(p, Path.GetFileName(p) ?? string.Empty))
+            .Where(x => !string.IsNullOrEmpty(x.Name))
+            .ToList();
+
+        var tenantsByCode = activeTenants.ToDictionary(t => t.Code,
+            StringComparer.OrdinalIgnoreCase);
+
+        var matchedTenantDirs = directChildDirs
+            .Where(d => tenantsByCode.ContainsKey(d.Name))
+            .ToList();
+
+        if (matchedTenantDirs.Count > 0)
+        {
+            return await ScanMultiTenantAsync(opts, matchedTenantDirs, tenantsByCode, directChildDirs, ct);
+        }
+
+        // Legacy single-tenant: gather files from <root>/<sub>/*.json
+        // and route every file to the first active tenant. The
+        // ResolveTargetTenantAsync helper called from TryIngestFileAsync
+        // does the same thing; we keep this path for backward compat
+        // with single-tenant deploys.
+        return await ScanLegacySingleTenantAsync(opts, ct);
+    }
+
+    /// <summary>
+    /// Sprint 50 / FU-inbox-multi-tenant — multi-tenant scan. Each
+    /// matched tenant directory is treated as a self-contained drop
+    /// root (with the same ExpectedSubfolders convention inside).
+    /// Unknown direct-child directories that don't match any tenant
+    /// code log a warning so the operator can spot a typo + don't
+    /// skip the cycle.
+    /// </summary>
+    private async Task<int> ScanMultiTenantAsync(
+        IcumsFileScannerOptions opts,
+        IReadOnlyList<DropChildDir> matchedTenantDirs,
+        IReadOnlyDictionary<string, TenantDescriptor> tenantsByCode,
+        IReadOnlyList<DropChildDir> directChildDirs,
+        CancellationToken ct)
+    {
+        // Surface unknown tenant dirs so an operator typo isn't silent.
+        foreach (var dir in directChildDirs)
+        {
+            if (tenantsByCode.ContainsKey(dir.Name)) continue;
+            AuthorityDocumentInboxInstruments.UnknownTenantTotal.Add(1,
+                new KeyValuePair<string, object?>("dir_name", dir.Name));
+            _logger.LogWarning(
+                "AuthorityDocumentInboxWorker: drop subdir '{Dir}' does not match any active tenant code; skipping (active codes: {Codes}).",
+                dir.Name, string.Join(",", tenantsByCode.Keys));
+        }
+
+        var ingested = 0;
+        foreach (var tenantDir in matchedTenantDirs)
+        {
+            ct.ThrowIfCancellationRequested();
+            var descriptor = tenantsByCode[tenantDir.Name];
+
+            foreach (var subfolder in opts.ExpectedSubfolders)
+            {
+                ct.ThrowIfCancellationRequested();
+                var subPath = Path.Combine(tenantDir.Path, subfolder);
+                if (!Directory.Exists(subPath)) continue;
+
+                var files = Directory.GetFiles(subPath, "*.json", SearchOption.TopDirectoryOnly);
+                foreach (var filePath in files)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (await TryIngestFileAsync(filePath, descriptor.Id, ct)) ingested++;
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        AuthorityDocumentInboxInstruments.IngestFailedTotal.Add(1);
+                        _logger.LogWarning(ex,
+                            "AuthorityDocumentInboxWorker failed to ingest {File} for tenant={Tenant}; continuing.",
+                            filePath, descriptor.Code);
+                    }
+                }
+            }
+        }
+        return ingested;
+    }
+
+    /// <summary>
+    /// Sprint 24 single-tenant scan path — preserved for backward
+    /// compatibility with deploys that don't use per-tenant subfolders.
+    /// </summary>
+    private async Task<int> ScanLegacySingleTenantAsync(
+        IcumsFileScannerOptions opts,
+        CancellationToken ct)
+    {
         var jsonFiles = new List<string>();
         foreach (var subfolder in opts.ExpectedSubfolders)
         {
             ct.ThrowIfCancellationRequested();
-            var subPath = Path.Combine(opts.DropFolder, subfolder);
+            var subPath = Path.Combine(opts.DropFolder!, subfolder);
             if (!Directory.Exists(subPath)) continue;
             jsonFiles.AddRange(Directory.GetFiles(subPath, "*.json", SearchOption.TopDirectoryOnly));
         }
 
         if (jsonFiles.Count == 0) return 0;
 
-        // Single shared scope for the whole cycle is OK here — the worker
-        // walks tenants below by SetTenant + Close-connection, exactly
-        // like the other workers. We re-resolve per file iteration.
         var ingested = 0;
         foreach (var filePath in jsonFiles)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
-                if (await TryIngestFileAsync(filePath, ct)) ingested++;
+                if (await TryIngestFileAsync(filePath, tenantId: null, ct)) ingested++;
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -184,12 +324,45 @@ public sealed class AuthorityDocumentInboxWorker : BackgroundService, IBackgroun
     }
 
     /// <summary>
+    /// Sprint 50 / FU-inbox-multi-tenant — read every active tenant's
+    /// (Id, Code) pair so the multi-tenant path can resolve a subdir
+    /// name → TenantId in O(1).
+    /// </summary>
+    private async Task<IReadOnlyList<TenantDescriptor>> ResolveActiveTenantsAsync(CancellationToken ct)
+    {
+        using var scope = _services.CreateScope();
+        var sp = scope.ServiceProvider;
+        var tenantsDb = sp.GetRequiredService<TenancyDbContext>();
+        var rows = await tenantsDb.Tenants
+            .AsNoTracking()
+            .Where(t => t.State == TenantState.Active)
+            .OrderBy(t => t.Id)
+            .Select(t => new TenantDescriptor(t.Id, t.Code))
+            .ToListAsync(ct);
+        return rows;
+    }
+
+    /// <summary>Compact (Id, Code) pair surfaced from the tenancy DB once per cycle.</summary>
+    private sealed record TenantDescriptor(long Id, string Code);
+
+    /// <summary>Compact (path, leaf-name) pair for a direct-child subdir of the drop root.</summary>
+    private sealed record DropChildDir(string Path, string Name);
+
+    /// <summary>
     /// Read one file, hash it, find the matching tenant + case (best
     /// effort), persist as <see cref="AuthorityDocument"/>. Returns
     /// true on a clean ingest. Returns false on de-dupe (already
     /// ingested with same content hash).
+    ///
+    /// <para>
+    /// Sprint 50 / FU-inbox-multi-tenant — when
+    /// <paramref name="tenantId"/> is non-null, the file routes to
+    /// that tenant directly (multi-tenant subdir convention). When
+    /// null, the worker falls back to the legacy first-active-tenant
+    /// resolution.
+    /// </para>
     /// </summary>
-    private async Task<bool> TryIngestFileAsync(string filePath, CancellationToken ct)
+    private async Task<bool> TryIngestFileAsync(string filePath, long? tenantId, CancellationToken ct)
     {
         // Read bytes + hash before opening DB scope so a transient FS
         // error doesn't hold a scope open.
@@ -201,12 +374,12 @@ public sealed class AuthorityDocumentInboxWorker : BackgroundService, IBackgroun
         // "BatchData/ContainerData/..." subfolder convention.
         var docType = Path.GetFileName(Path.GetDirectoryName(filePath)) ?? "Unknown";
 
-        // Tenant id needs to be derivable. v1 didn't multi-tenant the
-        // drop folder; v2 keeps it host-wide (single-tenant deployments
-        // dominate). Multi-tenant deployments need per-tenant subfolders
-        // — that's a follow-up. For now we use the first active tenant
-        // and log the assumption.
-        long? tenantId = await ResolveTargetTenantAsync(ct);
+        if (tenantId is null)
+        {
+            // Legacy single-tenant path: pick the first active tenant.
+            tenantId = await ResolveTargetTenantAsync(ct);
+        }
+
         if (tenantId is null)
         {
             _logger.LogWarning(
@@ -374,4 +547,16 @@ internal static class AuthorityDocumentInboxInstruments
             "nickerp.inspection.authority_doc.inbox_failed_total",
             unit: "files",
             description: "AuthorityDocumentInboxWorker count of files that threw on ingest.");
+
+    /// <summary>
+    /// Sprint 50 / FU-inbox-multi-tenant — direct-child subdirectory of
+    /// the drop root that doesn't match any active tenant code. One
+    /// bump per cycle per unknown directory; surfaces operator typos
+    /// without flooding logs. Tag: <c>dir_name</c>.
+    /// </summary>
+    public static readonly System.Diagnostics.Metrics.Counter<long> UnknownTenantTotal =
+        NickErpActivity.Meter.CreateCounter<long>(
+            "nickerp.inspection.authority_doc.inbox_unknown_tenant_total",
+            unit: "directories",
+            description: "AuthorityDocumentInboxWorker count of drop subdirs not matching any active tenant code.");
 }

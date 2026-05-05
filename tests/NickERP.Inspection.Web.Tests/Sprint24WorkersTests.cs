@@ -705,6 +705,186 @@ public sealed class Sprint24WorkersTests : IDisposable
         }
     }
 
+    // -----------------------------------------------------------------
+    // Sprint 50 / Phase D — AuthorityDocumentInboxWorker per-tenant routing
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task AuthorityDocInbox_MultiTenant_RoutesByTenantCodeSubdir()
+    {
+        // Two tenants, each with their own subdir under the drop root.
+        // Files inside <tenant-code>/ContainerData route to that tenant.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-multi-" + Guid.NewGuid());
+        var tenantA = new { Id = 100L, Code = "tenant-a", SubjectId = "MSCU0050001" };
+        var tenantB = new { Id = 101L, Code = "tenant-b", SubjectId = "MSCU0050002" };
+
+        var dirA = Path.Combine(dropFolder, tenantA.Code, "ContainerData");
+        var dirB = Path.Combine(dropFolder, tenantB.Code, "ContainerData");
+        Directory.CreateDirectory(dirA);
+        Directory.CreateDirectory(dirB);
+        var fileA = Path.Combine(dirA, "doc-A.json");
+        var fileB = Path.Combine(dirB, "doc-B.json");
+        await File.WriteAllTextAsync(fileA, $"{{\"container_number\":\"{tenantA.SubjectId}\"}}");
+        await File.WriteAllTextAsync(fileB, $"{{\"container_number\":\"{tenantB.SubjectId}\"}}");
+
+        try
+        {
+            await SeedTenantAsync();
+            await SeedAdditionalTenantAsync(tenantA.Id, tenantA.Code);
+            await SeedAdditionalTenantAsync(tenantB.Id, tenantB.Code);
+
+            // Per-tenant scaffolding (ExternalSystem + Case + Location).
+            await SeedTenantScopedFixtureAsync(tenantA.Id, tenantA.SubjectId);
+            await SeedTenantScopedFixtureAsync(tenantB.Id, tenantB.SubjectId);
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(2, ingested);
+
+            using var scope = _sp.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+            var tenant = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+
+            tenant.SetTenant(tenantA.Id);
+            var docsA = await db.AuthorityDocuments.AsNoTracking()
+                .Where(d => d.TenantId == tenantA.Id)
+                .ToListAsync();
+            Assert.Single(docsA);
+            Assert.Equal("doc-A.json", docsA[0].ReferenceNumber);
+
+            tenant.SetTenant(tenantB.Id);
+            var docsB = await db.AuthorityDocuments.AsNoTracking()
+                .Where(d => d.TenantId == tenantB.Id)
+                .ToListAsync();
+            Assert.Single(docsB);
+            Assert.Equal("doc-B.json", docsB[0].ReferenceNumber);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task AuthorityDocInbox_MultiTenant_UnknownTenantSubdirSkipped()
+    {
+        // A subdir name that doesn't match any active tenant code: log
+        // a warning + skip. Files in another (recognised) tenant subdir
+        // still get ingested.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-unknown-" + Guid.NewGuid());
+        var tenantA = new { Id = 200L, Code = "real-tenant", SubjectId = "MSCU0050100" };
+
+        var validDir = Path.Combine(dropFolder, tenantA.Code, "ContainerData");
+        var unknownDir = Path.Combine(dropFolder, "no-such-tenant", "ContainerData");
+        Directory.CreateDirectory(validDir);
+        Directory.CreateDirectory(unknownDir);
+        await File.WriteAllTextAsync(Path.Combine(validDir, "ok.json"),
+            $"{{\"container_number\":\"{tenantA.SubjectId}\"}}");
+        await File.WriteAllTextAsync(Path.Combine(unknownDir, "ignored.json"),
+            "{\"container_number\":\"MSCU-IGNORED\"}");
+
+        try
+        {
+            await SeedTenantAsync();
+            await SeedAdditionalTenantAsync(tenantA.Id, tenantA.Code);
+            await SeedTenantScopedFixtureAsync(tenantA.Id, tenantA.SubjectId);
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(1, ingested);
+
+            using var scope = _sp.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+            var docs = await db.AuthorityDocuments.AsNoTracking().ToListAsync();
+            Assert.Single(docs);
+            Assert.Equal(tenantA.Id, docs[0].TenantId);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task AuthorityDocInbox_LegacySingleTenantPreserved_WhenNoTenantSubdirs()
+    {
+        // No tenant-shaped subdirs at the drop root → fall back to the
+        // Sprint 24 single-tenant path. Sprint 24 tests asserted this
+        // shape; rerun the assertion to make sure the multi-tenant
+        // detection doesn't break legacy deploys.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-legacy-" + Guid.NewGuid());
+        var sub = Path.Combine(dropFolder, "ContainerData");
+        Directory.CreateDirectory(sub);
+        await File.WriteAllTextAsync(Path.Combine(sub, "legacy.json"),
+            "{\"container_number\":\"MSCU-LEGACY-1\"}");
+
+        try
+        {
+            await SeedTenantAsync(); // single-tenant (Id=1, Code="t1") only
+            await SeedExternalSystemAsync();
+            await SeedCaseAsync(_locationId, "MSCU-LEGACY-1");
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(1, ingested);
+
+            using var scope = _sp.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+            var doc = await db.AuthorityDocuments.AsNoTracking().FirstAsync();
+            Assert.Equal(_tenantId, doc.TenantId);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task AuthorityDocInbox_MultiTenant_NoMatchingCase_SkipsFile()
+    {
+        // Subdir matches a tenant but no case exists for the container —
+        // worker logs unmatched + drops file. Mirrors the single-tenant
+        // unmatched path.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-unmatched-" + Guid.NewGuid());
+        var tenantA = new { Id = 300L, Code = "tenant-um" };
+
+        var dir = Path.Combine(dropFolder, tenantA.Code, "ContainerData");
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Combine(dir, "orphan.json"),
+            "{\"container_number\":\"MSCU-NEVER-EXISTS\"}");
+
+        try
+        {
+            await SeedTenantAsync();
+            await SeedAdditionalTenantAsync(tenantA.Id, tenantA.Code);
+            // Note: no case seeded for MSCU-NEVER-EXISTS.
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(0, ingested);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
     [Fact]
     public async Task AuthorityDocInbox_DuplicateFileNameSkipped()
     {
@@ -1044,6 +1224,83 @@ public sealed class Sprint24WorkersTests : IDisposable
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
+
+    /// <summary>
+    /// Sprint 50 / Phase D — seed a second / third tenant for the
+    /// multi-tenant inbox tests. Doesn't seed a Location / fixtures —
+    /// the caller adds those via <see cref="SeedTenantScopedFixtureAsync"/>.
+    /// </summary>
+    private async Task SeedAdditionalTenantAsync(long tenantId, string code)
+    {
+        using var scope = _sp.CreateScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        if (await tenancy.Tenants.AnyAsync(t => t.Id == tenantId)) return;
+        tenancy.Tenants.Add(new Tenant
+        {
+            Id = tenantId,
+            Code = code,
+            Name = $"Test {code}",
+            State = TenantState.Active,
+            BillingPlan = "internal",
+            TimeZone = "UTC",
+            Locale = "en",
+            Currency = "USD",
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await tenancy.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Sprint 50 / Phase D — seed location + ExternalSystemInstance +
+    /// matching case for a non-default tenant so the per-tenant inbox
+    /// path can resolve everything it needs.
+    /// </summary>
+    private async Task SeedTenantScopedFixtureAsync(long tenantId, string subjectIdentifier)
+    {
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var tenant = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+        tenant.SetTenant(tenantId);
+
+        var locationId = Guid.NewGuid();
+        db.Locations.Add(new Location
+        {
+            Id = locationId,
+            Code = $"loc-{tenantId}",
+            Name = $"Loc {tenantId}",
+            TimeZone = "UTC",
+            IsActive = true,
+            TenantId = tenantId
+        });
+
+        db.ExternalSystemInstances.Add(new ExternalSystemInstance
+        {
+            Id = Guid.NewGuid(),
+            TypeCode = "test-authority",
+            DisplayName = "Test Authority",
+            Description = "Test stub",
+            Scope = ExternalSystemBindingScope.Shared,
+            ConfigJson = "{}",
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = tenantId
+        });
+
+        db.Cases.Add(new InspectionCase
+        {
+            Id = Guid.NewGuid(),
+            LocationId = locationId,
+            SubjectType = CaseSubjectType.Container,
+            SubjectIdentifier = subjectIdentifier,
+            SubjectPayloadJson = "{}",
+            State = InspectionWorkflowState.Open,
+            OpenedAt = DateTimeOffset.UtcNow,
+            StateEnteredAt = DateTimeOffset.UtcNow,
+            TenantId = tenantId
+        });
+
+        await db.SaveChangesAsync();
+    }
 
     private async Task SeedTenantAsync()
     {
