@@ -260,6 +260,15 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.CrossRecordScanServic
 builder.Services.AddNickErpInspectionReviews();
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.ReviewQueueService>();
 
+// Sprint 39 / Sprint 44 Phase B — retention-class + legal-hold admin
+// service. Scoped (captures the per-request InspectionDbContext +
+// ITenantContext + ITenantSettingsService for per-tenant retention
+// window overrides). Backs /admin/retention + the
+// RetentionEnforcerWorker's policy lookup. Idempotent additive
+// registration (AddNickErpInspectionRetention uses TryAddScoped).
+NickERP.Inspection.Web.Services.RetentionServiceCollectionExtensions
+    .AddNickErpInspectionRetention(builder.Services);
+
 // §6.5 admin actions — Approve / Reject for ScannerThresholdProfile.
 // Mirrors CaseWorkflowService — pages call this so the audit emission
 // + state-transition rules live in one place.
