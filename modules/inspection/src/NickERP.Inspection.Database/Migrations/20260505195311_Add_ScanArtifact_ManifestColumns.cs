@@ -1,11 +1,37 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace NickERP.Inspection.Database.Migrations
 {
-    /// <inheritdoc />
+    /// <summary>
+    /// Sprint 45 / Phase B — adds canonical-scan-package manifest fields
+    /// to <c>inspection.scan_artifacts</c>: the deterministic manifest
+    /// JSON, its sha256 digest, the per-edge HMAC signature, and the
+    /// server-side verification timestamp. All four columns nullable so
+    /// pre-existing rows + legacy ingest paths keep working.
+    ///
+    /// <para>
+    /// The supporting <c>(TenantId, ManifestVerifiedAt DESC)</c> index
+    /// backs the SLA dashboard's "newly verified replays" feed without
+    /// a sort.
+    /// </para>
+    ///
+    /// <para>
+    /// Snapshot drift cleanup: the EF generator emitted extras
+    /// (<c>cases.IsSynthetic</c>, <c>scanner_onboarding_responses</c>,
+    /// <c>threshold_profile_history</c>, <c>webhook_cursors</c>) because
+    /// the Designer files of the migrations in <c>20260505181000</c> /
+    /// <c>20260505190000</c> didn't carry those entities even though
+    /// they exist in <c>OnModelCreating</c>. Production already has
+    /// them via the Sprint 38 + 41 partials; this migration's
+    /// hand-edited body keeps only the genuine Sprint 45 changes and
+    /// leaves the (corrected) <see cref="Add_ScanArtifact_ManifestColumns.BuildTargetModel"/>
+    /// snapshot in the Designer to reconcile the drift on next-up
+    /// migration generation.
+    /// </para>
+    /// </summary>
     public partial class Add_ScanArtifact_ManifestColumns : Migration
     {
         /// <inheritdoc />
@@ -39,125 +65,17 @@ namespace NickERP.Inspection.Database.Migrations
                 type: "timestamp with time zone",
                 nullable: true);
 
-            migrationBuilder.AddColumn<bool>(
-                name: "IsSynthetic",
-                schema: "inspection",
-                table: "cases",
-                type: "boolean",
-                nullable: false,
-                defaultValue: false);
-
-            migrationBuilder.CreateTable(
-                name: "scanner_onboarding_responses",
-                schema: "inspection",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    ScannerDeviceTypeId = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
-                    FieldName = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
-                    Value = table.Column<string>(type: "text", nullable: false),
-                    RecordedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    RecordedByUserId = table.Column<Guid>(type: "uuid", nullable: true),
-                    TenantId = table.Column<long>(type: "bigint", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_scanner_onboarding_responses", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "threshold_profile_history",
-                schema: "inspection",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    ScannerDeviceInstanceId = table.Column<Guid>(type: "uuid", nullable: false),
-                    ModelId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
-                    ClassId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
-                    OldThreshold = table.Column<double>(type: "double precision", nullable: true),
-                    NewThreshold = table.Column<double>(type: "double precision", nullable: false),
-                    ChangedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    ChangedByUserId = table.Column<Guid>(type: "uuid", nullable: true),
-                    Reason = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
-                    TenantId = table.Column<long>(type: "bigint", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_threshold_profile_history", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "webhook_cursors",
-                schema: "inspection",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    AdapterName = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
-                    LastProcessedEventId = table.Column<Guid>(type: "uuid", nullable: false),
-                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    TenantId = table.Column<long>(type: "bigint", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_webhook_cursors", x => x.Id);
-                });
-
             migrationBuilder.CreateIndex(
                 name: "ix_scan_artifacts_tenant_manifest_verified",
                 schema: "inspection",
                 table: "scan_artifacts",
                 columns: new[] { "TenantId", "ManifestVerifiedAt" },
                 descending: new[] { false, true });
-
-            migrationBuilder.CreateIndex(
-                name: "ix_scanner_onboarding_tenant",
-                schema: "inspection",
-                table: "scanner_onboarding_responses",
-                column: "TenantId");
-
-            migrationBuilder.CreateIndex(
-                name: "ix_scanner_onboarding_tenant_type_field_time",
-                schema: "inspection",
-                table: "scanner_onboarding_responses",
-                columns: new[] { "TenantId", "ScannerDeviceTypeId", "FieldName", "RecordedAt" },
-                descending: new[] { false, false, false, true });
-
-            migrationBuilder.CreateIndex(
-                name: "ix_threshold_history_tenant",
-                schema: "inspection",
-                table: "threshold_profile_history",
-                column: "TenantId");
-
-            migrationBuilder.CreateIndex(
-                name: "ix_threshold_history_tenant_scanner_time",
-                schema: "inspection",
-                table: "threshold_profile_history",
-                columns: new[] { "TenantId", "ScannerDeviceInstanceId", "ChangedAt" },
-                descending: new[] { false, false, true });
-
-            migrationBuilder.CreateIndex(
-                name: "ux_webhook_cursors_tenant_adapter",
-                schema: "inspection",
-                table: "webhook_cursors",
-                columns: new[] { "TenantId", "AdapterName" },
-                unique: true);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropTable(
-                name: "scanner_onboarding_responses",
-                schema: "inspection");
-
-            migrationBuilder.DropTable(
-                name: "threshold_profile_history",
-                schema: "inspection");
-
-            migrationBuilder.DropTable(
-                name: "webhook_cursors",
-                schema: "inspection");
-
             migrationBuilder.DropIndex(
                 name: "ix_scan_artifacts_tenant_manifest_verified",
                 schema: "inspection",
@@ -182,11 +100,6 @@ namespace NickERP.Inspection.Database.Migrations
                 name: "ManifestVerifiedAt",
                 schema: "inspection",
                 table: "scan_artifacts");
-
-            migrationBuilder.DropColumn(
-                name: "IsSynthetic",
-                schema: "inspection",
-                table: "cases");
         }
     }
 }

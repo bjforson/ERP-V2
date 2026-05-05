@@ -825,6 +825,16 @@ public sealed class InspectionDbContext : DbContext
             e.Property(x => x.ClosedAt);
             e.Property(x => x.State).HasConversion<int>().IsRequired();
             e.Property(x => x.BudgetMinutes).IsRequired();
+            // Sprint 45 / Phase C — queue tier (default Standard for
+            // pre-Sprint-45 rows). Manual flag is fail-safe false so
+            // legacy rows participate in auto-escalation by default.
+            e.Property(x => x.QueueTier)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(QueueTier.Standard);
+            e.Property(x => x.QueueTierIsManual)
+                .IsRequired()
+                .HasDefaultValue(false);
             e.Property(x => x.TenantId).IsRequired();
 
             // One open window per (Case, WindowName) — the unique
@@ -843,6 +853,14 @@ public sealed class InspectionDbContext : DbContext
             // Per-case scan; useful for the case-detail SLA pane.
             e.HasIndex(x => new { x.TenantId, x.CaseId })
                 .HasDatabaseName("ix_sla_window_tenant_case");
+
+            // Sprint 45 / Phase C — per-tier dashboard breakdown +
+            // QueueEscalatorWorker scan path: "open windows of tier X
+            // older than threshold Y". Composite (TenantId, QueueTier,
+            // State) covers the breakdown card query and the escalator
+            // worker's tier filter.
+            e.HasIndex(x => new { x.TenantId, x.QueueTier, x.State })
+                .HasDatabaseName("ix_sla_window_tenant_tier_state");
         });
 
         // ----- CrossRecordDetection (Sprint 31 / B5.2) ------------------------------

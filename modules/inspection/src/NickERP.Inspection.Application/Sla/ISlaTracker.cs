@@ -34,6 +34,21 @@ public interface ISlaTracker
         CancellationToken ct = default);
 
     /// <summary>
+    /// Sprint 45 / Phase C — open the requested SLA windows for a case
+    /// under a specific <see cref="QueueTier"/>. Per-tier budgets
+    /// override the engine defaults when the window name is
+    /// well-known; per-tenant per-window overrides still take
+    /// precedence. Same idempotency posture as
+    /// <see cref="OpenWindowsAsync(Guid, IReadOnlyCollection{string}, DateTimeOffset, CancellationToken)"/>.
+    /// </summary>
+    Task<IReadOnlyList<SlaWindow>> OpenWindowsAsync(
+        Guid caseId,
+        IReadOnlyCollection<string> windowNames,
+        DateTimeOffset openedAt,
+        QueueTier tier,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Open the standard "case opened" windows
     /// (<c>case.open_to_validated</c>, <c>case.validated_to_verdict</c>,
     /// <c>case.verdict_to_submitted</c>) for a freshly-created case.
