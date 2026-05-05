@@ -441,6 +441,33 @@ builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>());
 
 // ---------------------------------------------------------------------------
+// Sprint 39 / Sprint 44 Phase A — RetentionService backs /admin/retention +
+// /admin/retention/purge-candidates pages and the Phase B
+// RetentionEnforcerWorker's policy lookup. Scoped (consumes per-request
+// InspectionDbContext + ITenantContext), idempotent extension method.
+// ---------------------------------------------------------------------------
+NickERP.Inspection.Web.Services.RetentionServiceCollectionExtensions
+    .AddNickErpInspectionRetention(builder.Services);
+
+// ---------------------------------------------------------------------------
+// Sprint 39 / Sprint 44 Phase B — periodic retention enforcer. Surfaces
+// purge candidates per tenant per tick (Standard + Extended classes only;
+// Enforcement / Training / LegalHold trump-card never auto-purge). Does
+// NOT delete; identification only — operator drives any hard-purge via
+// the separate Sprint 18 path. Three-slot registration mirrors the
+// Sprint 36 SlaStateRefresherWorker pattern (singleton + IHostedService
+// + IBackgroundServiceProbe). Default-disabled; opt-in per environment
+// via Inspection:Workers:RetentionEnforcer:Enabled=true.
+// ---------------------------------------------------------------------------
+builder.Services.Configure<RetentionEnforcerOptions>(
+    builder.Configuration.GetSection(RetentionEnforcerOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.RetentionEnforcerWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.RetentionEnforcerWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.RetentionEnforcerWorker>());
+
+// ---------------------------------------------------------------------------
 // Sprint 33 / B7 — reports + diagnostics services. Both scoped because
 // they consume the per-request InspectionDbContext (and AuditDbContext
 // for the reports service). Read-only by design — neither service

@@ -1,0 +1,186 @@
+@page "/admin/retention/purge-candidates"
+@* Sprint 44 / Phase B — operator-facing review of cases eligible for
+   auto-purge. Surfaces (does NOT delete) the cases the
+   RetentionEnforcerWorker reports per tenant per tick.
+
+   Eligibility predicate (RetentionEnforcerWorker):
+     - LegalHold = false (held cases never appear regardless of class)
+     - RetentionClass in (Standard, Extended)
+     - ClosedAt non-null AND older than (now - retentionDays)
+
+   The retention window per class is resolved via
+   ITenantSettingsService (per-tenant override) with hard-coded
+   fallbacks: Standard=1825d, Extended=2555d. Operators review +
+   trigger a hard-purge action through a separate post-pilot admin
+   path (out of scope for Sprint 44 — same posture as Sprint 18
+   TenantPurgeOrchestrator). *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Application.Retention
+@using NickERP.Inspection.Core.Retention
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject RetentionService Retention
+@inject ITenantContext Tenant
+@inject TimeProvider Clock
+
+<PageTitle>Purge candidates - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Purge candidates</h1>
+        <p class="inspection-page-subtitle">
+            Cases eligible for auto-purge per their retention class.
+            Surface only - hard-purge is operator-driven (post-pilot).
+            Held cases never appear.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_loading)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card-grid">
+            <div class="inspection-card">
+                <h2 class="inspection-card-title">Standard candidates</h2>
+                <p class="inspection-card-metric">@_standardCount</p>
+                <p>Window: <code>@_standardPolicy?.RetentionDays days</code> (<code>@_standardPolicy?.Source</code>)</p>
+            </div>
+            <div class="inspection-card">
+                <h2 class="inspection-card-title">Extended candidates</h2>
+                <p class="inspection-card-metric">@_extendedCount</p>
+                <p>Window: <code>@_extendedPolicy?.RetentionDays days</code> (<code>@_extendedPolicy?.Source</code>)</p>
+            </div>
+            <div class="inspection-card">
+                <h2 class="inspection-card-title">Total surfaced</h2>
+                <p class="inspection-card-metric">@(_standardCount + _extendedCount)</p>
+                <p>Auto-purge eligible: <code>Standard</code> + <code>Extended</code> only.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <h2>Standard - eligible cases</h2>
+        @if (_standardCases.Count == 0)
+        {
+            <p class="inspection-empty">No Standard cases past their retention window.</p>
+        }
+        else
+        {
+            @RenderCandidates(_standardCases)
+        }
+    </section>
+
+    <section class="inspection-section">
+        <h2>Extended - eligible cases</h2>
+        @if (_extendedCases.Count == 0)
+        {
+            <p class="inspection-empty">No Extended cases past their retention window.</p>
+        }
+        else
+        {
+            @RenderCandidates(_extendedCases)
+        }
+    </section>
+}
+
+@code {
+    private RenderFragment RenderCandidates(List<RetentionCaseRow> rows) => __builder =>
+    {
+        <table class="inspection-table">
+            <thead>
+                <tr>
+                    <th>Case</th>
+                    <th>Subject</th>
+                    <th>Class</th>
+                    <th>Closed</th>
+                    <th>Days closed</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in rows)
+                {
+                    var daysClosed = c.ClosedAt is { } closed
+                        ? Math.Max(0, (int)(_now - closed).TotalDays)
+                        : 0;
+                    <tr>
+                        <td><a href="/cases/@c.CaseId">@c.CaseId.ToString().Substring(0, 8)</a></td>
+                        <td>@c.SubjectIdentifier</td>
+                        <td><code>@c.RetentionClass</code></td>
+                        <td>
+                            @if (c.ClosedAt is { } t)
+                            {
+                                @t.ToString("yyyy-MM-dd")
+                            }
+                            else
+                            {
+                                <span class="inspection-empty">-</span>
+                            }
+                        </td>
+                        <td>@daysClosed</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    };
+
+    private bool _loading = true;
+    private DateTimeOffset _now;
+    private RetentionPolicy? _standardPolicy;
+    private RetentionPolicy? _extendedPolicy;
+    private int _standardCount;
+    private int _extendedCount;
+    private List<RetentionCaseRow> _standardCases = new();
+    private List<RetentionCaseRow> _extendedCases = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        _now = Clock.GetUtcNow();
+        _standardPolicy = await Retention.GetRetentionPolicyAsync(RetentionClass.Standard);
+        _extendedPolicy = await Retention.GetRetentionPolicyAsync(RetentionClass.Extended);
+
+        var allStandard = await Retention.ListByRetentionClassAsync(
+            Tenant.TenantId, RetentionClass.Standard, take: 500, skip: 0);
+        var allExtended = await Retention.ListByRetentionClassAsync(
+            Tenant.TenantId, RetentionClass.Extended, take: 500, skip: 0);
+
+        var standardCutoff = SafeCutoff(_now, _standardPolicy.RetentionDays);
+        var extendedCutoff = SafeCutoff(_now, _extendedPolicy.RetentionDays);
+
+        _standardCases = allStandard
+            .Where(c => !c.LegalHold
+                     && c.ClosedAt is { } closedAt
+                     && closedAt < standardCutoff)
+            .ToList();
+        _extendedCases = allExtended
+            .Where(c => !c.LegalHold
+                     && c.ClosedAt is { } closedAt
+                     && closedAt < extendedCutoff)
+            .ToList();
+
+        _standardCount = _standardCases.Count;
+        _extendedCount = _extendedCases.Count;
+        _loading = false;
+    }
+
+    private static DateTimeOffset SafeCutoff(DateTimeOffset now, int retentionDays)
+    {
+        if (retentionDays >= int.MaxValue / 2) return DateTimeOffset.MinValue;
+        try
+        {
+            return now.AddDays(-retentionDays);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return DateTimeOffset.MinValue;
+        }
+    }
+}

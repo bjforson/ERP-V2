@@ -314,3 +314,41 @@ public sealed class SlaStateRefresherOptions : WorkerOptionsBase
     /// </summary>
     public new TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
 }
+
+/// <summary>
+/// Sprint 44 / Phase B — options for the periodic retention enforcer.
+/// Walks every active tenant + every closed case eligible for the
+/// auto-purge surface (Standard + Extended classes), reports purge
+/// candidates per tenant per tick. Does NOT delete; surfaces candidates
+/// for an operator-driven hard-purge decision (post-pilot, out of
+/// scope for Sprint 44). Same posture as Sprint 18
+/// <c>TenantPurgeOrchestrator</c>.
+///
+/// <para>
+/// <b>Cadence.</b> Default 6 hours — the retention windows are 5-7
+/// years (Standard / Extended fallbacks); a 6-hour sweep catches
+/// transitions within the same business day. Cheap because the
+/// candidate-counting query is index-friendly (TenantId + RetentionClass
+/// + ClosedAt) and per-tenant; idle tenants short-circuit at zero.
+/// </para>
+///
+/// <para>
+/// <b>Default-disabled</b> per Sprint 24 architectural decision; opt-in
+/// per environment via
+/// <c>Inspection:Workers:RetentionEnforcer:Enabled=true</c>.
+/// </para>
+/// </summary>
+public sealed class RetentionEnforcerOptions : WorkerOptionsBase
+{
+    /// <summary>Section root binding key.</summary>
+    public const string SectionName = "Inspection:Workers:RetentionEnforcer";
+
+    /// <summary>
+    /// Override poll interval. Default 6 hours — the retention windows
+    /// are 5-7 years (default Standard / Extended fallbacks); a 6-hour
+    /// sweep catches transitions within the same business day. Faster
+    /// cadences are wasteful; slower cadences leave compliance windows
+    /// open longer than needed.
+    /// </summary>
+    public new TimeSpan PollInterval { get; set; } = TimeSpan.FromHours(6);
+}
