@@ -1,0 +1,265 @@
+@page "/notifications"
+@* Sprint 35 / B8.1 — notifications inbox UI. Replaces the simpler
+   Sprint 8 P3 page with a service-backed view that adds filters
+   (read-state / type / date-range), paged navigation, and per-row
+   audit emission via NotificationInboxService.
+
+   Tenant + user isolation are enforced at the DB layer by the
+   tenant_user_isolation_notifications RLS policy (Sprint 9 / FU-userid)
+   plus the LINQ user-id filter in NotificationInboxService as a
+   defence-in-depth guard. The bell unread count is wired to the same
+   service via NotificationsBell — see Components/Layout/NotificationsBell.razor. *@
+@attribute [Authorize]
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Audit.Database.Entities
+@using NickERP.Platform.Identity.Auth
+@inject NotificationInboxService InboxService
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Notifications — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Notifications</h1>
+        <p class="inspection-page-subtitle">Activity from across the suite, scoped to your tenant.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-filter-bar inspection-button-row">
+        <label class="inspection-checkbox-label">
+            Show
+            <select class="inspection-input" @bind="_readState" @bind:after="ResetAndReloadAsync">
+                <option value="@NotificationReadState.All">All</option>
+                <option value="@NotificationReadState.UnreadOnly">Unread only</option>
+                <option value="@NotificationReadState.ReadOnly">Read only</option>
+            </select>
+        </label>
+        <label class="inspection-checkbox-label">
+            Type
+            <select class="inspection-input" @bind="_eventType" @bind:after="ResetAndReloadAsync">
+                <option value="">(any)</option>
+                @if (_eventTypes is not null)
+                {
+                    @foreach (var et in _eventTypes)
+                    {
+                        <option value="@et">@et</option>
+                    }
+                }
+            </select>
+        </label>
+        <label class="inspection-checkbox-label">
+            From
+            <input class="inspection-input" type="date" @bind="_fromDate" @bind:after="ResetAndReloadAsync" />
+        </label>
+        <label class="inspection-checkbox-label">
+            To
+            <input class="inspection-input" type="date" @bind="_toDate" @bind:after="ResetAndReloadAsync" />
+        </label>
+        <button type="button" class="inspection-button"
+                disabled="@(_unreadCount == 0)"
+                @onclick="MarkAllReadAsync">
+            Mark all as read
+        </button>
+        <button type="button" class="inspection-button"
+                @onclick="ClearFiltersAsync">
+            Clear filters
+        </button>
+        <span class="inspection-page-subtitle">@_unreadCount unread / @_totalCount total</span>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <p class="inspection-form-message">@_message</p>
+    }
+
+    @if (_rows is null) { <p>Loading…</p> }
+    else if (_rows.Count == 0)
+    {
+        <p class="inspection-empty">
+            No notifications match the current filters. The bell will increment
+            when something needs your attention.
+        </p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Type</th>
+                    <th>Title</th>
+                    <th>Body</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var n in _rows)
+                {
+                    <tr>
+                        <td>@n.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td><code>@n.EventType</code></td>
+                        <td>@n.Title</td>
+                        <td>@n.Body</td>
+                        <td>
+                            @if (n.ReadAt is null)
+                            {
+                                <span class="inspection-badge inspection-badge-warning">Unread</span>
+                            }
+                            else
+                            {
+                                <span class="inspection-badge inspection-badge-good">Read</span>
+                            }
+                        </td>
+                        <td>
+                            @if (n.ReadAt is null)
+                            {
+                                <button class="inspection-button" type="button" @onclick="() => MarkReadAsync(n.Id)">
+                                    Mark as read
+                                </button>
+                            }
+                            @if (!string.IsNullOrEmpty(n.Link))
+                            {
+                                <button class="inspection-button" type="button" @onclick="() => Follow(n)">
+                                    Follow link
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (_skip > 0 || _rows.Count == PageSize)
+        {
+            <div class="inspection-button-row">
+                <button class="inspection-button" type="button"
+                        disabled="@(_skip <= 0)"
+                        @onclick="PreviousPageAsync">
+                    &lsaquo; Newer
+                </button>
+                <span class="inspection-page-subtitle">Rows @(_skip + 1)–@(_skip + _rows.Count) of @_totalCount</span>
+                <button class="inspection-button" type="button"
+                        disabled="@(_skip + _rows.Count >= _totalCount)"
+                        @onclick="NextPageAsync">
+                    Older &rsaquo;
+                </button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    private const int PageSize = 20;
+
+    private NotificationReadState _readState = NotificationReadState.All;
+    private string _eventType = string.Empty;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+
+    private int _skip;
+    private int _totalCount;
+    private int _unreadCount;
+    private List<NotificationInboxRow>? _rows;
+    private IReadOnlyList<string>? _eventTypes;
+    private Guid _currentUser;
+    private string? _message;
+
+    /// <inheritdoc />
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var raw = auth.User.FindFirst(NickErpClaims.Id)?.Value
+                  ?? auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(raw) || !Guid.TryParse(raw, out _currentUser))
+        {
+            _rows = new List<NotificationInboxRow>();
+            return;
+        }
+
+        _eventTypes = await InboxService.ListEventTypesAsync(_currentUser);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (_currentUser == Guid.Empty) return;
+
+        var filter = new NotificationInboxFilter(
+            ReadState: _readState,
+            EventType: string.IsNullOrEmpty(_eventType) ? null : _eventType,
+            From: _fromDate is { } f ? new DateTimeOffset(f.Date, TimeSpan.Zero) : null,
+            To: _toDate is { } t ? new DateTimeOffset(t.Date.AddDays(1).AddTicks(-1), TimeSpan.Zero) : null);
+
+        var page = await InboxService.ListAsync(_currentUser, filter, take: PageSize, skip: _skip);
+        _rows = page.Items.ToList();
+        _totalCount = page.TotalCount;
+        _unreadCount = page.UnreadCount;
+    }
+
+    private async Task ResetAndReloadAsync()
+    {
+        _skip = 0;
+        await ReloadAsync();
+    }
+
+    private async Task ClearFiltersAsync()
+    {
+        _readState = NotificationReadState.All;
+        _eventType = string.Empty;
+        _fromDate = null;
+        _toDate = null;
+        _skip = 0;
+        await ReloadAsync();
+    }
+
+    private async Task MarkReadAsync(Guid id)
+    {
+        var flipped = await InboxService.MarkReadAsync(id, _currentUser);
+        _message = flipped ? "Marked as read." : "Already read.";
+        await ReloadAsync();
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        var n = await InboxService.MarkAllReadAsync(_currentUser);
+        _message = n switch
+        {
+            0 => "Nothing to mark.",
+            1 => "1 notification marked read.",
+            _ => $"{n} notifications marked read.",
+        };
+        await ReloadAsync();
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (_skip <= 0) return;
+        _skip = Math.Max(0, _skip - PageSize);
+        await ReloadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        _skip += PageSize;
+        await ReloadAsync();
+    }
+
+    private void Follow(NotificationInboxRow n)
+    {
+        if (string.IsNullOrEmpty(n.Link)) return;
+        // Mark read (fire-and-forget) on follow — common UX pattern.
+        if (n.ReadAt is null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await InboxService.MarkReadAsync(n.Id, _currentUser); } catch { /* best-effort */ }
+            });
+        }
+        Nav.NavigateTo(n.Link);
+    }
+}

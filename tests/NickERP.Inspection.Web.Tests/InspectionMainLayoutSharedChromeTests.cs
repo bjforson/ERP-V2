@@ -6,8 +6,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using NickERP.Inspection.Web.Components.Layout;
+using NickERP.Inspection.Web.Services;
 using NickERP.Platform.Audit.Database;
+using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Web.Shared.Modules;
 using BunitTestContext = Bunit.TestContext;
@@ -52,6 +55,23 @@ public sealed class InspectionMainLayoutSharedChromeTests : IDisposable
             t.SetTenant(1);
             return t;
         });
+
+        // Sprint 35 / B8.1 — the bell now reads its unread count via
+        // NotificationInboxService, which depends on TimeProvider +
+        // IEventPublisher. Wire harmless no-op versions for this layout
+        // render; the bell's RefreshAsync hits UnreadCountAsync (a single
+        // indexed COUNT) and won't otherwise touch the publisher.
+        _ctx.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        _ctx.Services.AddSingleton<IEventPublisher, NoopEventPublisher>();
+        _ctx.Services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
+        _ctx.Services.AddScoped<NotificationInboxService>();
+    }
+
+    private sealed class NoopEventPublisher : IEventPublisher
+    {
+        public Task<DomainEvent> PublishAsync(DomainEvent evt, CancellationToken ct = default) => Task.FromResult(evt);
+        public Task<IReadOnlyList<DomainEvent>> PublishBatchAsync(IReadOnlyList<DomainEvent> events, CancellationToken ct = default)
+            => Task.FromResult(events);
     }
 
     /// <summary>

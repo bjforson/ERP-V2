@@ -190,6 +190,19 @@ builder.Services.AddSingleton<IInviteTokenHashEnvelope,
     NickERP.Portal.Services.PortalInviteTokenHashEnvelope>();
 builder.Services.AddNickErpInviteService();
 
+// ---------------------------------------------------------------------------
+// Sprint 35 / B8.2 — feature flag + tenant settings services. Backed by
+// TenancyDbContext (already wired). TimeProvider is added via TryAdd so
+// it coexists with any module that registers its own (Inspection.Web
+// also adds it for Sprint 35 / B8.1).
+// ---------------------------------------------------------------------------
+Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+    .TryAddSingleton(builder.Services, TimeProvider.System);
+builder.Services.AddScoped<NickERP.Platform.Tenancy.Features.IFeatureFlagService,
+    NickERP.Platform.Tenancy.Database.Services.FeatureFlagService>();
+builder.Services.AddScoped<NickERP.Platform.Tenancy.Features.ITenantSettingsService,
+    NickERP.Platform.Tenancy.Database.Services.TenantSettingsService>();
+
 // Blazor Server (interactive server-side rendering).
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();

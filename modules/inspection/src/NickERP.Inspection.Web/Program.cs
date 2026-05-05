@@ -65,6 +65,16 @@ builder.Services.AddNickErpAuditNotifications(opts =>
     opts.PollIntervalSeconds = builder.Environment.IsDevelopment() ? 1 : 5;
 });
 
+// Sprint 35 / B8.1 — inbox service shared by /notifications + the bell.
+// Wraps audit.notifications reads + mark-read writes; emits
+// nickerp.notification.read on every flip. TimeProvider.System default
+// is fine; tests override via the FakeTimeProvider pattern.
+// TryAddSingleton because parallel sprints (34, 36) may also register
+// TimeProvider — the first wins, which is the same instance regardless.
+Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+    .TryAddSingleton(builder.Services, TimeProvider.System);
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.NotificationInboxService>();
+
 // Sprint 14 / VP6 Phase A.5 — auto-join interceptor + bootstrap registrations.
 // The interceptor adds an AnalysisServiceLocation row for every new Location
 // in the same SaveChanges. The bootstrap is registered for parity with

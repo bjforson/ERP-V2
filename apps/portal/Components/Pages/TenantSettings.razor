@@ -1,0 +1,259 @@
+@page "/admin/tenant-settings"
+@* Sprint 35 / B8.2 — generic per-tenant key/value setting admin page.
+   Mirrors FeatureFlags.razor but with string values instead of bool.
+   The catalogue documents "well-known" keys (default SLA budgets,
+   retention windows, comms-gateway endpoints) — operators can pick
+   one or type a custom key. Comms-gateway settings live here too,
+   per docs/runbooks/12-comms-gateway-settings.md. *@
+@attribute [Authorize]
+@using NickERP.Platform.Tenancy
+@using NickERP.Platform.Tenancy.Features
+
+@inject ITenantSettingsService Settings
+@inject ITenantContext TenantCtx
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Tenant settings — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Tenant settings</h1>
+        <p class="portal-page-subtitle">
+            Generic per-tenant key/value configuration. A missing row
+            implies "use the default the calling code passed".
+            Comms-gateway settings live here too — see
+            <code>docs/runbooks/12-comms-gateway-settings.md</code>.
+        </p>
+    </div>
+</header>
+
+@if (!TenantCtx.IsResolved)
+{
+    <p class="portal-card-subtitle">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    <section class="portal-section">
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="portal-form-message">@_message</p>
+        }
+
+        <div class="portal-card">
+            <h2 class="portal-card-title">Set a value</h2>
+            <p class="portal-card-subtitle">
+                Pick a known key from the catalogue, or type a custom
+                key (vendor-neutral lowercase, dot-separated).
+            </p>
+            <EditForm Model="_form" OnValidSubmit="SaveAsync" FormName="set-setting" class="portal-form">
+                <div class="portal-form-row">
+                    <label>
+                        <span>Catalogue</span>
+                        <InputSelect class="portal-input" @bind-Value="_form.SelectedKey" @bind-Value:after="OnCatalogueSelected">
+                            <option value="">— pick from catalogue —</option>
+                            <optgroup label="Inspection">
+                                @foreach (var k in KnownSettingKeys.Where(x => x.Group == "Inspection"))
+                                {
+                                    <option value="@k.Key">@k.Key</option>
+                                }
+                            </optgroup>
+                            <optgroup label="Comms gateway">
+                                @foreach (var k in KnownSettingKeys.Where(x => x.Group == "Comms"))
+                                {
+                                    <option value="@k.Key">@k.Key</option>
+                                }
+                            </optgroup>
+                            <optgroup label="Portal">
+                                @foreach (var k in KnownSettingKeys.Where(x => x.Group == "Portal"))
+                                {
+                                    <option value="@k.Key">@k.Key</option>
+                                }
+                            </optgroup>
+                        </InputSelect>
+                    </label>
+                    <label>
+                        <span>Setting key</span>
+                        <InputText class="portal-input" @bind-Value="_form.SettingKey"
+                                   placeholder="module.feature.aspect" />
+                    </label>
+                </div>
+                <div class="portal-form-row">
+                    <label>
+                        <span>Value</span>
+                        <InputTextArea class="portal-input" @bind-Value="_form.Value" rows="3"
+                                       placeholder="value as text" />
+                    </label>
+                </div>
+                @if (_selectedDescription is not null)
+                {
+                    <p class="portal-card-subtitle"><strong>@_form.SelectedKey</strong>: @_selectedDescription</p>
+                }
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary">Save</button>
+                </div>
+            </EditForm>
+        </div>
+
+        <div class="portal-card">
+            <h2 class="portal-card-title">Persisted settings</h2>
+            @if (_rows is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (_rows.Count == 0)
+            {
+                <p class="portal-card-subtitle">No settings persisted for this tenant. Set one above to override a default.</p>
+            }
+            else
+            {
+                <table class="portal-table">
+                    <thead>
+                        <tr>
+                            <th>Setting key</th>
+                            <th>Value</th>
+                            <th>Last updated</th>
+                            <th>Last updated by</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in _rows)
+                        {
+                            <tr>
+                                <td><code>@s.SettingKey</code></td>
+                                <td><code>@TruncateForDisplay(s.Value)</code></td>
+                                <td title="@s.UpdatedAt.ToString("O")">@s.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@(s.UpdatedByUserId?.ToString() ?? "—")</td>
+                                <td>
+                                    <button type="button" class="portal-button" @onclick="() => EditExisting(s)">Edit</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    /// <summary>
+    /// Curated catalogue of well-known setting keys. Adding a key here
+    /// does not seed a row — callers still pass a default when reading.
+    /// Keep groups stable so the &lt;optgroup&gt; rendering is predictable.
+    /// </summary>
+    private static readonly KnownSetting[] KnownSettingKeys =
+    {
+        new("Inspection", "inspection.sla.default_budget_minutes",
+            "Default SLA budget (minutes) for case open→validated. Engine fallback is 60."),
+        new("Inspection", "inspection.completeness.required_documents",
+            "Comma-separated list of document types required at validate-time."),
+        new("Inspection", "inspection.retention.case_archive_days",
+            "How many days to retain case rows before soft-archive. Default 365."),
+
+        new("Comms", "comms.email.smtp_host",
+            "SMTP host name for the email sender (when Email:Provider=smtp)."),
+        new("Comms", "comms.email.smtp_port",
+            "SMTP TCP port (typically 587 for STARTTLS, 465 for implicit TLS)."),
+        new("Comms", "comms.email.from_address",
+            "From-address that user-facing emails use."),
+        new("Comms", "comms.email.reply_to_address",
+            "Reply-To header for user-facing emails (optional)."),
+        new("Comms", "comms.email.bounce_handler_url",
+            "Webhook URL the SMTP relay POSTs delivery failures to (optional)."),
+
+        new("Portal", "portal.support.contact_email",
+            "Email shown on the help / support page for the tenant's users."),
+        new("Portal", "portal.session.idle_timeout_minutes",
+            "Inactivity timeout before the portal forces re-auth. Default 30."),
+    };
+
+    private List<TenantSettingDto>? _rows;
+    private string? _message;
+    private string? _selectedDescription;
+    private SettingForm _form = new();
+
+    /// <inheritdoc />
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (!TenantCtx.IsResolved) return;
+        var rows = await Settings.ListAsync(TenantCtx.TenantId);
+        _rows = rows.ToList();
+    }
+
+    private void OnCatalogueSelected()
+    {
+        if (!string.IsNullOrEmpty(_form.SelectedKey))
+        {
+            _form.SettingKey = _form.SelectedKey;
+        }
+        _selectedDescription = string.IsNullOrEmpty(_form.SelectedKey)
+            ? null
+            : KnownSettingKeys.FirstOrDefault(k => k.Key == _form.SelectedKey)?.Description;
+    }
+
+    private void EditExisting(TenantSettingDto s)
+    {
+        _form.SelectedKey = string.Empty;
+        _form.SettingKey = s.SettingKey;
+        _form.Value = s.Value;
+        _selectedDescription =
+            KnownSettingKeys.FirstOrDefault(k => k.Key == s.SettingKey)?.Description;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!TenantCtx.IsResolved) return;
+        if (string.IsNullOrWhiteSpace(_form.SettingKey))
+        {
+            _message = "Pick a catalogue key or type a custom key.";
+            return;
+        }
+        var actor = await ResolveActorAsync();
+        try
+        {
+            var dto = await Settings.SetAsync(_form.SettingKey, TenantCtx.TenantId, _form.Value ?? string.Empty, actor);
+            _message = $"Setting '{dto.SettingKey}' saved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private async Task<Guid?> ResolveActorAsync()
+    {
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+            return Guid.TryParse(idClaim, out var g) ? g : null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static string TruncateForDisplay(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        const int max = 80;
+        return value.Length <= max ? value : value[..max] + "…";
+    }
+
+    private sealed record KnownSetting(string Group, string Key, string Description);
+
+    private sealed class SettingForm
+    {
+        public string SelectedKey { get; set; } = string.Empty;
+        public string SettingKey { get; set; } = string.Empty;
+        public string Value { get; set; } = string.Empty;
+    }
+}

@@ -3,17 +3,21 @@
  * 30-second polling timer that refreshes the unread count from the
  * AuditDbContext. Designed to slot into TopNav's NotificationsSlot.
  *
+ * Sprint 35 / B8.1 — the unread count read is now routed through
+ * NotificationInboxService.UnreadCountAsync so the bell + the inbox
+ * page share one COUNT path. The service still hits the partial
+ * ix_notifications_user_unread index so the call stays O(1) cheap.
+ *
  * Keeps it server-side: this is a Blazor Server app and the audit
- * context is already wired into DI, so no HTTP indirection is needed
- * for the count read. The /api/notifications endpoints are still the
- * canonical interface — they handle the mark-as-read calls and any
- * future non-Blazor UI.
+ * context is already wired into DI via the service, so no HTTP
+ * indirection is needed for the count read. The /api/notifications
+ * endpoints are still the canonical interface — they handle the
+ * mark-as-read calls for any future non-Blazor UI.
  *@
 @using System.Security.Claims
-@using Microsoft.EntityFrameworkCore
-@using NickERP.Platform.Audit.Database
+@using NickERP.Inspection.Web.Services
 @using NickERP.Platform.Identity.Auth
-@inject AuditDbContext Audit
+@inject NotificationInboxService Inbox
 @inject AuthenticationStateProvider AuthState
 @implements IDisposable
 
@@ -58,16 +62,11 @@
             return;
         }
 
-        // RLS narrows by tenant + user (FU-userid). The `n.UserId == userId`
-        // clause stays as a defence-in-depth guard you can re-enable if RLS
-        // ever regresses — comment it back in to make a regression loud
-        // rather than silent.
-        // User filter now enforced at RLS layer (FU-userid). The line stays
-        // as a defence-in-depth guard you can re-enable if RLS ever regresses.
-        _unreadCount = await Audit.Notifications
-            .AsNoTracking()
-            .Where(n => /* n.UserId == userId && */ n.ReadAt == null)
-            .CountAsync();
+        // Sprint 35 / B8.1 — wire bell to NotificationInboxService so the
+        // bell + page share the same COUNT path. RLS narrows by tenant +
+        // user (FU-userid); the service threads userId through as a
+        // defence-in-depth guard.
+        _unreadCount = await Inbox.UnreadCountAsync(userId);
     }
 
     /// <inheritdoc />
