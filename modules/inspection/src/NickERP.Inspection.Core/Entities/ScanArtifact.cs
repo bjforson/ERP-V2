@@ -1,3 +1,4 @@
+using NickERP.Inspection.Core.Retention;
 using NickERP.Platform.Tenancy.Entities;
 
 namespace NickERP.Inspection.Core.Entities;
@@ -35,6 +36,37 @@ public sealed class ScanArtifact : ITenantOwned
     public string MetadataJson { get; set; } = "{}";
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Sprint 39 — retention posture for this artifact. Mirrors
+    /// <see cref="InspectionCase.RetentionClass"/>: cascades on case-level
+    /// reclassify by default, but artifacts can be held independently of
+    /// their parent case for evidentiary subpoena scope.
+    /// </summary>
+    public RetentionClass RetentionClass { get; set; } = RetentionClass.Standard;
+
+    /// <summary>Sprint 39 — wallclock the current retention class was assigned.</summary>
+    public DateTimeOffset? RetentionClassSetAt { get; set; }
+
+    /// <summary>Sprint 39 — Identity user id of the operator who set the current retention class.</summary>
+    public Guid? RetentionClassSetByUserId { get; set; }
+
+    /// <summary>
+    /// Sprint 39 — legal-hold flag. Set on every artifact under a case
+    /// when <c>RetentionService.ApplyLegalHoldAsync</c> cascades; can
+    /// also be set independently on a single artifact for narrow
+    /// evidentiary subpoena scope.
+    /// </summary>
+    public bool LegalHold { get; set; }
+
+    /// <summary>Sprint 39 — wallclock the legal hold was applied. Persists after release.</summary>
+    public DateTimeOffset? LegalHoldAppliedAt { get; set; }
+
+    /// <summary>Sprint 39 — operator who applied the most-recent hold. Persists after release.</summary>
+    public Guid? LegalHoldAppliedByUserId { get; set; }
+
+    /// <summary>Sprint 39 — free-text reason. Bounded to 500 chars. Persists after release.</summary>
+    public string? LegalHoldReason { get; set; }
 
     public long TenantId { get; set; }
 }
