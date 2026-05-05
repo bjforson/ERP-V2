@@ -241,36 +241,66 @@ artifacts checked into the source tree, not generated on the box.
 
 ### 4.5 Backup verification
 
-**Mandatory.** Before running anything, take a full backup of all
-three DBs and verify it is restorable. The runbook does not include
-a rollback that recovers from a corrupt apply — restoring from
-backup is the only path back from "the script ran but the schema is
-wrong".
+**Mandatory.** Before running anything, take a full cluster backup
+and verify it is restorable. The runbook does not include a rollback
+that recovers from a corrupt apply — restoring from backup is the
+only path back from "the script ran but the schema is wrong".
+
+**Preferred path (pgbackrest, post-Sprint-27).** If pgbackrest is
+configured for the cluster — i.e. the §5 stand-up of
+[`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+has run and `pgbackrest --stanza=nickerp info` returns a
+`status: ok` row — take a full cluster backup via pgbackrest:
 
 ```bash
-TS=$(date +%Y%m%d-%H%M%S)
-mkdir -p "/c/Shared/Backups/$TS"
+sudo -u postgres pgbackrest --stanza=nickerp --type=full backup
 
-PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" \
-  '/c/Program Files/PostgreSQL/18/bin/pg_dump.exe' \
-  -U postgres -d nickerp_platform -Fc \
-  -f "/c/Shared/Backups/$TS/nickerp_platform.dump"
-
-PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" \
-  '/c/Program Files/PostgreSQL/18/bin/pg_dump.exe' \
-  -U postgres -d nickerp_inspection -Fc \
-  -f "/c/Shared/Backups/$TS/nickerp_inspection.dump"
-
-PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" \
-  '/c/Program Files/PostgreSQL/18/bin/pg_dump.exe' \
-  -U postgres -d nickerp_nickfinance -Fc \
-  -f "/c/Shared/Backups/$TS/nickerp_nickfinance.dump"
-
-ls -la "/c/Shared/Backups/$TS/"
-# Expected: three .dump files of non-zero size.
+# Verify the new backup landed.
+sudo -u postgres pgbackrest --stanza=nickerp info
+# Expected: a fresh "full backup: <YYYYMMDD-HHMMSS>F" row at the top
+# with status 'ok' and a recent timestamp.
 ```
 
-Do **not** proceed if `pg_dump` failed for any of the three DBs.
+A pgbackrest full covers every database in the cluster
+(`nickerp_platform`, `nickerp_inspection`, `nickerp_nickfinance`)
+in one operation — no per-DB invocation needed. Restore-from-this
+shape is [`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+§7 (PITR / `--type=immediate` to roll back to this exact backup).
+
+> **Pre-pgbackrest fallback.** On a host where pgbackrest has not
+> yet been stood up (the v0 dev box pre-Sprint-27, or a host that
+> hasn't completed runbook 10 §5), use the per-DB `pg_dump` shape
+> below instead. It produces three discrete `.dump` files that
+> `pg_restore` can apply individually (§7.3) — slower than a
+> cluster-level pgbackrest restore but doesn't depend on stanza
+> config. Migrate to the pgbackrest shape above as soon as runbook
+> 10 §5 has run for this host.
+>
+> ```bash
+> TS=$(date +%Y%m%d-%H%M%S)
+> mkdir -p "/c/Shared/Backups/$TS"
+>
+> PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" \
+>   '/c/Program Files/PostgreSQL/18/bin/pg_dump.exe' \
+>   -U postgres -d nickerp_platform -Fc \
+>   -f "/c/Shared/Backups/$TS/nickerp_platform.dump"
+>
+> PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" \
+>   '/c/Program Files/PostgreSQL/18/bin/pg_dump.exe' \
+>   -U postgres -d nickerp_inspection -Fc \
+>   -f "/c/Shared/Backups/$TS/nickerp_inspection.dump"
+>
+> PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" \
+>   '/c/Program Files/PostgreSQL/18/bin/pg_dump.exe' \
+>   -U postgres -d nickerp_nickfinance -Fc \
+>   -f "/c/Shared/Backups/$TS/nickerp_nickfinance.dump"
+>
+> ls -la "/c/Shared/Backups/$TS/"
+> # Expected: three .dump files of non-zero size.
+> ```
+
+Do **not** proceed if either the pgbackrest backup or the fallback
+`pg_dump` failed.
 
 ## 5. Resolution — applying the scripts
 
@@ -644,7 +674,34 @@ ones worth knowing about:
 
 ### 7.3 Hard rollback ("the cutover is wrong, restore the world")
 
-Restore from the §4.5 dumps:
+Two paths depending on which §4.5 shape captured the pre-apply state.
+
+**If §4.5 used the pgbackrest path:** restore the cluster to the
+backup taken just before §5 via
+[`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+§7. The relevant invocation:
+
+```bash
+sudo systemctl stop postgresql
+
+# Restore to the backup label captured at §4.5 — pgbackrest info
+# lists labels as "<YYYYMMDD-HHMMSS>F" (e.g. 20260504-120000F).
+sudo -u postgres pgbackrest --stanza=nickerp \
+  --type=immediate \
+  --set=<the-label-from-4.5> \
+  --target-action=promote \
+  restore
+
+sudo systemctl start postgresql
+```
+
+A pgbackrest restore overwrites the entire cluster
+(`nickerp_platform`, `nickerp_inspection`, `nickerp_nickfinance` —
+plus any other DBs in the same cluster) in one operation. Rebuild
+the standby afterwards per runbook 09 §8.1.
+
+**If §4.5 used the per-DB `pg_dump` fallback:** restore each DB
+individually:
 
 ```bash
 PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" \
