@@ -52,15 +52,11 @@
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.9.0.20240103" />
   </ItemGroup>
 
-  <!-- The OCR.ContainerNumber plugin transitively pulls SixLabors.ImageSharp
-       3.1.10 which has a known moderate-severity vulnerability (NU1902).
-       We don't decode plate ROIs through ImageSharp here (OpenCvSharp does
-       the work). Suppress the transitive warning at the harness level —
-       the plugin owns the upgrade decision and Sprint 19 is not the place
-       to bump it.  -->
-  <ItemGroup>
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rxmq-m78w-7wmc" />
-  </ItemGroup>
+  <!-- Sprint 32 FU-A: The OCR.ContainerNumber plugin's ImageSharp dep was
+       bumped 3.1.10 -> 3.1.11 to clear GHSA-rxmq-m78w-7wmc (moderate). The
+       NuGetAuditSuppress that previously masked the transitive warning at
+       this harness level is removed — the upstream is now patched, so the
+       warning is gone at the source. -->
 
   <ItemGroup>
     <!-- Reference the v2 contract so the harness can speak the same

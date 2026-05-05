@@ -27,7 +27,8 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
+    <!-- Bumped 3.1.10 -> 3.1.11 (Sprint 32 FU-A) for GHSA-rxmq-m78w-7wmc. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
   </ItemGroup>
 
   <ItemGroup>
