@@ -147,31 +147,31 @@ public sealed class ReportsServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task Sla_summary_returns_NotEnabled_when_table_absent()
+    public async Task Sla_summary_returns_enabled_with_zero_counts_when_no_windows()
     {
-        // Vanilla InspectionDbContext does not yet map an SlaWindow
-        // entity (Sprint 31 ships it); the service must degrade.
+        // Sprint 31 has shipped the SlaWindow entity; with an empty
+        // table the service returns IsEnabled=true and zero counts
+        // across the board. (The Sprint-33 "table absent" defensive
+        // path is still in the service for the migration-not-applied
+        // edge case but no longer reachable in this fixture.)
         using var scope = _sp.CreateScope();
         var svc = scope.ServiceProvider.GetRequiredService<ReportsService>();
         var sla = await svc.GetSlaSummaryAsync();
 
-        sla.IsEnabled.Should().BeFalse();
+        sla.IsEnabled.Should().BeTrue();
         sla.OpenWindowCount.Should().Be(0);
         sla.BreachCount.Should().Be(0);
         sla.AtRiskCount.Should().Be(0);
-        sla.Note.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
     [Trait("Category", "Unit")]
     public async Task Sla_summary_uses_typed_reader_when_subclass_overrides_hook()
     {
-        // Simulate Sprint 31 having shipped: a subclass returns a
-        // populated SlaSummary. The base class checks for an entity
-        // type named SlaWindow, which won't exist on the in-memory
-        // model — but the typed reader is the canonical extension
-        // point. To test the typed path on its own, we exercise it
-        // via the non-default hook.
+        // The typed-reader hook (TryGetTypedSlaSummaryAsync) remains
+        // protected virtual so future evolutions can substitute their
+        // own read shape (snapshot tables / projector views). Verify
+        // a subclass override is honoured end-to-end.
         using var scope = _sp.CreateScope();
         var sp = scope.ServiceProvider;
         var typedSvc = new TypedSlaReportsService(
@@ -182,11 +182,6 @@ public sealed class ReportsServiceTests : IDisposable
             NullLogger<ReportsService>.Instance,
             new SlaSummary(IsEnabled: true, OpenWindowCount: 5, BreachCount: 2, AtRiskCount: 1, Note: null));
 
-        var sla = await typedSvc.GetSlaSummaryAsync();
-
-        // Base class probes the model first — when the entity isn't
-        // present we still get NotEnabled. The typed-reader hook
-        // exercises the live path explicitly via a direct invocation.
         var typedResult = await typedSvc.InvokeTypedAsync(_clock.GetUtcNow());
         typedResult.Should().NotBeNull();
         typedResult!.IsEnabled.Should().BeTrue();
@@ -194,9 +189,13 @@ public sealed class ReportsServiceTests : IDisposable
         typedResult.BreachCount.Should().Be(2);
         typedResult.AtRiskCount.Should().Be(1);
 
-        // And in the absence of a model entity, GetSlaSummaryAsync still
-        // degrades to NotEnabled — the probe-first behaviour is intact.
-        sla.IsEnabled.Should().BeFalse();
+        // Subclass override takes precedence over the base class's
+        // typed query against SlaWindow.
+        var sla = await typedSvc.GetSlaSummaryAsync();
+        sla.IsEnabled.Should().BeTrue();
+        sla.OpenWindowCount.Should().Be(5);
+        sla.BreachCount.Should().Be(2);
+        sla.AtRiskCount.Should().Be(1);
     }
 
     // -----------------------------------------------------------------

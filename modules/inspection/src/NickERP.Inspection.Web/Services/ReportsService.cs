@@ -293,21 +293,27 @@ public class ReportsService
     }
 
     /// <summary>
-    /// Strongly-typed SLA reader hook. Returns <c>null</c> when the
-    /// Sprint 31 entity isn't compiled into this build; tests can
-    /// substitute via subclass to exercise the live path. This indirection
-    /// keeps Sprint 33 from taking a hard project ref on entities that
-    /// don't exist yet at the time of writing.
+    /// Strongly-typed SLA reader hook. Sprint 31 has shipped the
+    /// <see cref="SlaWindow"/> entity, so the base implementation now
+    /// queries the typed DbSet directly. Kept <c>protected virtual</c>
+    /// so future evolutions (e.g. snapshot-table read or projector view)
+    /// can override without rewriting the public surface.
     /// </summary>
-    /// <remarks>
-    /// When Sprint 31 merges, this hook becomes the natural extension
-    /// point — drop the reflection probe and call the typed DbSet
-    /// directly here.
-    /// </remarks>
-    protected virtual Task<SlaSummary?> TryGetTypedSlaSummaryAsync(
+    protected virtual async Task<SlaSummary?> TryGetTypedSlaSummaryAsync(
         DateTimeOffset now,
         CancellationToken ct)
-        => Task.FromResult<SlaSummary?>(null);
+    {
+        var query = _db.Set<SlaWindow>().AsNoTracking();
+        var open = await query.Where(w => w.ClosedAt == null).CountAsync(ct).ConfigureAwait(false);
+        var breached = await query.Where(w => w.State == SlaWindowState.Breached).CountAsync(ct).ConfigureAwait(false);
+        var atRisk = await query.Where(w => w.State == SlaWindowState.AtRisk).CountAsync(ct).ConfigureAwait(false);
+        return new SlaSummary(
+            IsEnabled: true,
+            OpenWindowCount: open,
+            BreachCount: breached,
+            AtRiskCount: atRisk,
+            Note: null);
+    }
 
     private static bool IsRelationDoesNotExist(Exception ex)
     {

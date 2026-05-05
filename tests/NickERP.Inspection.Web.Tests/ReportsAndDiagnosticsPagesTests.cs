@@ -84,9 +84,9 @@ public sealed class ReportsAndDiagnosticsPagesTests : IDisposable
         markup.Should().Contain("SLA windows");
         markup.Should().Contain("Errors");
         markup.Should().Contain("Audit activity");
-        // Sprint 31 race: SLA card must surface the "Pending" badge in
-        // the absence of the SlaWindow entity.
-        markup.Should().Contain("Pending");
+        // Sprint 31 has shipped — SLA card now reads against the
+        // typed SlaWindow DbSet. Empty fixture surfaces the zero-state
+        // version of the live card rather than the "Pending" placeholder.
     }
 
     [Fact]
