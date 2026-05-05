@@ -64,6 +64,24 @@ public sealed class TenancyDbContext : DbContext
     /// </summary>
     public DbSet<TenantSlaSetting> TenantSlaSettings => Set<TenantSlaSetting>();
 
+    /// <summary>
+    /// Sprint 35 / B8.2 — per-tenant feature flag rows. Sparse rows —
+    /// a missing row implies "use the default the calling code passed
+    /// to <c>IFeatureFlagService.IsEnabledAsync</c>". Tenant-scoped +
+    /// RLS-enforced via <c>tenant_isolation_feature_flags</c>.
+    /// </summary>
+    public DbSet<FeatureFlag> FeatureFlags => Set<FeatureFlag>();
+
+    /// <summary>
+    /// Sprint 35 / B8.2 — generic per-tenant key/value settings table
+    /// (default SLA budgets, retention windows, comms-gateway endpoints).
+    /// Sparse rows — a missing row implies "use the default the calling
+    /// code passed to <c>ITenantSettingsService.GetAsync</c>".
+    /// Tenant-scoped + RLS-enforced via
+    /// <c>tenant_isolation_tenant_settings</c>.
+    /// </summary>
+    public DbSet<TenantSetting> TenantSettings => Set<TenantSetting>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -283,6 +301,48 @@ public sealed class TenancyDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.WindowName })
                 .IsUnique()
                 .HasDatabaseName("ux_tenant_sla_settings_tenant_window");
+        });
+
+        // Sprint 35 / B8.2 — per-tenant feature flag rows. Same posture
+        // as the Sprint 28 validation-rule settings: sparse rows,
+        // RLS-enforced, ITenantOwned, no DELETE in the role grants.
+        modelBuilder.Entity<FeatureFlag>(e =>
+        {
+            e.ToTable("feature_flags");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.FlagKey).IsRequired().HasMaxLength(128);
+            e.Property(x => x.Enabled).IsRequired();
+            e.Property(x => x.UpdatedAt).IsRequired();
+            e.Property(x => x.UpdatedByUserId);
+
+            // Unique index — one row per (TenantId, FlagKey). Backs
+            // the upsert path in FeatureFlagService.SetAsync.
+            e.HasIndex(x => new { x.TenantId, x.FlagKey })
+                .IsUnique()
+                .HasDatabaseName("ux_feature_flags_tenant_flag");
+        });
+
+        // Sprint 35 / B8.2 — generic per-tenant key/value settings.
+        // Same shape as FeatureFlag but with a string Value instead of
+        // a bool Enabled.
+        modelBuilder.Entity<TenantSetting>(e =>
+        {
+            e.ToTable("tenant_settings");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.SettingKey).IsRequired().HasMaxLength(128);
+            // text — no length cap. SMTP hostnames, JSON snippets,
+            // multi-line PEM material can all live here.
+            e.Property(x => x.Value).IsRequired().HasColumnType("text");
+            e.Property(x => x.UpdatedAt).IsRequired();
+            e.Property(x => x.UpdatedByUserId);
+
+            e.HasIndex(x => new { x.TenantId, x.SettingKey })
+                .IsUnique()
+                .HasDatabaseName("ux_tenant_settings_tenant_key");
         });
     }
 }
