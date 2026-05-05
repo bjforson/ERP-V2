@@ -35,6 +35,12 @@ public static class ServiceCollectionExtensions
 
         services.TryAddScoped<ValidationEngine>();
 
+        // Sprint 48 / Phase B — snapshot reader so /cases/{id} can
+        // hydrate the validation pane on cold reload without re-running
+        // the engine. Backed by InspectionDbContext; every host that
+        // already wires the DbContext gets this for free.
+        services.TryAddScoped<IValidationSnapshotReader, DbValidationSnapshotReader>();
+
         // Built-in vendor-neutral rules — every host gets these by
         // default. Adapter / plugin rules add themselves separately
         // (e.g. AddCustomsGhValidation in the Authorities.CustomsGh
