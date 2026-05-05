@@ -51,6 +51,9 @@
   <Folder Name="/tools/inference-evaluation/">
     <Project Path="tools/inference-evaluation/container-ocr/NickERP.Tools.OcrEvaluation.csproj" />
   </Folder>
+  <Folder Name="/tools/perf-seed/">
+    <Project Path="tools/perf-seed/NickERP.Tools.PerfSeed.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/NickERP.EdgeNode.Tests/NickERP.EdgeNode.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Authorities.CustomsGh.Tests/NickERP.Inspection.Authorities.CustomsGh.Tests.csproj" />

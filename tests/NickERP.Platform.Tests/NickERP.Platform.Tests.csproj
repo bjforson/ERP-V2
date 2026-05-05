@@ -16,6 +16,10 @@
          The portal project ref drags Web.Shared along transitively. -->
     <ProjectReference Include="..\..\platform\NickERP.Platform.Web.Shared\NickERP.Platform.Web.Shared.csproj" />
     <ProjectReference Include="..\..\apps\portal\NickERP.Portal.csproj" />
+    <!-- Sprint 52 / FU-perf-tenant-data-shape — smoke test for the perf-seed
+         tool. The reference does not pull anything heavy; the seeder is a
+         tiny console-grade class that drives EF directly. -->
+    <ProjectReference Include="..\..\tools\perf-seed\NickERP.Tools.PerfSeed.csproj" />
   </ItemGroup>
 
   <ItemGroup>
