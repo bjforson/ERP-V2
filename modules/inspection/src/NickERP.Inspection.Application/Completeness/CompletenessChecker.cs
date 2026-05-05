@@ -390,6 +390,13 @@ public sealed class CompletenessChecker : ICompletenessChecker
                 TimeToDecisionMs = 0,
                 ConfidenceScore = 1.0,
                 CreatedAt = now,
+                // Sprint 42 / FU-engine-emitted-reviewtype-tagging — engine-
+                // emitted reviews ship with ReviewType.EngineCompleteness so
+                // the /admin/reviews/throughput dashboard can split
+                // completeness-engine output from human-emitted reviews.
+                // Sprint 34 left this defaulting to ReviewType.Standard;
+                // the followup wires the explicit type through.
+                ReviewType = ReviewType.EngineCompleteness,
                 TenantId = tenantId
             };
             _db.AnalystReviews.Add(syntheticReview);

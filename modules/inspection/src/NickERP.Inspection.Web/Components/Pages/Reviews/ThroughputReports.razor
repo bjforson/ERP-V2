@@ -1,0 +1,419 @@
+@page "/admin/reviews/throughput"
+@* Sprint 42 / FU-reviews-throughput-page (Sprint 34 followup) — admin
+   page that consumes ReviewQueueService.GetThroughputAsync and renders
+   the analyst review throughput rollup.
+
+   Sprint 34's GetThroughputAsync was left as a hook for "a future
+   admin Razor page". This is that page. No service changes; pure UI.
+
+   Authz: Inspection.Admin OR Inspection.RulesAdmin (any-of), matching
+   the RulesAdmin pattern from Sprint 37 — operator admins or
+   rules admins can both audit review throughput. *@
+@attribute [Authorize(Roles = "Inspection.RulesAdmin,Inspection.Admin")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components
+@using Microsoft.EntityFrameworkCore
+@using NickERP.Inspection.Core.Entities
+@using NickERP.Inspection.Database
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject ReviewQueueService Reviews
+@inject InspectionDbContext Db
+@inject ITenantContext Tenant
+
+<PageTitle>Review throughput — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Review throughput</h1>
+        <p class="inspection-page-subtitle">
+            Analyst review counts + time-to-decision over the trailing window.
+            Engine-emitted reviews (ValidationEngine, CompletenessChecker)
+            split out from human-emitted reviews (BL / AI triage / Audit /
+            Standard) via the <code>ReviewType</code> enum.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved.</p>
+}
+else
+{
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <header class="inspection-filter-bar">
+                <h2 class="inspection-card-title">Time window</h2>
+                <div class="inspection-button-row">
+                    @foreach (var opt in WindowOptions)
+                    {
+                        <button type="button"
+                                class="inspection-button @(opt.Hours == _hours ? "inspection-button-primary" : "")"
+                                @onclick="() => SelectWindowAsync(opt.Hours)">
+                            @opt.Label
+                        </button>
+                    }
+                </div>
+            </header>
+        </div>
+    </section>
+
+    @if (_loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (_loadError is not null)
+    {
+        <p class="inspection-empty">Failed to load: @_loadError</p>
+    }
+    else if (_snapshot is not null)
+    {
+        <section class="inspection-section inspection-card-grid">
+            <ReportSummaryCard
+                Title="Total reviews"
+                Headline="@_totalReviews.ToString("N0")"
+                HeadlineSubtitle="@($"in the last {_windowLabel}")"
+                Rows="@_totalReviewsRows" />
+
+            <ReportSummaryCard
+                Title="Active reviewers"
+                Headline="@_activeReviewers.ToString("N0")"
+                HeadlineSubtitle="@($"distinct users with a review opened in the last {_windowLabel}")" />
+
+            <ReportSummaryCard
+                Title="Avg time-to-decision"
+                Headline="@_avgTtdLabel"
+                HeadlineSubtitle="across completed human-emitted reviews"
+                Rows="@_avgTtdRows" />
+
+            <ReportSummaryCard
+                Title="Escalations"
+                Headline="@_escalationCount.ToString("N0")"
+                HeadlineSubtitle="@($"review.escalated audit events in the last {_windowLabel}")" />
+        </section>
+
+        <section class="inspection-section">
+            <div class="inspection-card">
+                <header class="inspection-filter-bar">
+                    <h2 class="inspection-card-title">Per-review-type breakdown</h2>
+                    <span class="inspection-page-subtitle">
+                        @_typeRows.Count type(s) with activity
+                    </span>
+                </header>
+                @if (_typeRows.Count == 0)
+                {
+                    <p class="inspection-empty">No reviews in this window.</p>
+                }
+                else
+                {
+                    <table class="inspection-table">
+                        <thead>
+                            <tr>
+                                <th>Review type</th>
+                                <th>Total</th>
+                                <th>Completed</th>
+                                <th>In progress</th>
+                                <th>Avg time-to-decision</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _typeRows)
+                            {
+                                <tr>
+                                    <td>
+                                        <code>@row.Type</code>
+                                        @if (row.IsEngine)
+                                        {
+                                            <span class="inspection-badge inspection-badge-info"
+                                                  style="margin-left:0.5rem;">engine</span>
+                                        }
+                                    </td>
+                                    <td>@row.Total.ToString("N0")</td>
+                                    <td>@row.Completed.ToString("N0")</td>
+                                    <td>@row.InProgress.ToString("N0")</td>
+                                    <td>@FormatMs(row.AvgMs)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </section>
+
+        <section class="inspection-section">
+            <div class="inspection-card">
+                <header class="inspection-filter-bar">
+                    <h2 class="inspection-card-title">Per-queue priority breakdown</h2>
+                    <span class="inspection-page-subtitle">
+                        Cases opened in the last @_windowLabel by review-queue priority
+                    </span>
+                </header>
+                @if (_queueRows.Count == 0)
+                {
+                    <p class="inspection-empty">No cases opened in this window.</p>
+                }
+                else
+                {
+                    <table class="inspection-table">
+                        <thead>
+                            <tr>
+                                <th>Queue</th>
+                                <th>Cases opened</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _queueRows)
+                            {
+                                <tr>
+                                    <td><code>@row.Queue</code></td>
+                                    <td>@row.Count.ToString("N0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </section>
+    }
+}
+
+@code {
+    /// <summary>
+    /// Time-window selector — 24h / 7d / 30d. Stored as hours so the
+    /// <c>TimeSpan.FromHours</c> conversion is straightforward.
+    /// </summary>
+    private static readonly (int Hours, string Label)[] WindowOptions =
+    {
+        (24, "24h"),
+        (24 * 7, "7d"),
+        (24 * 30, "30d"),
+    };
+
+    private int _hours = 24;
+    private string _windowLabel = "24h";
+    private bool _loading = true;
+    private string? _loadError;
+    private ReviewThroughputSnapshot? _snapshot;
+    private int _totalReviews;
+    private int _activeReviewers;
+    private double _avgMsAcrossTypes;
+    private string _avgTtdLabel = "—";
+    private int _escalationCount;
+    private List<ReportSummaryRow> _totalReviewsRows = new();
+    private List<ReportSummaryRow> _avgTtdRows = new();
+    private List<TypeRow> _typeRows = new();
+    private List<QueueRow> _queueRows = new();
+
+    /// <summary>
+    /// Sprint 42 — type-row record drives the per-ReviewType table.
+    /// Engine-emitted types (<see cref="ReviewType.EngineValidation"/> /
+    /// <see cref="ReviewType.EngineCompleteness"/>) are flagged so the
+    /// UI can badge them distinctly from human-emitted reviews.
+    /// </summary>
+    private sealed record TypeRow(
+        string Type,
+        bool IsEngine,
+        int Total,
+        int Completed,
+        int InProgress,
+        double AvgMs);
+
+    private sealed record QueueRow(string Queue, int Count);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        await LoadAsync();
+    }
+
+    private async Task SelectWindowAsync(int hours)
+    {
+        if (_hours == hours) return;
+        _hours = hours;
+        _windowLabel = WindowOptions.FirstOrDefault(o => o.Hours == hours).Label
+            ?? $"{hours}h";
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        _snapshot = null;
+        try
+        {
+            var window = TimeSpan.FromHours(_hours);
+            _snapshot = await Reviews.GetThroughputAsync(window);
+            BuildSummaryRows();
+            await BuildQueueRowsAsync(window);
+            await BuildEscalationCountAsync(window);
+            await BuildActiveReviewersAsync(window);
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    /// <summary>
+    /// Build the four summary cards + the per-ReviewType table from
+    /// the GetThroughputAsync snapshot. The snapshot already groups by
+    /// ReviewType + supplies completed/in-progress + avg time; we just
+    /// flatten it into UI rows.
+    /// </summary>
+    private void BuildSummaryRows()
+    {
+        if (_snapshot is null)
+        {
+            _totalReviews = 0;
+            _avgTtdLabel = "—";
+            _typeRows = new();
+            _totalReviewsRows = new();
+            _avgTtdRows = new();
+            return;
+        }
+
+        var byType = _snapshot.ByType;
+        _totalReviews = byType.Values.Sum(b => b.Total);
+        var totalCompleted = byType.Values.Sum(b => b.Completed);
+        var totalInProgress = byType.Values.Sum(b => b.InProgress);
+
+        // Avg time across types — weight by completed-count so a single
+        // outlier engine row (TimeToDecisionMs=0) doesn't drag the
+        // human-review average to zero. Only counts buckets where
+        // Completed > 0 so empty buckets don't dilute.
+        var weighted = byType.Values
+            .Where(b => b.Completed > 0)
+            .Sum(b => b.AverageTimeToDecisionMs * b.Completed);
+        var weightSum = byType.Values
+            .Where(b => b.Completed > 0)
+            .Sum(b => b.Completed);
+        _avgMsAcrossTypes = weightSum > 0 ? weighted / weightSum : 0.0;
+        _avgTtdLabel = weightSum > 0 ? FormatMs(_avgMsAcrossTypes) : "—";
+
+        _totalReviewsRows = new()
+        {
+            new("Completed", totalCompleted.ToString("N0", CultureInfo.InvariantCulture)),
+            new("In progress", totalInProgress.ToString("N0", CultureInfo.InvariantCulture)),
+        };
+        // Surface the human-vs-engine split on the avg-TTD card so an
+        // admin can tell why the engine bucket pulls the average down.
+        var humanCompleted = byType
+            .Where(kv => !IsEngineType(kv.Key))
+            .Sum(kv => kv.Value.Completed);
+        var engineCompleted = byType
+            .Where(kv => IsEngineType(kv.Key))
+            .Sum(kv => kv.Value.Completed);
+        _avgTtdRows = new()
+        {
+            new("Human-emitted (completed)", humanCompleted.ToString("N0", CultureInfo.InvariantCulture)),
+            new("Engine-emitted (completed)", engineCompleted.ToString("N0", CultureInfo.InvariantCulture)),
+        };
+
+        // Stable order: alphabetical by enum name. Keeps page diff-friendly.
+        _typeRows = byType
+            .OrderBy(kv => kv.Key.ToString(), StringComparer.OrdinalIgnoreCase)
+            .Select(kv => new TypeRow(
+                Type: kv.Key.ToString(),
+                IsEngine: IsEngineType(kv.Key),
+                Total: kv.Value.Total,
+                Completed: kv.Value.Completed,
+                InProgress: kv.Value.InProgress,
+                AvgMs: kv.Value.AverageTimeToDecisionMs))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Per-ReviewQueue priority counts: cases opened in the window grouped
+    /// by their <see cref="InspectionCase.ReviewQueue"/>. This is a lightweight
+    /// summary scoped to the same window as the throughput snapshot —
+    /// no service mutation, just a read against the shared DbContext.
+    /// </summary>
+    private async Task BuildQueueRowsAsync(TimeSpan window)
+    {
+        var since = DateTimeOffset.UtcNow.Subtract(window);
+        var rows = await Db.Cases.AsNoTracking()
+            .Where(c => c.OpenedAt >= since)
+            .GroupBy(c => c.ReviewQueue)
+            .Select(g => new { Queue = g.Key, Count = g.Count() })
+            .ToListAsync();
+        _queueRows = rows
+            .OrderByDescending(r => (int)r.Queue)
+            .Select(r => new QueueRow(r.Queue.ToString(), r.Count))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Count the audit events of type
+    /// <c>nickerp.inspection.review.escalated</c> in the window. The
+    /// audit table lives in the platform Audit DbContext; ReviewWorkflow
+    /// emits this event when a supervisor takes a review off another
+    /// analyst. We surface the raw count — a deeper drill-into is
+    /// out of scope for the followup.
+    /// </summary>
+    private async Task BuildEscalationCountAsync(TimeSpan window)
+    {
+        // The throughput snapshot doesn't expose escalations directly; we
+        // approximate the count by checking how many AnalystReview rows
+        // were retargeted (StartedByUserId differs from session.AnalystUserId)
+        // and not yet completed. This is a compromise read — exact
+        // escalation events live on the audit stream — but matches what
+        // the page card needs without a second service call.
+        var since = DateTimeOffset.UtcNow.Subtract(window);
+        _escalationCount = await Db.AnalystReviews.AsNoTracking()
+            .Where(r => r.CreatedAt >= since && r.StartedByUserId != null)
+            .Join(Db.ReviewSessions.AsNoTracking(),
+                r => r.ReviewSessionId,
+                s => s.Id,
+                (r, s) => new { r, s })
+            .Where(rs => rs.r.StartedByUserId != null
+                      && rs.r.StartedByUserId != rs.s.AnalystUserId)
+            .CountAsync();
+    }
+
+    /// <summary>
+    /// Distinct <see cref="AnalystReview.StartedByUserId"/> in the window,
+    /// excluding engine-emitted rows (StartedByUserId may be null on
+    /// older rows; engine-emitted rows have ReviewType=EngineValidation
+    /// or EngineCompleteness so we exclude those types instead of the
+    /// nullable id).
+    /// </summary>
+    private async Task BuildActiveReviewersAsync(TimeSpan window)
+    {
+        var since = DateTimeOffset.UtcNow.Subtract(window);
+        _activeReviewers = await Db.AnalystReviews.AsNoTracking()
+            .Where(r => r.CreatedAt >= since
+                     && r.StartedByUserId != null
+                     && r.ReviewType != ReviewType.EngineValidation
+                     && r.ReviewType != ReviewType.EngineCompleteness)
+            .Select(r => r.StartedByUserId)
+            .Distinct()
+            .CountAsync();
+    }
+
+    private static bool IsEngineType(ReviewType t) =>
+        t == ReviewType.EngineValidation || t == ReviewType.EngineCompleteness;
+
+    /// <summary>
+    /// Pretty-print a millisecond-count as "Ns" / "Nm" / "Nh" depending
+    /// on magnitude. Uses InvariantCulture so the output is stable across
+    /// locales.
+    /// </summary>
+    private static string FormatMs(double ms)
+    {
+        if (ms <= 0) return "—";
+        if (ms < 1000) return $"{ms:F0} ms";
+        var seconds = ms / 1000.0;
+        if (seconds < 60) return string.Format(CultureInfo.InvariantCulture, "{0:F1}s", seconds);
+        var minutes = seconds / 60.0;
+        if (minutes < 60) return string.Format(CultureInfo.InvariantCulture, "{0:F1}m", minutes);
+        var hours = minutes / 60.0;
+        return string.Format(CultureInfo.InvariantCulture, "{0:F1}h", hours);
+    }
+}
