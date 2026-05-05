@@ -212,6 +212,91 @@ public sealed class SlaDashboardService
     }
 
     /// <summary>
+    /// Sprint 49 / FU-sla-trend-sparkline — per-day trend buckets for
+    /// the dashboard's "Trend" card sparkline. Returns one row per UTC
+    /// day inside the trailing window, ordered chronologically (oldest
+    /// first) so a sparkline path renders left-to-right naturally.
+    ///
+    /// <para>Each row carries:
+    /// <list type="bullet">
+    ///   <item><c>Opened</c> — windows whose <c>StartedAt</c> falls in the bucket.</item>
+    ///   <item><c>Closed</c> — windows whose <c>ClosedAt</c> falls in the bucket.</item>
+    ///   <item><c>Breached</c> — windows that breached at any point in the bucket
+    ///         (closed-with-State=Breached anchored on ClosedAt, OR open-with-DueAt
+    ///         in the bucket and the window already past due as of "now").</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>Defaults to a 14-day window. The query pulls every window
+    /// in the [now - days .. now] range and groups in-memory; an
+    /// in-memory grouping is fine because the dashboard only renders the
+    /// last few weeks and an admin tenant has tens-to-hundreds of rows
+    /// per day at most. If that ever stops being true the read can move
+    /// to a SQL DATE_TRUNC.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<SlaTrendBucket>> GetTrendAsync(
+        int days = 14,
+        CancellationToken ct = default)
+    {
+        if (days <= 0) days = 14;
+        if (!_tenant.IsResolved)
+            throw new InvalidOperationException("SlaDashboardService cannot run without a resolved tenant context.");
+
+        var tenantId = _tenant.TenantId;
+        var now = DateTimeOffset.UtcNow;
+        // Anchor every bucket on UTC midnight of its day so timezone
+        // drift can't move a row between days mid-render.
+        var todayUtc = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        var firstBucket = todayUtc.AddDays(-(days - 1));
+        var rangeStart = firstBucket;
+        var rangeEnd = todayUtc.AddDays(1); // exclusive upper bound
+
+        // Pull every window touched by the range. A window may not have
+        // started in-range but still closed in-range, so we OR the
+        // started/closed clauses; this is a small read for typical
+        // dashboards (low hundreds of rows per day).
+        var rows = await _db.SlaWindows.AsNoTracking()
+            .Where(w => w.TenantId == tenantId
+                     && (w.StartedAt >= rangeStart
+                      || (w.ClosedAt != null && w.ClosedAt >= rangeStart)
+                      || w.DueAt >= rangeStart))
+            .Where(w => w.StartedAt < rangeEnd
+                     || (w.ClosedAt != null && w.ClosedAt < rangeEnd)
+                     || w.DueAt < rangeEnd)
+            .ToListAsync(ct);
+
+        var buckets = new List<SlaTrendBucket>(days);
+        for (var i = 0; i < days; i++)
+        {
+            var bucketStart = firstBucket.AddDays(i);
+            var bucketEnd = bucketStart.AddDays(1);
+
+            var opened = rows.Count(w => w.StartedAt >= bucketStart && w.StartedAt < bucketEnd);
+            var closed = rows.Count(w => w.ClosedAt is not null
+                                      && w.ClosedAt >= bucketStart
+                                      && w.ClosedAt < bucketEnd);
+            // Breached count: closed-and-breached anchored on ClosedAt
+            // (the natural close moment), plus open-and-past-due
+            // anchored on DueAt (the breach moment for an open row).
+            var breachedClosed = rows.Count(w => w.ClosedAt is not null
+                                              && w.State == SlaWindowState.Breached
+                                              && w.ClosedAt >= bucketStart
+                                              && w.ClosedAt < bucketEnd);
+            var breachedOpen = rows.Count(w => w.ClosedAt is null
+                                            && w.DueAt < now
+                                            && w.DueAt >= bucketStart
+                                            && w.DueAt < bucketEnd);
+
+            buckets.Add(new SlaTrendBucket(
+                Day: bucketStart,
+                Opened: opened,
+                Closed: closed,
+                Breached: breachedClosed + breachedOpen));
+        }
+        return buckets;
+    }
+
+    /// <summary>
     /// Sprint 45 / Phase D — operator-driven manual reclassify. Sets
     /// the SlaWindow's tier + flips the manual flag so the
     /// QueueEscalatorWorker leaves it alone. Returns true on success,
@@ -296,3 +381,15 @@ public sealed record SlaTierBreakdown(
     int ClosedOnTime,
     int ClosedBreached,
     int ManualCount);
+
+/// <summary>
+/// Sprint 49 / FU-sla-trend-sparkline — one day's worth of activity in
+/// the trend window. <see cref="Day"/> is the UTC midnight of the
+/// bucket; counts are inclusive of all SLA windows that opened, closed
+/// or breached inside the bucket. Buckets are returned chronologically.
+/// </summary>
+public sealed record SlaTrendBucket(
+    DateTimeOffset Day,
+    int Opened,
+    int Closed,
+    int Breached);

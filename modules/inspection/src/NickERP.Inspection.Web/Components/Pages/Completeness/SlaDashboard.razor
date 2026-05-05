@@ -54,8 +54,52 @@ else
                 </ul>
             </div>
             <div class="inspection-card">
-                <h2 class="inspection-card-title">Trend</h2>
-                <p class="inspection-empty">Chart placeholder - wire to a sparkline once Sprint 33 reports ships.</p>
+                <h2 class="inspection-card-title">Trend (14d)</h2>
+                @* Sprint 49 / FU-sla-trend-sparkline — replaces the
+                   placeholder with a server-rendered SVG sparkline.
+                   Three polylines stack on the same baseline: opened
+                   (info), closed (success), breached (danger). Pure
+                   server-rendered SVG — no client-side chart library. *@
+                @if (_trend is null || _trend.Count == 0)
+                {
+                    <p class="inspection-empty">No trend data yet.</p>
+                }
+                else
+                {
+                    <svg class="inspection-sparkline"
+                         viewBox="0 0 @SparkWidth @SparkHeight"
+                         preserveAspectRatio="none"
+                         role="img"
+                         aria-label="14-day trend of opened, closed, and breached SLA windows">
+                        <title>14-day SLA trend</title>
+                        @if (_breachedPath is not null)
+                        {
+                            <polyline class="inspection-sparkline-breached"
+                                      fill="none"
+                                      stroke-width="1.5"
+                                      points="@_breachedPath" />
+                        }
+                        @if (_openedPath is not null)
+                        {
+                            <polyline class="inspection-sparkline-opened"
+                                      fill="none"
+                                      stroke-width="1.5"
+                                      points="@_openedPath" />
+                        }
+                        @if (_closedPath is not null)
+                        {
+                            <polyline class="inspection-sparkline-closed"
+                                      fill="none"
+                                      stroke-width="1.5"
+                                      points="@_closedPath" />
+                        }
+                    </svg>
+                    <ul class="inspection-sparkline-legend">
+                        <li><span class="inspection-sparkline-swatch is-opened"></span> Opened (@_trend.Sum(t => t.Opened))</li>
+                        <li><span class="inspection-sparkline-swatch is-closed"></span> Closed (@_trend.Sum(t => t.Closed))</li>
+                        <li><span class="inspection-sparkline-swatch is-breached"></span> Breached (@_trend.Sum(t => t.Breached))</li>
+                    </ul>
+                }
             </div>
         </div>
     </section>
@@ -204,6 +248,15 @@ else
     private string? _reclassifyMessage;
     private bool _reclassifySuccess;
 
+    // Sprint 49 / FU-sla-trend-sparkline — trend buckets + the SVG
+    // path strings derived from them. Recomputed on every reload.
+    private List<SlaTrendBucket>? _trend;
+    private string? _openedPath;
+    private string? _closedPath;
+    private string? _breachedPath;
+    private const int SparkWidth = 200;
+    private const int SparkHeight = 50;
+
     protected override async Task OnInitializedAsync()
     {
         if (!Tenant.IsResolved) return;
@@ -215,6 +268,51 @@ else
         _summary = await Dashboard.BuildSummaryAsync();
         _breached = (await Dashboard.ListBreachedAsync()).ToList();
         _byTier = (await Dashboard.ListByTierAsync()).ToList();
+        _trend = (await Dashboard.GetTrendAsync()).ToList();
+        BuildSparklinePaths();
+    }
+
+    /// <summary>
+    /// Sprint 49 / FU-sla-trend-sparkline — derive three SVG polyline
+    /// "points" strings from the trend buckets. All three series share
+    /// the same vertical scale (max-of-all-three) so the relative
+    /// magnitudes read correctly. With zero data on every day we emit
+    /// flat baselines at the chart bottom.
+    /// </summary>
+    private void BuildSparklinePaths()
+    {
+        if (_trend is null || _trend.Count == 0)
+        {
+            _openedPath = _closedPath = _breachedPath = null;
+            return;
+        }
+
+        var maxValue = Math.Max(1, _trend.Max(t => Math.Max(t.Opened, Math.Max(t.Closed, t.Breached))));
+        // Pad to leave 2px on top/bottom so strokes don't clip.
+        var top = 2;
+        var bottom = SparkHeight - 2;
+        var span = bottom - top;
+
+        string PathFor(System.Func<SlaTrendBucket, int> selector)
+        {
+            // Distribute points evenly across the viewBox width.
+            var n = _trend.Count;
+            var stepX = n > 1 ? (double)SparkWidth / (n - 1) : 0;
+            var sb = new System.Text.StringBuilder();
+            for (var i = 0; i < n; i++)
+            {
+                var v = selector(_trend[i]);
+                var y = bottom - (span * v / (double)maxValue);
+                var x = i * stepX;
+                if (i > 0) sb.Append(' ');
+                sb.Append(System.FormattableString.Invariant($"{x:0.##},{y:0.##}"));
+            }
+            return sb.ToString();
+        }
+
+        _openedPath = PathFor(t => t.Opened);
+        _closedPath = PathFor(t => t.Closed);
+        _breachedPath = PathFor(t => t.Breached);
     }
 
     private bool CanReclassify() =>

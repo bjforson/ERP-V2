@@ -763,3 +763,45 @@ code {
     background: rgba(202, 138, 4, 0.10);
     border-color: rgba(202, 138, 4, 0.45);
 }
+
+/* ---------------------------------------------------------------------
+ * Sprint 49 / FU-sla-trend-sparkline — server-rendered SVG sparkline on
+ * /admin/sla. Three coloured polylines stacked on the same baseline:
+ * opened (info blue), closed (success green), breached (danger red).
+ * The SVG element scales to the card width; aspect ratio is free
+ * (preserveAspectRatio="none") so it fills the card.
+ * ------------------------------------------------------------------- */
+.inspection-sparkline {
+    display: block;
+    width: 100%;
+    height: 50px;
+    margin-top: var(--nickerp-space-2);
+}
+.inspection-sparkline-opened   { stroke: var(--nickerp-color-info, #0284c7); }
+.inspection-sparkline-closed   { stroke: var(--nickerp-color-success, #16a34a); }
+.inspection-sparkline-breached { stroke: var(--nickerp-color-danger, #dc2626); }
+
+.inspection-sparkline-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--nickerp-space-2);
+    list-style: none;
+    padding: 0;
+    margin: var(--nickerp-space-2) 0 0 0;
+    font-size: var(--nickerp-font-size-xs);
+    color: var(--nickerp-color-text-muted);
+}
+.inspection-sparkline-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.inspection-sparkline-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 2px;
+    border-radius: 1px;
+}
+.inspection-sparkline-swatch.is-opened   { background: var(--nickerp-color-info, #0284c7); }
+.inspection-sparkline-swatch.is-closed   { background: var(--nickerp-color-success, #16a34a); }
+.inspection-sparkline-swatch.is-breached { background: var(--nickerp-color-danger, #dc2626); }
