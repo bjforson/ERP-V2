@@ -117,10 +117,45 @@ public sealed class CompletenessChecker : ICompletenessChecker
         var @case = await _db.Cases.FirstOrDefaultAsync(c => c.Id == caseId, ct)
             ?? throw new InvalidOperationException($"Case {caseId} not found.");
 
-        var context = await BuildContextAsync(@case, ct);
         var settings = await _settings.GetSettingsAsync(tenantId, ct);
 
+        // Sprint 36 / FU-completeness-percent-requirements — resolve the
+        // effective numeric threshold per requirement before building
+        // the context: tenant override (settings.MinThreshold) wins;
+        // otherwise fall back to the requirement's DefaultMinThreshold.
+        // Requirements with no DefaultMinThreshold + no override don't
+        // appear in the dictionary (boolean-style requirements).
+        var thresholdSources = new Dictionary<string, ThresholdSource>(StringComparer.OrdinalIgnoreCase);
+        var thresholds = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var req in _requirements)
+        {
+            decimal? effective = null;
+            ThresholdSource source = ThresholdSource.None;
+            if (settings.TryGetValue(req.RequirementId, out var snap) && snap.MinThreshold.HasValue)
+            {
+                effective = snap.MinThreshold.Value;
+                source = ThresholdSource.TenantOverride;
+            }
+            else if (req.DefaultMinThreshold.HasValue)
+            {
+                effective = req.DefaultMinThreshold.Value;
+                source = ThresholdSource.BuiltInDefault;
+            }
+            if (effective.HasValue)
+            {
+                thresholds[req.RequirementId] = effective.Value;
+                thresholdSources[req.RequirementId] = source;
+            }
+        }
+
+        var context = await BuildContextAsync(@case, ct, thresholds);
+
         var outcomes = new List<CompletenessOutcome>(_requirements.Count);
+        // Sprint 36 / FU-completeness-percent-requirements — track which
+        // requirements actually consulted their threshold so the engine
+        // emits inspection.completeness.threshold_used only for those
+        // (saves audit-row noise for requirements that abstained).
+        var thresholdsUsed = new List<(string RequirementId, decimal Threshold, ThresholdSource Source, decimal? Observed)>();
         foreach (var req in _requirements)
         {
             if (settings.TryGetValue(req.RequirementId, out var snap) && !snap.Enabled)
@@ -159,14 +194,59 @@ public sealed class CompletenessChecker : ICompletenessChecker
                 outcome = outcome with { RequirementId = req.RequirementId };
             }
             outcomes.Add(outcome);
+
+            // Sprint 36 / FU-completeness-percent-requirements — if the
+            // requirement consulted its threshold, record it for the
+            // post-pass audit emission. Requirements signal "I used the
+            // threshold" by writing the observed value into
+            // outcome.Properties under "observedValue".
+            if (thresholds.TryGetValue(req.RequirementId, out var thr) &&
+                outcome.Properties is { } props &&
+                props.TryGetValue("observedValue", out var observedRaw) &&
+                decimal.TryParse(observedRaw, System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var observed))
+            {
+                var src = thresholdSources.GetValueOrDefault(req.RequirementId, ThresholdSource.BuiltInDefault);
+                thresholdsUsed.Add((req.RequirementId, thr, src, observed));
+            }
         }
 
         await PersistAndAuditAsync(@case, outcomes, ct);
+        await EmitThresholdAuditAsync(@case, thresholdsUsed, ct);
 
         return new CompletenessEvaluationResult(caseId, outcomes);
     }
 
-    private async Task<CompletenessContext> BuildContextAsync(InspectionCase @case, CancellationToken ct)
+    /// <summary>
+    /// Sprint 36 / FU-completeness-percent-requirements — resolve effective
+    /// numeric threshold per requirement (tenant-override → built-in
+    /// default). Exposed so callers wanting to inspect resolved
+    /// thresholds without running an evaluation (e.g. the admin UI) can
+    /// reuse the same precedence rules.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, decimal>> ResolveEffectiveThresholdsAsync(
+        long tenantId, CancellationToken ct = default)
+    {
+        var settings = await _settings.GetSettingsAsync(tenantId, ct);
+        var result = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var req in _requirements)
+        {
+            if (settings.TryGetValue(req.RequirementId, out var snap) && snap.MinThreshold.HasValue)
+            {
+                result[req.RequirementId] = snap.MinThreshold.Value;
+            }
+            else if (req.DefaultMinThreshold.HasValue)
+            {
+                result[req.RequirementId] = req.DefaultMinThreshold.Value;
+            }
+        }
+        return result;
+    }
+
+    private async Task<CompletenessContext> BuildContextAsync(
+        InspectionCase @case,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, decimal>? thresholds = null)
     {
         var scans = await _db.Scans.AsNoTracking()
             .Where(s => s.CaseId == @case.Id)
@@ -202,7 +282,75 @@ public sealed class CompletenessChecker : ICompletenessChecker
             Documents: docs,
             AnalystReviews: reviews,
             Verdicts: verdicts,
-            TenantId: @case.TenantId);
+            TenantId: @case.TenantId,
+            Thresholds: thresholds);
+    }
+
+    /// <summary>
+    /// Sprint 36 / FU-completeness-percent-requirements — emit one
+    /// <c>inspection.completeness.threshold_used</c> audit per
+    /// requirement that consulted its effective threshold during the
+    /// run. The dashboard uses these to surface "what threshold did
+    /// the engine use for this run?" without re-resolving the precedence.
+    /// </summary>
+    private async Task EmitThresholdAuditAsync(
+        InspectionCase @case,
+        IReadOnlyList<(string RequirementId, decimal Threshold, ThresholdSource Source, decimal? Observed)> consulted,
+        CancellationToken ct)
+    {
+        if (consulted.Count == 0) return;
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var entry in consulted)
+        {
+            var props = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["requirementId"] = entry.RequirementId,
+                ["threshold"] = entry.Threshold,
+                ["source"] = entry.Source switch
+                {
+                    ThresholdSource.TenantOverride => "tenant-override",
+                    ThresholdSource.BuiltInDefault => "built-in-default",
+                    _ => "none"
+                },
+                ["observedValue"] = entry.Observed
+            };
+
+            try
+            {
+                var json = JsonSerializer.SerializeToElement(props);
+                var key = IdempotencyKey.ForEntityChange(
+                    @case.TenantId, "inspection.completeness.threshold_used",
+                    "InspectionCase", @case.Id.ToString(), now);
+                var evt = DomainEvent.Create(
+                    @case.TenantId,
+                    actorUserId: null,
+                    correlationId: @case.CorrelationId,
+                    eventType: "inspection.completeness.threshold_used",
+                    entityType: "InspectionCase",
+                    entityId: @case.Id.ToString(),
+                    payload: json,
+                    idempotencyKey: key);
+                await _events.PublishAsync(evt, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to emit inspection.completeness.threshold_used for requirement {RequirementId} on case {CaseId}",
+                    entry.RequirementId, @case.Id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sprint 36 / FU-completeness-percent-requirements — origin of the
+    /// threshold the engine handed a percent-based requirement.
+    /// </summary>
+    private enum ThresholdSource
+    {
+        None = 0,
+        TenantOverride = 1,
+        BuiltInDefault = 2
     }
 
     private async Task PersistAndAuditAsync(

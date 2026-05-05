@@ -43,6 +43,10 @@ public static class ServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Scoped<ICompletenessRequirement, RequiredScanArtifactRequirement>());
         services.TryAddEnumerable(ServiceDescriptor.Scoped<ICompletenessRequirement, RequiredCustomsDeclarationRequirement>());
         services.TryAddEnumerable(ServiceDescriptor.Scoped<ICompletenessRequirement, RequiredAnalystDecisionRequirement>());
+        // Sprint 36 / FU-completeness-percent-requirements — first
+        // percent-based built-in. Reads tenant_completeness_settings.MinThreshold;
+        // defaults to 0.85 (= 85%) when no tenant override exists.
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<ICompletenessRequirement, RequiredImageCoverageRequirement>());
 
         return services;
     }

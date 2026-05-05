@@ -42,6 +42,21 @@ public interface ICompletenessRequirement
     string Description { get; }
 
     /// <summary>
+    /// Sprint 36 / FU-completeness-percent-requirements — built-in
+    /// numeric threshold for percent-based requirements, expressed as a
+    /// decimal in [0, 1] (e.g. 0.85 = 85%). Boolean requirements (e.g.
+    /// "case has at least one scan artifact") return <c>null</c>; the
+    /// engine then never consults a threshold for them.
+    /// <para>
+    /// The engine resolves the effective threshold for a percent
+    /// requirement as: per-tenant override
+    /// (<c>tenancy.tenant_completeness_settings.MinThreshold</c>) when
+    /// present and non-null, falling back to this built-in default.
+    /// </para>
+    /// </summary>
+    decimal? DefaultMinThreshold => null;
+
+    /// <summary>
     /// Evaluate the requirement against the supplied context and return
     /// the outcome. The engine calls this once per case; requirements
     /// MUST NOT throw — return a Skip with the failure reason if the
