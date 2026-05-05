@@ -195,6 +195,16 @@ public sealed class InspectionDbContext : DbContext
             // Sprint 34 / B6 — review queue priority bucket. Persisted
             // as int via HasConversion<int>() for stable wire format.
             e.Property(x => x.ReviewQueue).HasConversion<int>().IsRequired().HasDefaultValue(ReviewQueue.Standard);
+            // Sprint 39 — retention class + legal hold. Persisted as int
+            // via HasConversion<int>() for stable wire format. LegalHold
+            // defaults to false; LegalHoldReason bounded to 500 chars
+            // matching TenantState.DeletionReason.
+            e.Property(x => x.RetentionClass)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(NickERP.Inspection.Core.Retention.RetentionClass.Standard);
+            e.Property(x => x.LegalHold).IsRequired().HasDefaultValue(false);
+            e.Property(x => x.LegalHoldReason).HasMaxLength(500);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => new { x.TenantId, x.LocationId, x.State, x.OpenedAt }).HasDatabaseName("ix_cases_tenant_loc_state_time");
@@ -208,6 +218,17 @@ public sealed class InspectionDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.ReviewQueue, x.State, x.OpenedAt })
                 .IsDescending(false, true, false, false)
                 .HasDatabaseName("ix_cases_tenant_queue_state_time");
+            // Sprint 39 — supporting indexes for the RetentionEnforcerWorker
+            // hot path + the /admin/retention list view. Filtered partial
+            // index on legal-hold cases keeps it tiny (most cases never
+            // hold). The class+ClosedAt composite covers the
+            // purge-candidate selection (TenantId, RetentionClass,
+            // ClosedAt) for Standard/Extended classes.
+            e.HasIndex(x => new { x.TenantId, x.LegalHold })
+                .HasFilter("\"LegalHold\" = TRUE")
+                .HasDatabaseName("ix_cases_legal_hold");
+            e.HasIndex(x => new { x.TenantId, x.RetentionClass, x.ClosedAt })
+                .HasDatabaseName("ix_cases_retention_class");
 
             e.HasOne(x => x.Location).WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Station).WithMany().HasForeignKey(x => x.StationId).OnDelete(DeleteBehavior.SetNull);
@@ -252,10 +273,28 @@ public sealed class InspectionDbContext : DbContext
             e.Property(x => x.ContentHash).IsRequired().HasMaxLength(128);
             e.Property(x => x.MetadataJson).IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
             e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            // Sprint 39 — retention class + legal hold mirror the
+            // InspectionCase shape. Cascades on case-level reclassify
+            // by default; can be set independently for narrow subpoena
+            // scope.
+            e.Property(x => x.RetentionClass)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(NickERP.Inspection.Core.Retention.RetentionClass.Standard);
+            e.Property(x => x.LegalHold).IsRequired().HasDefaultValue(false);
+            e.Property(x => x.LegalHoldReason).HasMaxLength(500);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => x.ContentHash).HasDatabaseName("ix_scan_artifacts_content_hash");
             e.HasIndex(x => new { x.TenantId, x.ScanId }).HasDatabaseName("ix_scan_artifacts_tenant_scan");
+            // Sprint 39 — supporting indexes mirror the case-level
+            // shape. Filtered partial index on legal hold keeps it tiny
+            // (most artifacts never hold).
+            e.HasIndex(x => new { x.TenantId, x.LegalHold })
+                .HasFilter("\"LegalHold\" = TRUE")
+                .HasDatabaseName("ix_scan_artifacts_legal_hold");
+            e.HasIndex(x => new { x.TenantId, x.RetentionClass, x.CreatedAt })
+                .HasDatabaseName("ix_scan_artifacts_retention_class");
 
             e.HasMany<ScanRenderArtifact>().WithOne(r => r.ScanArtifact).HasForeignKey(r => r.ScanArtifactId).OnDelete(DeleteBehavior.Cascade);
         });

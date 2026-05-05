@@ -1,3 +1,4 @@
+using NickERP.Inspection.Core.Retention;
 using NickERP.Platform.Tenancy.Entities;
 
 namespace NickERP.Inspection.Core.Entities;
@@ -61,6 +62,61 @@ public sealed class InspectionCase : ITenantOwned
     /// settings, not here.
     /// </summary>
     public ReviewQueue ReviewQueue { get; set; } = ReviewQueue.Standard;
+
+    /// <summary>
+    /// Sprint 39 — retention posture for the case. Default
+    /// <see cref="RetentionClass.Standard"/>. Drives the
+    /// <c>RetentionEnforcerWorker</c>'s purge-candidate selection and
+    /// the <c>RetentionService</c>'s admin reclassification action.
+    /// Adopted from doc-analysis §9 + §13 + Annex D Table 35.
+    /// </summary>
+    public RetentionClass RetentionClass { get; set; } = RetentionClass.Standard;
+
+    /// <summary>
+    /// Sprint 39 — wallclock the current retention class was assigned.
+    /// Updates on every <c>RetentionService.SetRetentionClassAsync</c>
+    /// call. Captured for the audit-event payload + admin-UI history.
+    /// </summary>
+    public DateTimeOffset? RetentionClassSetAt { get; set; }
+
+    /// <summary>
+    /// Sprint 39 — Identity user id of the operator who set the current
+    /// retention class. Null when the case is at the default class
+    /// (no explicit set has happened yet).
+    /// </summary>
+    public Guid? RetentionClassSetByUserId { get; set; }
+
+    /// <summary>
+    /// Sprint 39 — legal-hold flag. When <see langword="true"/> the case
+    /// is under investigation or litigation; the
+    /// <c>RetentionEnforcerWorker</c> SKIPS this case regardless of
+    /// retention class. WORM posture is documented (the bool +
+    /// audit-trailed apply/release + cascading to artifacts gives
+    /// evidentiary handling sufficient for pilot). Real WORM (write-once
+    /// filesystem, immutable storage tier) is a post-pilot operator
+    /// decision.
+    /// </summary>
+    public bool LegalHold { get; set; }
+
+    /// <summary>
+    /// Sprint 39 — wallclock the legal hold was applied. Null when the
+    /// case is not (and never has been) under hold. Persists after
+    /// release for audit-trail continuity.
+    /// </summary>
+    public DateTimeOffset? LegalHoldAppliedAt { get; set; }
+
+    /// <summary>
+    /// Sprint 39 — Identity user id of the operator who applied the
+    /// most-recent legal hold. Persists after release.
+    /// </summary>
+    public Guid? LegalHoldAppliedByUserId { get; set; }
+
+    /// <summary>
+    /// Sprint 39 — free-text reason captured at hold-apply time
+    /// (e.g. "subpoena 24-001", "internal investigation IR-742").
+    /// Bounded to 500 chars. Persists after release.
+    /// </summary>
+    public string? LegalHoldReason { get; set; }
 
     public long TenantId { get; set; }
 
