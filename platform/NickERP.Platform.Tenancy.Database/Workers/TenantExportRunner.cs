@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NickERP.Platform.Tenancy.Database.Services;
+using NickERP.Platform.Tenancy.Database.Storage;
 using NickERP.Platform.Tenancy.Entities;
 using Npgsql;
 
@@ -365,6 +366,7 @@ WHERE ""Id"" = ANY(@ids);";
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var storage = scope.ServiceProvider.GetService<ITenantExportStorage>();
 
         var row = await db.TenantExportRequests.FirstOrDefaultAsync(r => r.Id == exportId, ct);
         if (row is null)
@@ -375,22 +377,42 @@ WHERE ""Id"" = ANY(@ids);";
 
         try
         {
-            var artifactPath = ResolveArtifactPath(row.TenantId, row.Id);
+            // Pre-Phase-E behaviour: build directly into the filesystem
+            // path. Phase E branches: build into a temp file first,
+            // then hand the bytes off to ITenantExportStorage. This
+            // way the bundle builder stays write-to-disk-only and the
+            // storage abstraction handles the actual persistence.
+            var tempArtifactPath = ResolveArtifactPath(row.TenantId, row.Id);
             _logger.LogInformation(
                 "TenantExportRunner building export {ExportId} for tenant {TenantId}: format={Format}, scope={Scope}, target={Path}.",
-                row.Id, row.TenantId, row.Format, row.Scope, artifactPath);
+                row.Id, row.TenantId, row.Format, row.Scope, tempArtifactPath);
 
             var (size, sha) = await TenantExportBundleBuilder.BuildAsync(
-                outputPath: artifactPath,
+                outputPath: tempArtifactPath,
                 tenantId: row.TenantId,
                 request: row,
                 options: _options,
                 logger: _logger,
                 ct: ct);
 
+            // If a non-filesystem storage backend is registered, hand
+            // the bytes off and remove the temp file.
+            string finalLocator = tempArtifactPath;
+            if (storage is not null && !string.Equals(storage.BackendName, "filesystem", StringComparison.Ordinal))
+            {
+                var bytes = await File.ReadAllBytesAsync(tempArtifactPath, ct);
+                finalLocator = await storage.WriteAsync(row.Id, row.TenantId, bytes, ct);
+                try { File.Delete(tempArtifactPath); }
+                catch (Exception delEx) when (delEx is not OperationCanceledException)
+                {
+                    _logger.LogDebug(delEx,
+                        "TenantExportRunner — failed to delete temp artifact at {Path} after S3 upload.", tempArtifactPath);
+                }
+            }
+
             var now = _clock.GetUtcNow();
             row.Status = TenantExportStatus.Completed;
-            row.ArtifactPath = artifactPath;
+            row.ArtifactPath = finalLocator;
             row.ArtifactSizeBytes = size;
             row.ArtifactSha256 = sha;
             row.CompletedAt = now;
@@ -417,13 +439,14 @@ WHERE ""Id"" = ANY(@ids);";
 
     /// <summary>
     /// Flip Completed rows past their ExpiresAt to Expired and delete
-    /// the artifact on disk. Idempotent — re-running the sweep against
-    /// already-Expired rows is a no-op.
+    /// the artifact on disk / S3. Idempotent — re-running the sweep
+    /// against already-Expired rows is a no-op.
     /// </summary>
     public async Task SweepExpiredAsync(CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var storage = scope.ServiceProvider.GetService<ITenantExportStorage>();
 
         var now = _clock.GetUtcNow();
         var expired = await db.TenantExportRequests
@@ -436,21 +459,39 @@ WHERE ""Id"" = ANY(@ids);";
 
         foreach (var row in expired)
         {
-            if (!string.IsNullOrWhiteSpace(row.ArtifactPath) && File.Exists(row.ArtifactPath))
+            if (string.IsNullOrWhiteSpace(row.ArtifactPath))
             {
-                try
+                row.Status = TenantExportStatus.Expired;
+                continue;
+            }
+            try
+            {
+                var deleted = false;
+                if (storage is not null)
+                {
+                    deleted = await storage.DeleteAsync(row.ArtifactPath, ct);
+                }
+                else if (File.Exists(row.ArtifactPath))
                 {
                     File.Delete(row.ArtifactPath);
+                    deleted = true;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                // Either deleted or already gone — both flip to Expired.
+                row.Status = TenantExportStatus.Expired;
+                if (!deleted)
                 {
-                    _logger.LogWarning(ex,
-                        "TenantExportRunner sweep — failed to delete artifact {Path} for export {ExportId}; will leave row in Completed for retry.",
+                    _logger.LogDebug(
+                        "TenantExportRunner sweep — artifact {Path} already absent for export {ExportId}; flipping to Expired regardless.",
                         row.ArtifactPath, row.Id);
-                    continue;
                 }
             }
-            row.Status = TenantExportStatus.Expired;
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "TenantExportRunner sweep — failed to delete artifact {Path} for export {ExportId}; will leave row in Completed for retry.",
+                    row.ArtifactPath, row.Id);
+                continue;
+            }
         }
         await db.SaveChangesAsync(ct);
         _logger.LogInformation(
