@@ -32,6 +32,35 @@ the rolling master and at every security review by the user.
 | `audit.edge_node_api_keys` | `20260430105510_Add_EdgeNodeApiKeys` | Sprint 13 / P2-FU-edge-auth | Edge node auth runs pre-tenant-resolution: the request arrives with only an opaque API key, the row carries the `TenantId`. SetSystemContext + the OR clause is the only path to look up the row before the tenant is known. Reads under system context are limited to the auth handler's lookup-by-hash + the issuance/revocation admin flow. |
 | `identity.invite_tokens` | `20260504160000_Add_InviteTokens` | Sprint 21 / Tenant-Pt-2 | Invite redemption runs pre-tenant-resolution: the invitee is anonymous; the row carries the `TenantId`. SetSystemContext + the OR clause is the only path for `InviteService.RedeemInviteAsync` and `InviteService.MarkRedeemedAsync` to succeed. Single-use semantics enforced via the unique partial index on `(TokenHash) WHERE RedeemedAt IS NULL AND RevokedAt IS NULL`. |
 
+## Sprint 36 / FU-sla-state-refresher-worker — considered, not added
+
+The Sprint 36 `SlaStateRefresherWorker`
+(`modules/inspection/src/NickERP.Inspection.Web/Services/SlaStateRefresherWorker.cs`)
+was specified to use system-context discovery for cross-tenant
+enumeration of tenants with open SLA windows, mirroring the
+`AuditNotificationProjector` pattern. After review the implementation
+**deliberately does NOT call `SetSystemContext()`** — pattern matches
+`ScannerHealthSweepWorker` instead:
+
+- Tenant discovery via `TenancyDbContext.Tenants` (no RLS — root of the
+  tenant graph).
+- Per-tenant `SetTenant(tenantId)` flip for the inspection-DB reads
+  (`inspection.sla_window` + `ISlaTracker.RefreshStatesAsync`).
+
+System-context discovery would require an `OR app.tenant_id = '-1'`
+opt-in clause on `tenant_isolation_sla_window`, broadening the table's
+read surface for marginal efficiency gain (an extra "is the tenant
+active?" check per tick on a small `tenancy.tenants` table is cheap).
+Per `feedback_confirm_before_weakening_security.md`, broadening RLS
+posture for ergonomic gain requires explicit user confirmation; the
+non-broadening alternative was chosen.
+
+**No new register entry for this worker.** If pilot data shows the
+per-tenant fan-out is actually expensive enough to warrant
+cross-tenant discovery, the change would require: (1) a new RLS opt-in
+migration on `inspection.sla_window`, (2) a register entry here, (3)
+user confirmation per the security-posture rule.
+
 ## Sprint 25 / Tenant-Pt-3 — non-system-context cross-tenant reads
 
 The Sprint 25 `TenantExportService` + `TenantExportRunner` +

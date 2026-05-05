@@ -407,6 +407,22 @@ builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
 
 // ---------------------------------------------------------------------------
+// Sprint 36 / FU-sla-state-refresher-worker — periodic SLA window state
+// refresher. Calls SlaTracker.RefreshStatesAsync per case per tenant so
+// AtRisk → Breached transitions write to inspection.sla_window without
+// requiring a dashboard load. Default-disabled per Sprint 24 architectural
+// decision; opt-in per environment via
+// Inspection:Workers:SlaStateRefresher:Enabled=true.
+// ---------------------------------------------------------------------------
+builder.Services.Configure<SlaStateRefresherOptions>(
+    builder.Configuration.GetSection(SlaStateRefresherOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>());
+
+// ---------------------------------------------------------------------------
 // Sprint 33 / B7 — reports + diagnostics services. Both scoped because
 // they consume the per-request InspectionDbContext (and AuditDbContext
 // for the reports service). Read-only by design — neither service
