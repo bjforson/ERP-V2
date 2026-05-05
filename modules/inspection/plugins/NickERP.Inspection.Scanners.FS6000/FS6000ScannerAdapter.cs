@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using NickERP.Inspection.Edge.Abstractions;
 using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Platform.Plugins;
 
@@ -189,6 +190,293 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
             MimeType: "image/png",
             Bytes: pngBytes,
             Metadata: metadata);
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase A — canonical scan-package parse. Maps the
+    /// FS6000 three-channel scan-set (high / low / [material]) into the
+    /// vendor-neutral <see cref="ScanPackage"/> shape from
+    /// <c>NickERP.Inspection.Edge.Abstractions</c> ready for the host
+    /// to HMAC-sign the manifest under the per-edge key (Sprint 13
+    /// EdgeAuthHandler).
+    ///
+    /// <para>
+    /// <b>Vendor-specific → canonical mapping.</b>
+    /// <list type="bullet">
+    ///   <item><description><c>ScannerId</c> ← <see cref="TypeCode"/> ("fs6000").</description></item>
+    ///   <item><description><c>ScanType</c> ← <c>"primary"</c> (FS6000 doesn't surface calibration via this path; calibration scans land in a future per-§6.9 capability).</description></item>
+    ///   <item><description><c>OccurredAt</c> ← decoded header timestamp when present, else file-mtime, else current UTC.</description></item>
+    ///   <item><description><c>ImageFiles</c> ← one <see cref="ImageFile"/> per channel: <c>high-energy</c>, <c>low-energy</c>, optionally <c>material</c>. View tags are vendor-neutral.</description></item>
+    ///   <item><description><c>SiteId</c> / <c>GatewayId</c> / <c>OperatorId</c> / <c>ContainerNumber</c> / etc. — empty here. The host fills them post-parse from the resolved <c>ScannerDeviceInstance</c> + the inspection workflow context.</description></item>
+    /// </list>
+    /// Per-channel sha256s are recomputed from the bytes carried inline
+    /// on each <see cref="ImageFile"/> — the validator on the receiving
+    /// side recomputes them again, so any byte flip in flight is caught
+    /// independently of the manifest signature.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Two input shapes accepted.</b> The host typically routes the
+    /// manifest envelope bytes <see cref="StreamAsync"/> emits (the
+    /// <see cref="ScanSetManifest"/> JSON pointing at the on-disk
+    /// triplet); we read it and load the channels. For one-off / test
+    /// flows where the bytes are a single-channel raw .img, we surface
+    /// a one-image package so the contract still produces a valid
+    /// bundle.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Empty signature fields.</b> <see cref="ScanPackage.ManifestSha256"/>
+    /// + <see cref="ScanPackage.ManifestSignature"/> stay
+    /// <see cref="Array.Empty{T}"/> here; the host calls
+    /// <see cref="ScanPackageManifest.Seal"/> with the per-edge HMAC
+    /// key to populate them. The adapter intentionally has no per-edge
+    /// key knowledge.
+    /// </para>
+    /// </summary>
+    public async Task<ParsedScan> ParseScanAsync(
+        byte[] rawScanData,
+        ScannerCapabilities capabilities,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(rawScanData);
+        ArgumentNullException.ThrowIfNull(capabilities);
+
+        var manifest = TryParseManifest(rawScanData);
+        if (manifest is null)
+        {
+            return BuildSingleImagePackage(rawScanData, capabilities);
+        }
+
+        return await BuildMultiChannelPackageAsync(manifest, ct);
+    }
+
+    /// <summary>
+    /// Try to deserialise the FS6000 stream-emitted manifest envelope.
+    /// Returns null when the bytes don't deserialise into a manifest
+    /// shape — caller falls back to a one-image package.
+    /// </summary>
+    private static ScanSetManifest? TryParseManifest(byte[] rawScanData)
+    {
+        if (rawScanData.Length == 0) return null;
+        // The first byte of any sane JSON is '{', '[', or whitespace.
+        // Refusing the deserialise on raw .img bytes (which start with
+        // an FS6000-specific binary header) saves the JSON parser a
+        // throw on every degenerate path.
+        var first = rawScanData[0];
+        if (first != (byte)'{' && first != (byte)'[' && first != (byte)' '
+            && first != (byte)'\t' && first != (byte)'\n' && first != (byte)'\r')
+        {
+            return null;
+        }
+        try
+        {
+            var manifest = JsonSerializer.Deserialize<ScanSetManifest>(rawScanData);
+            if (manifest is null
+                || string.IsNullOrEmpty(manifest.Stem)
+                || string.IsNullOrEmpty(manifest.HighPath)
+                || string.IsNullOrEmpty(manifest.LowPath))
+            {
+                return null;
+            }
+            return manifest;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Multi-channel happy path — read each on-disk channel + build a
+    /// per-channel <see cref="ImageFile"/>. Material is optional.
+    /// </summary>
+    private static async Task<ParsedScan> BuildMultiChannelPackageAsync(
+        ScanSetManifest manifest, CancellationToken ct)
+    {
+        var imageFiles = new List<ImageFile>(3);
+
+        var highBytes = await File.ReadAllBytesAsync(manifest.HighPath, ct);
+        imageFiles.Add(BuildImageFile(
+            fileName: BuildLeafName(manifest.HighPath, "high.img"),
+            data: highBytes,
+            view: "high-energy"));
+
+        var lowBytes = await File.ReadAllBytesAsync(manifest.LowPath, ct);
+        imageFiles.Add(BuildImageFile(
+            fileName: BuildLeafName(manifest.LowPath, "low.img"),
+            data: lowBytes,
+            view: "low-energy"));
+
+        DateTime? capturedHeader = null;
+        var hasMaterial = !string.IsNullOrEmpty(manifest.MaterialPath)
+                          && File.Exists(manifest.MaterialPath);
+        if (hasMaterial)
+        {
+            var materialBytes = await File.ReadAllBytesAsync(manifest.MaterialPath!, ct);
+            imageFiles.Add(BuildImageFile(
+                fileName: BuildLeafName(manifest.MaterialPath!, "material.img"),
+                data: materialBytes,
+                view: "material"));
+
+            try
+            {
+                var decoded = FS6000FormatDecoder.Decode(highBytes, lowBytes, materialBytes);
+                capturedHeader = decoded.Timestamp;
+            }
+            catch (Exception)
+            {
+                // Decoder failure is non-fatal: the canonical bundle is
+                // valid without a header timestamp; OccurredAt falls
+                // back to the file-mtime / now path.
+            }
+        }
+        else
+        {
+            try
+            {
+                var (_, _, _, _, ts) = FS6000FormatDecoder.DecodeEnergyOnly(highBytes, lowBytes);
+                capturedHeader = ts;
+            }
+            catch (Exception) { /* tolerate decoder failure (above) */ }
+        }
+
+        var occurredAt = capturedHeader is { } ts2
+            ? new DateTimeOffset(ts2, TimeSpan.Zero)
+            : SafeFileWriteTime(manifest.HighPath);
+
+        var package = new ScanPackage(
+            ScanId: Guid.NewGuid().ToString(),
+            SiteId: string.Empty,
+            ScannerId: "fs6000",
+            GatewayId: string.Empty,
+            ScanType: "primary",
+            OccurredAt: occurredAt,
+            OperatorId: string.Empty,
+            ContainerNumber: string.Empty,
+            VehiclePlate: string.Empty,
+            DeclarationNumber: string.Empty,
+            ManifestNumber: string.Empty,
+            ImageFiles: imageFiles,
+            ManifestSha256: Array.Empty<byte>(),
+            ManifestSignature: Array.Empty<byte>());
+
+        // Single ParsedArtifact mirroring the per-channel set; carries
+        // the metadata the inspection-side ingestion needs without
+        // duplicating the percentile-render path (that stays in
+        // ParseAsync(RawScanArtifact)).
+        var artifact = new ParsedArtifact(
+            DeviceId: Guid.Empty,
+            CapturedAt: occurredAt,
+            WidthPx: 0,
+            HeightPx: 0,
+            Channels: imageFiles.Count,
+            MimeType: "vendor/fs6000",
+            Bytes: highBytes,
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["scanner.type"] = "fs6000",
+                ["scanner.stem"] = manifest.Stem,
+                ["channel.set"] = hasMaterial ? "high+low+material" : "high+low"
+            },
+            FormatVersion: "fs6000-v1");
+
+        return new ParsedScan(new[] { artifact }, package);
+    }
+
+    /// <summary>
+    /// Degenerate single-image package for non-manifest inputs (tests /
+    /// one-off ingest of a single raw .img blob).
+    /// </summary>
+    private ParsedScan BuildSingleImagePackage(
+        byte[] rawScanData, ScannerCapabilities capabilities)
+    {
+        var image = BuildImageFile(
+            fileName: "scan.img",
+            data: rawScanData,
+            view: capabilities.SupportsDualEnergy ? "high-energy" : "primary");
+
+        var package = new ScanPackage(
+            ScanId: Guid.NewGuid().ToString(),
+            SiteId: string.Empty,
+            ScannerId: "fs6000",
+            GatewayId: string.Empty,
+            ScanType: "primary",
+            OccurredAt: DateTimeOffset.UtcNow,
+            OperatorId: string.Empty,
+            ContainerNumber: string.Empty,
+            VehiclePlate: string.Empty,
+            DeclarationNumber: string.Empty,
+            ManifestNumber: string.Empty,
+            ImageFiles: new[] { image },
+            ManifestSha256: Array.Empty<byte>(),
+            ManifestSignature: Array.Empty<byte>());
+
+        var artifact = new ParsedArtifact(
+            DeviceId: Guid.Empty,
+            CapturedAt: package.OccurredAt,
+            WidthPx: 0,
+            HeightPx: 0,
+            Channels: 1,
+            MimeType: "vendor/fs6000",
+            Bytes: rawScanData,
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["scanner.type"] = "fs6000",
+                ["channel.set"] = "single-blob"
+            },
+            FormatVersion: "fs6000-v1-single");
+
+        return new ParsedScan(new[] { artifact }, package);
+    }
+
+    /// <summary>
+    /// Build an <see cref="ImageFile"/> with the bytes carried inline +
+    /// a freshly computed sha256 hex digest. Validator recomputes;
+    /// emitting it here gives the host a complete bundle to either
+    /// store or sign.
+    /// </summary>
+    private static ImageFile BuildImageFile(string fileName, byte[] data, string view)
+    {
+        return new ImageFile(
+            FileName: fileName,
+            Sha256Hex: ScanPackageManifest.Sha256Hex(data),
+            View: view,
+            SizeBytes: data.LongLength,
+            Data: data);
+    }
+
+    /// <summary>
+    /// Reduce a full FS6000 file path to a leaf filename (no separators)
+    /// so the bundle's <see cref="ImageFile.FileName"/> stays vendor-
+    /// neutral and the validator's "no path separators" check passes.
+    /// Falls back to <paramref name="fallback"/> when the path is empty
+    /// or the leaf is empty.
+    /// </summary>
+    private static string BuildLeafName(string path, string fallback)
+    {
+        if (string.IsNullOrEmpty(path)) return fallback;
+        var leaf = Path.GetFileName(path);
+        return string.IsNullOrEmpty(leaf) ? fallback : leaf;
+    }
+
+    /// <summary>
+    /// Best-effort file-mtime read. If the file has been moved or the
+    /// FS denies the stat, fall back to current UTC. The OccurredAt
+    /// timestamp is canonical-bundle metadata, not load-bearing for
+    /// validation; a slightly-off value is preferable to throwing the
+    /// whole ingest path on the floor.
+    /// </summary>
+    private static DateTimeOffset SafeFileWriteTime(string path)
+    {
+        try
+        {
+            return new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
+        }
+        catch (Exception)
+        {
+            return DateTimeOffset.UtcNow;
+        }
     }
 
     // --- helpers --------------------------------------------------------

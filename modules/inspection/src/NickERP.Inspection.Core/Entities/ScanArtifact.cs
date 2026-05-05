@@ -68,5 +68,37 @@ public sealed class ScanArtifact : ITenantOwned
     /// <summary>Sprint 39 — free-text reason. Bounded to 500 chars. Persists after release.</summary>
     public string? LegalHoldReason { get; set; }
 
+    /// <summary>
+    /// Sprint 45 / Phase B — canonical ScanPackage manifest JSON
+    /// (deterministic, vendor-neutral) the server received and validated.
+    /// Null when the artifact didn't arrive via a ScanPackage path
+    /// (legacy IngestRawArtifactAsync path).
+    /// </summary>
+    public string? ManifestJson { get; set; }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — SHA-256 digest (32 bytes) of the canonical
+    /// manifest JSON. Stored as an audit-friendly tamper marker;
+    /// re-verifying after restore confirms the row hasn't been
+    /// after-the-fact modified. Null when no manifest path was used.
+    /// </summary>
+    public byte[]? ManifestSha256 { get; set; }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — HMAC-SHA256 signature (32 bytes) of the
+    /// canonical manifest JSON, signed under the per-edge HMAC key.
+    /// Recoverable for forensic audit; the signing key (the per-edge
+    /// API key plaintext) is NEVER stored — only the signature.
+    /// Null when no manifest path was used.
+    /// </summary>
+    public byte[]? ManifestSignature { get; set; }
+
+    /// <summary>
+    /// Sprint 45 / Phase B — wallclock when the server-side validator
+    /// last verified the manifest signature. Set on initial replay-side
+    /// validation; future revalidation paths may bump it.
+    /// </summary>
+    public DateTimeOffset? ManifestVerifiedAt { get; set; }
+
     public long TenantId { get; set; }
 }

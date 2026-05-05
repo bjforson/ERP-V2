@@ -73,7 +73,68 @@ public sealed class SlaWindow : ITenantOwned
     /// </summary>
     public int BudgetMinutes { get; set; }
 
+    /// <summary>
+    /// Sprint 45 / Phase C — workload tier this window belongs to.
+    /// Drives the per-tier budget defaults (see
+    /// <c>SlaTracker.GetTierFirstReviewBudget</c> /
+    /// <c>GetTierFinalBudget</c>) and the
+    /// <c>QueueEscalatorWorker</c> auto-escalation thresholds.
+    /// Defaults to <see cref="QueueTier.Standard"/> for backward
+    /// compatibility; pre-Sprint-45 rows seed to Standard via the
+    /// migration's column default.
+    /// </summary>
+    public QueueTier QueueTier { get; set; } = QueueTier.Standard;
+
+    /// <summary>
+    /// Sprint 45 / Phase C — true when the operator manually set the
+    /// tier via the dashboard's "reclassify" action. The
+    /// <c>QueueEscalatorWorker</c> auto-escalation respects this flag:
+    /// a manually-tiered window is never auto-escalated. Useful when
+    /// an operator has triaged a Standard case as Exception (no auto
+    /// promotion) or as Urgent (no further auto-promotion).
+    /// </summary>
+    public bool QueueTierIsManual { get; set; }
+
     public long TenantId { get; set; }
+}
+
+/// <summary>
+/// Sprint 45 / Phase C — workload tier for an
+/// <see cref="SlaWindow"/>. Drives per-tier SLA budget defaults +
+/// auto-escalation paths.
+///
+/// <para>
+/// <b>Tier semantics.</b>
+/// <list type="bullet">
+///   <item><description><c>Standard</c> — typical case (15m first-review / 60m final). Auto-escalates to <c>High</c> after 30m open.</description></item>
+///   <item><description><c>High</c> — flagged on intake (5m first-review / 30m final). Auto-escalates to <c>Urgent</c> after 60m open.</description></item>
+///   <item><description><c>Urgent</c> — operator-actionable now (1m first-review / 10m final). Terminal — no further auto-escalation.</description></item>
+///   <item><description><c>Exception</c> — indefinite hold (manual triage / blocked / awaiting authority response). No SLA budget enforced; manually-set tier never auto-escalates.</description></item>
+///   <item><description><c>PostClearance</c> — non-time-critical follow-ups after the case has already cleared (24h budget). Manual triage path.</description></item>
+/// </list>
+/// </para>
+///
+/// <para>
+/// <b>Tenant overrides.</b> The default budgets are hard-coded in
+/// <c>SlaTracker</c>; per-tenant overrides come through
+/// <c>TenantSetting</c> keys
+/// (<c>inspection.queue.standard_first_review_minutes</c>,
+/// <c>inspection.queue.standard_final_minutes</c>,
+/// <c>inspection.queue.high_first_review_minutes</c> etc.).
+/// </para>
+/// </summary>
+public enum QueueTier
+{
+    /// <summary>Default tier — typical case, normal SLA budget.</summary>
+    Standard = 0,
+    /// <summary>Flagged on intake — tighter SLA + auto-escalates to Urgent.</summary>
+    High = 1,
+    /// <summary>Operator-actionable now — tightest SLA, no further auto-escalation.</summary>
+    Urgent = 2,
+    /// <summary>Indefinite hold — no SLA budget enforced.</summary>
+    Exception = 3,
+    /// <summary>Post-clearance follow-up — long budget (24h), non-time-critical.</summary>
+    PostClearance = 4
 }
 
 /// <summary>

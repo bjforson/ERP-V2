@@ -155,6 +155,88 @@ public sealed class SlaDashboardService
             .ToList();
     }
 
+    /// <summary>
+    /// Sprint 45 / Phase D — per-tier breakdown for the dashboard's
+    /// "by tier" cards. Returns one row per
+    /// <see cref="QueueTier"/>, ordered by escalation priority
+    /// (Urgent → High → Standard → Exception → PostClearance). Used
+    /// by the SlaDashboard razor page to render coloured cards
+    /// reflecting current queue load + breach pressure per tier.
+    /// </summary>
+    public async Task<IReadOnlyList<SlaTierBreakdown>> ListByTierAsync(
+        TimeSpan? closedLookback = null,
+        CancellationToken ct = default)
+    {
+        if (!_tenant.IsResolved)
+            throw new InvalidOperationException("SlaDashboardService cannot run without a resolved tenant context.");
+        var tenantId = _tenant.TenantId;
+        var now = DateTimeOffset.UtcNow;
+        var atRiskFraction = _options.Value.AtRiskFraction;
+        var sinceClosed = now - (closedLookback ?? TimeSpan.FromDays(7));
+
+        var openRows = await _db.SlaWindows.AsNoTracking()
+            .Where(w => w.TenantId == tenantId && w.ClosedAt == null)
+            .ToListAsync(ct);
+        var closedRows = await _db.SlaWindows.AsNoTracking()
+            .Where(w => w.TenantId == tenantId
+                     && w.ClosedAt != null
+                     && w.ClosedAt >= sinceClosed)
+            .ToListAsync(ct);
+
+        // Recompute open state in-memory so the cards reflect "now".
+        foreach (var w in openRows)
+            w.State = SlaTracker.ComputeOpenState(w, now, atRiskFraction);
+
+        // One row per tier, ordered by escalation priority.
+        var orderedTiers = new[]
+        {
+            QueueTier.Urgent, QueueTier.High, QueueTier.Standard,
+            QueueTier.Exception, QueueTier.PostClearance
+        };
+
+        var rows = new List<SlaTierBreakdown>(orderedTiers.Length);
+        foreach (var tier in orderedTiers)
+        {
+            var openInTier = openRows.Where(w => w.QueueTier == tier).ToList();
+            var closedInTier = closedRows.Where(w => w.QueueTier == tier).ToList();
+            rows.Add(new SlaTierBreakdown(
+                Tier: tier,
+                OpenOnTime: openInTier.Count(w => w.State == SlaWindowState.OnTime),
+                OpenAtRisk: openInTier.Count(w => w.State == SlaWindowState.AtRisk),
+                OpenBreached: openInTier.Count(w => w.State == SlaWindowState.Breached),
+                ClosedOnTime: closedInTier.Count(w => w.State == SlaWindowState.Closed),
+                ClosedBreached: closedInTier.Count(w => w.State == SlaWindowState.Breached),
+                ManualCount: openInTier.Count(w => w.QueueTierIsManual)));
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Sprint 45 / Phase D — operator-driven manual reclassify. Sets
+    /// the SlaWindow's tier + flips the manual flag so the
+    /// QueueEscalatorWorker leaves it alone. Returns true on success,
+    /// false when no row matched.
+    /// </summary>
+    public async Task<bool> ReclassifyTierAsync(
+        Guid slaWindowId,
+        QueueTier tier,
+        CancellationToken ct = default)
+    {
+        if (!_tenant.IsResolved)
+            throw new InvalidOperationException("SlaDashboardService cannot run without a resolved tenant context.");
+        var tenantId = _tenant.TenantId;
+        var row = await _db.SlaWindows
+            .FirstOrDefaultAsync(w => w.Id == slaWindowId && w.TenantId == tenantId, ct);
+        if (row is null) return false;
+        row.QueueTier = tier;
+        row.QueueTierIsManual = true;
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "SlaDashboardService: reclassified window {Id} to tier {Tier} (manual=true) under tenant {Tenant}.",
+            slaWindowId, tier, tenantId);
+        return true;
+    }
+
     private static double ComputeMinutesOver(SlaWindow w, DateTimeOffset now)
     {
         var anchor = w.ClosedAt ?? now;
@@ -199,3 +281,18 @@ public sealed record SlaBreachedRow(
     int BudgetMinutes,
     bool IsOpen,
     double MinutesOver);
+
+/// <summary>
+/// Sprint 45 / Phase D — per-tier breakdown row for the SLA dashboard's
+/// "by tier" cards. <see cref="ManualCount"/> is the count of open
+/// windows in this tier that an operator manually assigned (the
+/// QueueEscalatorWorker won't auto-escalate them).
+/// </summary>
+public sealed record SlaTierBreakdown(
+    QueueTier Tier,
+    int OpenOnTime,
+    int OpenAtRisk,
+    int OpenBreached,
+    int ClosedOnTime,
+    int ClosedBreached,
+    int ManualCount);

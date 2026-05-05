@@ -310,6 +310,14 @@ public sealed class InspectionDbContext : DbContext
                 .HasDefaultValue(NickERP.Inspection.Core.Retention.RetentionClass.Standard);
             e.Property(x => x.LegalHold).IsRequired().HasDefaultValue(false);
             e.Property(x => x.LegalHoldReason).HasMaxLength(500);
+            // Sprint 45 / Phase B — canonical ScanPackage manifest fields.
+            // Nullable across the board so artifacts ingested via the
+            // pre-Sprint-45 path (no canonical bundle) coexist with
+            // canonical-bundle artifacts post-rollout.
+            e.Property(x => x.ManifestJson).HasColumnType("jsonb");
+            e.Property(x => x.ManifestSha256).HasColumnType("bytea");
+            e.Property(x => x.ManifestSignature).HasColumnType("bytea");
+            e.Property(x => x.ManifestVerifiedAt);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => x.ContentHash).HasDatabaseName("ix_scan_artifacts_content_hash");
@@ -322,6 +330,12 @@ public sealed class InspectionDbContext : DbContext
                 .HasDatabaseName("ix_scan_artifacts_legal_hold");
             e.HasIndex(x => new { x.TenantId, x.RetentionClass, x.CreatedAt })
                 .HasDatabaseName("ix_scan_artifacts_retention_class");
+            // Sprint 45 / Phase B — newly-verified feed for the
+            // /admin/sla per-tier dashboard's "manifest replays in the
+            // last hour" panel. (TenantId, ManifestVerifiedAt DESC).
+            e.HasIndex(x => new { x.TenantId, x.ManifestVerifiedAt })
+                .IsDescending(false, true)
+                .HasDatabaseName("ix_scan_artifacts_tenant_manifest_verified");
 
             e.HasMany<ScanRenderArtifact>().WithOne(r => r.ScanArtifact).HasForeignKey(r => r.ScanArtifactId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -811,6 +825,16 @@ public sealed class InspectionDbContext : DbContext
             e.Property(x => x.ClosedAt);
             e.Property(x => x.State).HasConversion<int>().IsRequired();
             e.Property(x => x.BudgetMinutes).IsRequired();
+            // Sprint 45 / Phase C — queue tier (default Standard for
+            // pre-Sprint-45 rows). Manual flag is fail-safe false so
+            // legacy rows participate in auto-escalation by default.
+            e.Property(x => x.QueueTier)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(QueueTier.Standard);
+            e.Property(x => x.QueueTierIsManual)
+                .IsRequired()
+                .HasDefaultValue(false);
             e.Property(x => x.TenantId).IsRequired();
 
             // One open window per (Case, WindowName) — the unique
@@ -829,6 +853,14 @@ public sealed class InspectionDbContext : DbContext
             // Per-case scan; useful for the case-detail SLA pane.
             e.HasIndex(x => new { x.TenantId, x.CaseId })
                 .HasDatabaseName("ix_sla_window_tenant_case");
+
+            // Sprint 45 / Phase C — per-tier dashboard breakdown +
+            // QueueEscalatorWorker scan path: "open windows of tier X
+            // older than threshold Y". Composite (TenantId, QueueTier,
+            // State) covers the breakdown card query and the escalator
+            // worker's tier filter.
+            e.HasIndex(x => new { x.TenantId, x.QueueTier, x.State })
+                .HasDatabaseName("ix_sla_window_tenant_tier_state");
         });
 
         // ----- CrossRecordDetection (Sprint 31 / B5.2) ------------------------------

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NickERP.Inspection.Database;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NickERP.Inspection.Database.Migrations
 {
     [DbContext(typeof(InspectionDbContext))]
-    partial class InspectionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260505195311_Add_ScanArtifact_ManifestColumns")]
+    partial class Add_ScanArtifact_ManifestColumns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1476,16 +1479,6 @@ namespace NickERP.Inspection.Database.Migrations
                     b.Property<DateTimeOffset>("DueAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("QueueTier")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<bool>("QueueTierIsManual")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
                     b.Property<DateTimeOffset>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1509,9 +1502,6 @@ namespace NickERP.Inspection.Database.Migrations
 
                     b.HasIndex("TenantId", "CaseId")
                         .HasDatabaseName("ix_sla_window_tenant_case");
-
-                    b.HasIndex("TenantId", "QueueTier", "State")
-                        .HasDatabaseName("ix_sla_window_tenant_tier_state");
 
                     b.HasIndex("TenantId", "State", "DueAt")
                         .HasDatabaseName("ix_sla_window_tenant_state_due");

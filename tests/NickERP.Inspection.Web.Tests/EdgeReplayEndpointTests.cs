@@ -445,6 +445,22 @@ public sealed class EdgeReplayEndpointTests
         return new TestAuditDbContext(options);
     }
 
+    /// <summary>
+    /// Sprint 45 / Phase E — Build an AuditDbContext bound to an
+    /// existing in-memory database name so multiple instances share
+    /// the same backing store. Used by EdgeReplayManifestValidationTests
+    /// to give the worker's per-scope DbContext factories a stable
+    /// store.
+    /// </summary>
+    internal static AuditDbContext BuildAuditDbWithName(string dbName)
+    {
+        var options = new DbContextOptionsBuilder<AuditDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        return new TestAuditDbContext(options);
+    }
+
     internal static IConfiguration BuildConfig(
         string? serverSecret = "test-secret",
         bool allowLegacy = true,

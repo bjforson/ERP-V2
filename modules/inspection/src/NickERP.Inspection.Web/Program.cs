@@ -506,6 +506,22 @@ builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.WebhookDispatchWorker>());
 
 // ---------------------------------------------------------------------------
+// Sprint 45 / Phase D — periodic queue-tier auto-escalator for SLA windows.
+// Promotes Standard → High after 30m open, High → Urgent after 60m open;
+// respects manual operator-set tiers. Default-disabled per Sprint 24
+// architectural decision; opt-in per environment via
+// Inspection:Workers:QueueEscalator:Enabled=true. Three-slot worker idiom
+// matching SlaStateRefresherWorker.
+// ---------------------------------------------------------------------------
+builder.Services.Configure<QueueEscalatorOptions>(
+    builder.Configuration.GetSection(QueueEscalatorOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.QueueEscalatorWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.QueueEscalatorWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.QueueEscalatorWorker>());
+
+// ---------------------------------------------------------------------------
 // Sprint 33 / B7 — reports + diagnostics services. Both scoped because
 // they consume the per-request InspectionDbContext (and AuditDbContext
 // for the reports service). Read-only by design — neither service

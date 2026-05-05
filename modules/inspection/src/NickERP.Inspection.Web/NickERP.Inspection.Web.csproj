@@ -29,6 +29,7 @@
     <ProjectReference Include="..\NickERP.Inspection.Imaging\NickERP.Inspection.Imaging.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Application\NickERP.Inspection.Application.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Scanners.Abstractions\NickERP.Inspection.Scanners.Abstractions.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.Edge.Abstractions\NickERP.Inspection.Edge.Abstractions.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.ExternalSystems.Abstractions\NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Authorities.Abstractions\NickERP.Inspection.Authorities.Abstractions.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Webhooks.Abstractions\NickERP.Inspection.Webhooks.Abstractions.csproj" />
