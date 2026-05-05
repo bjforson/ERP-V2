@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Application;
 using NickERP.Inspection.Application.Completeness;
 using NickERP.Inspection.Application.Sla;
 using NickERP.Inspection.Application.Validation;
@@ -19,6 +20,7 @@ using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Plugins;
 using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
+using NickERP.Platform.Tenancy.Features;
 
 namespace NickERP.Inspection.Web.Services;
 
@@ -51,6 +53,12 @@ public sealed class CaseWorkflowService
     // standard windows on case creation; closes them on terminal-state
     // transitions. Same posture as completeness/validation engines.
     private readonly ISlaTracker? _slaTracker;
+    // Sprint 48 / Phase A — FU-strict-mode-block-on-error. Optional in
+    // DI; when wired, SubmitAsync re-runs the validation engine and
+    // consults this for the per-tenant strict-mode flag at
+    // <c>inspection.validation.strict_mode_enabled</c>. Default false
+    // (safe rollout).
+    private readonly ITenantSettingsService? _tenantSettings;
 
     public CaseWorkflowService(
         InspectionDbContext db,
@@ -63,7 +71,8 @@ public sealed class CaseWorkflowService
         ILogger<CaseWorkflowService> logger,
         ValidationEngine? validationEngine = null,
         ICompletenessChecker? completenessChecker = null,
-        ISlaTracker? slaTracker = null)
+        ISlaTracker? slaTracker = null,
+        ITenantSettingsService? tenantSettings = null)
     {
         _db = db;
         _events = events;
@@ -76,7 +85,17 @@ public sealed class CaseWorkflowService
         _validationEngine = validationEngine;
         _completenessChecker = completenessChecker;
         _slaTracker = slaTracker;
+        _tenantSettings = tenantSettings;
     }
+
+    /// <summary>
+    /// Sprint 48 / Phase A — tenant-setting key for the validation
+    /// strict-mode flag. When set to <c>"true"</c> (case-insensitive) on
+    /// a tenant, <see cref="SubmitAsync"/> re-runs the validation engine
+    /// and throws <see cref="ValidationStrictModeException"/> if any rule
+    /// returned <see cref="ValidationSeverity.Error"/>. Default off.
+    /// </summary>
+    public const string StrictModeSettingKey = "inspection.validation.strict_mode_enabled";
 
     private async Task<(Guid? UserId, long TenantId)> CurrentActorAsync()
     {
@@ -1074,6 +1093,14 @@ public sealed class CaseWorkflowService
 
     // ---------------------------------------------------------------------
     // Submit the verdict to an external system
+    //
+    // Sprint 48 / Phase A — when the per-tenant strict-mode flag
+    // (<c>inspection.validation.strict_mode_enabled</c>) is on, re-run
+    // the validation engine before submitting. Any Error-severity
+    // outcome throws <see cref="ValidationStrictModeException"/> so the
+    // page handler can render a meaningful UX message; the submission
+    // itself is NOT created. Default off (safe rollout) — tenants that
+    // never flip the flag see the legacy non-blocking behaviour.
     // ---------------------------------------------------------------------
     public async Task<OutboundSubmission> SubmitAsync(Guid caseId, Guid externalSystemInstanceId, CancellationToken ct = default)
     {
@@ -1087,6 +1114,46 @@ public sealed class CaseWorkflowService
             ?? throw new InvalidOperationException("Cannot submit — no verdict on this case yet.");
         var instance = await _db.ExternalSystemInstances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == externalSystemInstanceId, ct)
             ?? throw new InvalidOperationException($"ExternalSystemInstance {externalSystemInstanceId} not found.");
+
+        // Sprint 48 / Phase A — strict-mode validation gate. Run BEFORE
+        // creating the OutboundSubmission row so a blocked submit leaves
+        // no row in 'pending' state. Best-effort engine call: when
+        // optional DI isn't wired (test hosts, legacy engines off), we
+        // fall through to the legacy non-blocking path.
+        if (_validationEngine is not null
+            && _tenantSettings is not null
+            && await IsStrictModeEnabledAsync(tenantId, ct))
+        {
+            ValidationEngineResult? gateResult = null;
+            try
+            {
+                gateResult = await _validationEngine.EvaluateAsync(caseId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A throwing engine should not silently bypass strict
+                // mode (would let a broken engine degrade the gate);
+                // log + continue without throwing the strict-mode
+                // exception, since we can't enforce a result we don't
+                // have. Operator's audit trail captures the engine
+                // failure separately via the engine's own warn-log.
+                _logger.LogWarning(ex,
+                    "Strict-mode pre-submit ValidationEngine.EvaluateAsync threw for case {CaseId}; submission will proceed without enforcement.",
+                    caseId);
+            }
+            if (gateResult is not null && gateResult.HasErrors)
+            {
+                var failingIds = gateResult.Outcomes
+                    .Where(o => o.Severity == ValidationSeverity.Error)
+                    .Select(o => o.RuleId)
+                    .ToList();
+                var errorCount = failingIds.Count;
+                _logger.LogInformation(
+                    "Strict-mode block: case {CaseId} has {ErrorCount} validation error(s) ({FailingIds}); submission rejected.",
+                    caseId, errorCount, string.Join(",", failingIds));
+                throw new ValidationStrictModeException(caseId, errorCount, failingIds);
+            }
+        }
 
         var idempotencyKey = IdempotencyKey.From(tenantId, "submission", caseId, v.Id, instance.Id);
         var payload = JsonSerializer.Serialize(new { caseId, decision = v.Decision.ToString(), basis = v.Basis });
@@ -1301,6 +1368,29 @@ public sealed class CaseWorkflowService
                 _logger.LogWarning(ex,
                     "SlaTracker failed to close all open windows for case {CaseId} on Close.", caseId);
             }
+        }
+    }
+
+    /// <summary>
+    /// Sprint 48 / Phase A — read the per-tenant strict-mode flag from
+    /// <see cref="ITenantSettingsService"/>. Defaults to false when the
+    /// row is missing, when the value isn't parseable, or when the
+    /// service throws — strict mode is opt-in.
+    /// </summary>
+    private async Task<bool> IsStrictModeEnabledAsync(long tenantId, CancellationToken ct)
+    {
+        if (_tenantSettings is null) return false;
+        try
+        {
+            var raw = await _tenantSettings.GetAsync(StrictModeSettingKey, tenantId, "false", ct);
+            return string.Equals(raw?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "TenantSettingsService.GetAsync threw reading {Key} for tenant {TenantId}; defaulting strict-mode OFF.",
+                StrictModeSettingKey, tenantId);
+            return false;
         }
     }
 

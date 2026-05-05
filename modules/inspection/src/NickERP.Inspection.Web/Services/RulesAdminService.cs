@@ -9,6 +9,7 @@ using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
 using NickERP.Platform.Tenancy.Entities;
+using NickERP.Platform.Tenancy.Features;
 
 namespace NickERP.Inspection.Web.Services;
 
@@ -33,12 +34,26 @@ namespace NickERP.Inspection.Web.Services;
 /// </summary>
 public sealed class RulesAdminService
 {
+    /// <summary>
+    /// Sprint 48 / Phase A — tenant-setting key for the strict-mode flag.
+    /// Mirrored from <see cref="CaseWorkflowService.StrictModeSettingKey"/>
+    /// to avoid a hard reference between the admin layer (Web.Services)
+    /// and the service that consumes the flag.
+    /// </summary>
+    public const string StrictModeSettingKey = "inspection.validation.strict_mode_enabled";
+
     private readonly TenancyDbContext _tenancyDb;
     private readonly AuditDbContext _auditDb;
     private readonly ValidationEngine _engine;
     private readonly ITenantContext _tenant;
     private readonly IEventPublisher _events;
     private readonly ILogger<RulesAdminService> _logger;
+    // Sprint 48 / Phase A — optional in DI so existing test wiring that
+    // doesn't bootstrap the platform tenant-settings layer keeps passing.
+    // When null, GetStrictModeAsync returns false; SetStrictModeAsync
+    // throws InvalidOperationException so callers learn about the missing
+    // wiring fast.
+    private readonly ITenantSettingsService? _tenantSettings;
 
     public RulesAdminService(
         TenancyDbContext tenancyDb,
@@ -46,7 +61,8 @@ public sealed class RulesAdminService
         ValidationEngine engine,
         ITenantContext tenant,
         IEventPublisher events,
-        ILogger<RulesAdminService> logger)
+        ILogger<RulesAdminService> logger,
+        ITenantSettingsService? tenantSettings = null)
     {
         _tenancyDb = tenancyDb ?? throw new ArgumentNullException(nameof(tenancyDb));
         _auditDb = auditDb ?? throw new ArgumentNullException(nameof(auditDb));
@@ -54,6 +70,80 @@ public sealed class RulesAdminService
         _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _tenantSettings = tenantSettings;
+    }
+
+    /// <summary>
+    /// Sprint 48 / Phase A — read the per-tenant strict-mode flag.
+    /// Returns false when the row is missing, when the value isn't
+    /// "true", or when the platform <see cref="ITenantSettingsService"/>
+    /// isn't wired (e.g. test host).
+    /// </summary>
+    public async Task<bool> GetStrictModeAsync(long tenantId, CancellationToken ct = default)
+    {
+        if (_tenantSettings is null) return false;
+        var raw = await _tenantSettings.GetAsync(StrictModeSettingKey, tenantId, "false", ct);
+        return string.Equals(raw?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Sprint 48 / Phase A — flip the per-tenant strict-mode flag and
+    /// emit a <c>nickerp.inspection.validation.strict_mode_changed</c>
+    /// audit event with <c>{tenantId, oldValue, newValue, userId}</c>.
+    /// Best-effort emission per the toggled-event pattern: a publish
+    /// failure logs a warning but does not undo the setting write.
+    /// </summary>
+    public async Task SetStrictModeAsync(
+        long tenantId,
+        bool enabled,
+        Guid? actorUserId,
+        CancellationToken ct = default)
+    {
+        if (_tenantSettings is null)
+            throw new InvalidOperationException(
+                "RulesAdminService.SetStrictModeAsync requires ITenantSettingsService to be wired into DI. "
+                + "Check the host project's Program.cs.");
+
+        var oldRaw = await _tenantSettings.GetAsync(StrictModeSettingKey, tenantId, "false", ct);
+        var oldValue = string.Equals(oldRaw?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        var newValueText = enabled ? "true" : "false";
+
+        var dto = await _tenantSettings.SetAsync(StrictModeSettingKey, tenantId, newValueText, actorUserId, ct);
+
+        try
+        {
+            var payload = JsonSerializer.SerializeToElement(new
+            {
+                tenantId,
+                settingKey = StrictModeSettingKey,
+                oldValue,
+                newValue = enabled,
+                userId = actorUserId
+            });
+            var now = DateTimeOffset.UtcNow;
+            var key = IdempotencyKey.ForEntityChange(
+                tenantId,
+                "nickerp.inspection.validation.strict_mode_changed",
+                "TenantSetting",
+                dto.Id.ToString(),
+                now);
+            var evt = DomainEvent.Create(
+                tenantId,
+                actorUserId,
+                correlationId: System.Diagnostics.Activity.Current?.RootId,
+                eventType: "nickerp.inspection.validation.strict_mode_changed",
+                entityType: "TenantSetting",
+                entityId: dto.Id.ToString(),
+                payload: payload,
+                idempotencyKey: key);
+            await _events.PublishAsync(evt, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Failed to emit nickerp.inspection.validation.strict_mode_changed for tenant {TenantId}",
+                tenantId);
+        }
     }
 
     /// <summary>
