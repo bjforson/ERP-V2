@@ -30,7 +30,12 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
+    <!--
+      Bumped 3.1.10 -> 3.1.11 (Sprint 32 FU-A) for GHSA-rxmq-m78w-7wmc
+      (moderate). The 3.1.x series is patch-level only; no breaking changes.
+      Patched version per https://github.com/advisories/GHSA-rxmq-m78w-7wmc.
+    -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
   </ItemGroup>
 
   <ItemGroup>

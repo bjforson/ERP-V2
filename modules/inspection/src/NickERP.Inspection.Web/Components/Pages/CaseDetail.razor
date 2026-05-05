@@ -196,6 +196,19 @@ else
     // -------- Rules + Findings --------
     private RulesEvaluationResult? _rulesResult;
     private List<Finding> _findings = new();
+    /// <summary>
+    /// Sprint 32 FU-C — system-authored findings (validation engine + future
+    /// Sprint 31 completeness). Partitioned from <see cref="_findings"/> after
+    /// the load. Rendered in a dedicated pane so analysts can distinguish
+    /// engine outputs from their own observations.
+    /// </summary>
+    private IReadOnlyList<Finding> _validationFindings = Array.Empty<Finding>();
+    /// <summary>
+    /// Sprint 32 FU-C — analyst observations (legacy default + the
+    /// <c>analyst.annotation</c> rows from <see cref="AnalystAnnotationService"/>).
+    /// Pre-FU-C this was simply <see cref="_findings"/> verbatim.
+    /// </summary>
+    private IReadOnlyList<Finding> _analystFindings = Array.Empty<Finding>();
     private bool _findingsLoaded;
 
     // -------- History --------
@@ -339,6 +352,10 @@ else
         _findingsLoaded = false;
         _historyLoaded = false;
         _artifactsByScan.Clear();
+        // Sprint 32 FU-C — partition lists are derived from _findings; reset
+        // alongside the loaded-flag so the next visit re-classifies cleanly.
+        _validationFindings = Array.Empty<Finding>();
+        _analystFindings = Array.Empty<Finding>();
 
         // Sprint 14 / VP6 Phase C — load active claim metadata so the
         // header banner can show "claimed by [user] in [service]" or
@@ -432,6 +449,14 @@ else
                         orderby f.CreatedAt descending
                         select f
                     ).ToListAsync();
+                    // Sprint 32 FU-C — partition the result so the Rules pane
+                    // can render system-authored Findings (validation /
+                    // completeness) in a dedicated table separate from the
+                    // analyst-observation list. Order is preserved within
+                    // each bucket.
+                    var split = CaseDetailFindingsClassifier.Partition(_findings);
+                    _validationFindings = split.Validation;
+                    _analystFindings = split.Analyst;
                     _findingsLoaded = true;
                 }
                 break;
@@ -790,10 +815,51 @@ else
             }
         </div>
 
-        <div class="inspection-card">
-            <h3 class="inspection-card-title">Analyst findings (@_findings.Count)</h3>
+        @*
+            Sprint 32 FU-C — split the original "findings" pane into two:
+            one for system-authored Findings (validation rules + future
+            Sprint 31 completeness signals) and one for analyst
+            observations (annotations etc.). Same physical tab; clearer
+            mental model. Each row in the validation pane links to the
+            Sprint 28 rules-admin drill-down at /admin/rules/{ruleId}.
+        *@
+        <div class="inspection-card" data-testid="validation-findings-pane">
+            <h3 class="inspection-card-title">Validation rules (@_validationFindings.Count)</h3>
             @if (!_findingsLoaded) { <p>Loading…</p> }
-            else if (_findings.Count == 0)
+            else if (_validationFindings.Count == 0)
+            {
+                <p class="inspection-empty">No validation-rule findings yet. Run authority checks from the Overview tab to populate this list.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead><tr><th>Rule</th><th>Severity</th><th>Message</th><th>Recorded</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var f in _validationFindings)
+                        {
+                            var ruleId = CaseDetailFindingsClassifier.ExtractRuleId(f.FindingType);
+                            <tr>
+                                <td><code>@(ruleId ?? f.FindingType)</code></td>
+                                <td><span class="inspection-pill-state is-@f.Severity.ToLowerInvariant()">@f.Severity</span></td>
+                                <td>@(string.IsNullOrEmpty(f.Note) ? "—" : f.Note)</td>
+                                <td>@f.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(ruleId))
+                                    {
+                                        <a class="inspection-button" href="/admin/rules/@ruleId">Drill down</a>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <div class="inspection-card" data-testid="analyst-findings-pane">
+            <h3 class="inspection-card-title">Analyst findings (@_analystFindings.Count)</h3>
+            @if (!_findingsLoaded) { <p>Loading…</p> }
+            else if (_analystFindings.Count == 0)
             {
                 <p class="inspection-empty">No findings recorded yet. The image viewer's annotation tool persists findings here.</p>
             }
@@ -802,7 +868,7 @@ else
                 <table class="inspection-table">
                     <thead><tr><th>Type</th><th>Severity</th><th>Note</th><th>Location</th><th>Recorded</th></tr></thead>
                     <tbody>
-                        @foreach (var f in _findings)
+                        @foreach (var f in _analystFindings)
                         {
                             <tr>
                                 <td><code>@f.FindingType</code></td>
