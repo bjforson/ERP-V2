@@ -445,7 +445,15 @@ builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe
 // /admin/retention/purge-candidates pages and the Phase B
 // RetentionEnforcerWorker's policy lookup. Scoped (consumes per-request
 // InspectionDbContext + ITenantContext), idempotent extension method.
+//
+// RetentionService also depends on Sprint 35's ITenantSettingsService —
+// register the default DB-backed implementation alongside (matches the
+// portal's Program.cs wireup). Idempotent via TryAddScoped so parallel
+// sprints adding the same registration are no-ops.
 // ---------------------------------------------------------------------------
+Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+    .TryAddScoped<NickERP.Platform.Tenancy.Features.ITenantSettingsService,
+                  NickERP.Platform.Tenancy.Database.Services.TenantSettingsService>(builder.Services);
 NickERP.Inspection.Web.Services.RetentionServiceCollectionExtensions
     .AddNickErpInspectionRetention(builder.Services);
 
