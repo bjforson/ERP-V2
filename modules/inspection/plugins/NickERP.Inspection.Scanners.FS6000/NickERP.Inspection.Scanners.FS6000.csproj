@@ -33,6 +33,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
     <ProjectReference Include="..\..\src\NickERP.Inspection.Scanners.Abstractions\NickERP.Inspection.Scanners.Abstractions.csproj" />
+    <!-- Sprint 45 / Phase A — canonical scan-package adoption. The new
+         IScannerAdapter.ParseScanAsync overload returns a ScanPackage
+         bundle defined in NickERP.Inspection.Edge.Abstractions; the
+         FS6000 adapter overrides the default implementation to surface
+         a per-channel, vendor-neutral shape ready for HMAC signing. -->
+    <ProjectReference Include="..\..\src\NickERP.Inspection.Edge.Abstractions\NickERP.Inspection.Edge.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>
