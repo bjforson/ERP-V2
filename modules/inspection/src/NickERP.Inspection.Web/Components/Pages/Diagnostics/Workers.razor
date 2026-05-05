@@ -1,0 +1,153 @@
+@page "/admin/diagnostics/workers"
+@* Sprint 33 / B7.2 — diagnostics workers page.
+
+   Surfaces every IBackgroundServiceProbe registration in this host
+   with last-tick / last-success / error counters + last-error message.
+   Mirrors /healthz/workers but rendered as a table for tenant admins
+   instead of returning JSON. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Inspection.Web.Services
+@inject DiagnosticsService Diagnostics
+
+<PageTitle>Workers — Diagnostics — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Diagnostics — workers</h1>
+        <p class="inspection-page-subtitle">
+            Per-worker liveness for every long-running <code>BackgroundService</code> that implements <code>IBackgroundServiceProbe</code>. Mirrors <code>/healthz/workers</code> in dashboard form.
+            Sister pages: <a href="/admin/diagnostics/health">health</a>, <a href="/admin/diagnostics/logs">logs</a>.
+        </p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    <div class="inspection-button-row">
+        <button class="inspection-button" type="button" @onclick="ReloadAsync">Refresh</button>
+        @if (_snapshots is not null)
+        {
+            <span class="inspection-page-subtitle">@_snapshots.Count worker(s) registered</span>
+        }
+    </div>
+</section>
+
+@if (_snapshots is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <section class="inspection-section">
+        <ReportSummaryCard
+            Title="Overall worker health"
+            Headline="@_overall"
+            HeadlineSubtitle="aggregate of all probes"
+            BadgeText="@_overall"
+            BadgeKind="@HealthBadgeKind(_overall)" />
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Workers</h2>
+            @if (_snapshots.Count == 0)
+            {
+                <p class="inspection-empty">No background workers registered in this host.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead>
+                        <tr>
+                            <th>Worker</th>
+                            <th>Health</th>
+                            <th>Ticks</th>
+                            <th>Errors</th>
+                            <th>Last tick</th>
+                            <th>Last success</th>
+                            <th>Last error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var w in _snapshots)
+                        {
+                            <tr>
+                                <td><code>@w.Name</code></td>
+                                <td><span class="inspection-badge inspection-badge-@HealthBadgeKind(w.Health)">@w.Health</span></td>
+                                <td>@w.TickCount.ToString("N0")</td>
+                                <td>@w.ErrorCount.ToString("N0")</td>
+                                <td>@FormatTimestamp(w.LastTickAt)</td>
+                                <td>@FormatTimestamp(w.LastSuccessAt)</td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(w.LastError))
+                                    {
+                                        <details>
+                                            <summary>@TruncateForRow(w.LastError)</summary>
+                                            <pre class="inspection-json-viewer-body">@w.LastError</pre>
+                                            @if (w.LastErrorAt.HasValue)
+                                            {
+                                                <p class="inspection-page-subtitle">at @w.LastErrorAt.Value.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC</p>
+                                            }
+                                        </details>
+                                    }
+                                    else
+                                    {
+                                        <span class="inspection-page-subtitle">—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <h2 class="inspection-card-title">Telemetry counters</h2>
+            <p class="inspection-page-subtitle">
+                Detailed per-instrument counters live on the <a href="/perf">/perf</a> page (Sprint 9 / FU-host-status). The diagnostics workers view focuses on liveness; flip to <code>/perf</code> for histograms + counters of the inspection meter.
+            </p>
+            <p class="inspection-page-subtitle">
+                <strong>Follow-up:</strong> a unified telemetry tile on this page is parked as <code>FU-diagnostics-meter-tile</code> — surface meter snapshots + worker probes in one panel once an OpenTelemetry export is wired.
+            </p>
+        </div>
+    </section>
+}
+
+@code {
+    private IReadOnlyList<WorkerProbeSnapshot>? _snapshots;
+    private string _overall = nameof(NickERP.Platform.Telemetry.BackgroundServiceHealth.Healthy);
+
+    protected override void OnInitialized()
+    {
+        Reload();
+    }
+
+    private void Reload()
+    {
+        _snapshots = Diagnostics.GetWorkerSnapshots();
+        _overall = Diagnostics.GetOverallWorkerHealth(_snapshots);
+    }
+
+    private async Task ReloadAsync()
+    {
+        Reload();
+        await Task.CompletedTask;
+    }
+
+    private static string HealthBadgeKind(string h) => h switch
+    {
+        "Healthy" => "success",
+        "Degraded" => "warning",
+        "Unhealthy" => "error",
+        _ => "neutral"
+    };
+
+    private static string FormatTimestamp(DateTimeOffset? at)
+        => at?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "—";
+
+    private static string TruncateForRow(string s, int max = 80)
+        => s.Length <= max ? s : s.Substring(0, max) + "…";
+}
