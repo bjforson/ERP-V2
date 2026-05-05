@@ -265,6 +265,12 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.ReviewQueueService>()
 // + state-transition rules live in one place.
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.ThresholdAdminService>();
 
+// Sprint 41 / Phase A — onboarding-questionnaire service backing the
+// /scanners wizard (Annex B Table 55). Operator-driven; not gating.
+// Records persist to ScannerOnboardingResponse; on completion the
+// service emits nickerp.inspection.scanner_onboarded.
+builder.Services.AddScoped<NickERP.Inspection.Web.Services.ScannerOnboardingService>();
+
 // §6.11.9 — manual-entry path for post-hoc outcomes. Wraps the
 // IPostHocOutcomeWriter so the Razor admin page (Components/Pages/
 // PostHocOutcomes.razor) and any direct caller (tests) route through
