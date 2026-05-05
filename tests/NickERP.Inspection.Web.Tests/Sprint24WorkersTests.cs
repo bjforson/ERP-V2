@@ -397,6 +397,118 @@ public sealed class Sprint24WorkersTests : IDisposable
         Assert.Equal("advanced-cursor", _cursorAdapter.LastCursorSeen);
     }
 
+    // -----------------------------------------------------------------
+    // Sprint 50 / Phase C — ScannerCursorSyncState persistence
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task AseSync_PersistsCursorRow_OnFirstAdvance()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "first-cursor",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var rows = await db.ScannerCursorSyncStates.AsNoTracking().ToListAsync();
+        var row = Assert.Single(rows);
+        Assert.Equal(_tenantId, row.TenantId);
+        Assert.Equal("test-cursor-scanner", row.ScannerDeviceTypeId);
+        Assert.Equal("test-cursor-scanner", row.AdapterName);
+        Assert.Equal("first-cursor", row.LastCursorValue);
+        Assert.True(row.LastAdvancedAt > DateTimeOffset.MinValue);
+    }
+
+    [Fact]
+    public async Task AseSync_CursorSurvivesWorkerRestart()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        // Cycle 1 — adapter advances cursor to "after-restart-1".
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "after-restart-1",
+            HasMore: false);
+        var first = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(first, "PullOnceAsync");
+
+        // Simulate worker restart — fresh AseSyncWorker instance,
+        // empty in-memory dict. Cursor must be re-loaded from
+        // persistent state so the adapter sees the same value.
+        var fresh = new AseSyncWorker(
+            _sp,
+            _sp.GetRequiredService<IOptions<AseSyncOptions>>(),
+            NullLogger<AseSyncWorker>.Instance);
+
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "after-restart-1",
+            HasMore: false);
+        await InvokeAsync<int>(fresh, "PullOnceAsync");
+
+        Assert.Equal("after-restart-1", _cursorAdapter.LastCursorSeen);
+    }
+
+    [Fact]
+    public async Task AseSync_AdvancesCursorRow_AcrossMultipleCycles()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+
+        // Three sequential cycles, each advancing the cursor.
+        var cursors = new[] { "c1", "c2", "c3" };
+        foreach (var c in cursors)
+        {
+            _cursorAdapter.NextBatch = new CursorSyncBatch(
+                Records: System.Array.Empty<CursorSyncRecord>(),
+                NextCursor: c,
+                HasMore: false);
+            await InvokeAsync<int>(worker, "PullOnceAsync");
+        }
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var row = await db.ScannerCursorSyncStates.AsNoTracking().SingleAsync();
+        Assert.Equal("c3", row.LastCursorValue);
+        // Every advance bumps the concurrency token; we expect at least
+        // one bump per cycle (the in-memory provider may bump more if
+        // the worker advances on both empty + non-empty paths).
+        Assert.True(row.ConcurrencyToken >= cursors.Length,
+            $"Expected concurrency token >= {cursors.Length} after {cursors.Length} advances; got {row.ConcurrencyToken}.");
+    }
+
+    [Fact]
+    public async Task AseSync_AdvancesCursor_OnEmptyBatch()
+    {
+        // The adapter may signal "no records this cycle" but still
+        // hand back a non-empty NextCursor (the source has moved past
+        // this point). The worker must persist that cursor so a future
+        // restart doesn't rewind to the previous value.
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "moved-forward-empty",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var row = await db.ScannerCursorSyncStates.AsNoTracking().SingleAsync();
+        Assert.Equal("moved-forward-empty", row.LastCursorValue);
+    }
+
     [Fact]
     public async Task AseSync_PartialBatchFailure_DoesNotKillBatch()
     {

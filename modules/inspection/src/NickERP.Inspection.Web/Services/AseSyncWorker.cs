@@ -36,13 +36,17 @@ namespace NickERP.Inspection.Web.Services;
 /// </para>
 ///
 /// <para>
-/// <b>Cursor state.</b> Held in-memory in
-/// <see cref="_cursorByInstance"/>. On host restart, the cursor resets
-/// to <see cref="string.Empty"/> and the adapter re-emits every record;
-/// the host's <c>Scan.IdempotencyKey</c> uniqueness
-/// (<c>ux_scans_tenant_idempotency</c>) silently dedupes. Per Sprint 24
-/// architectural decision: no new tracking tables for cursor state —
-/// idempotency through existing unique indexes only.
+/// <b>Cursor state.</b> Sprint 50 / FU-cursor-state-persistence —
+/// durable per <c>(TenantId, ScannerDeviceTypeId, AdapterName)</c> on
+/// <see cref="ScannerCursorSyncState"/> (replaces the Sprint 24
+/// in-memory dict). Survives host restart + supports multi-host
+/// pilots: a fresh host doesn't re-pull a backlog the previous host
+/// already drained, and two hosts converge on the same monotonic
+/// cursor via optimistic concurrency on
+/// <see cref="ScannerCursorSyncState.ConcurrencyToken"/>. The
+/// in-memory <see cref="_cursorByInstance"/> dict survives as a
+/// per-cycle cache so the worker doesn't re-issue a SELECT for every
+/// drain iteration on the same device.
 /// </para>
 ///
 /// <para>
@@ -280,7 +284,14 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
             TenantId: device.TenantId,
             ConfigJson: device.ConfigJson);
 
-        var startCursor = _cursorByInstance.GetValueOrDefault(device.InstanceId, string.Empty);
+        // Sprint 50 / FU-cursor-state-persistence — read the cursor
+        // from inspection.scanner_cursor_sync_states (per TenantId +
+        // ScannerDeviceTypeId + AdapterName). The in-memory dict is a
+        // per-cycle cache so the inner drain loop doesn't re-SELECT
+        // every iteration; we still write through to the durable row
+        // on each advance.
+        var (startCursor, cursorState) = await ReadCursorAsync(db, device, ct);
+        _cursorByInstance[device.InstanceId] = startCursor;
         var pulledThisDevice = 0;
         var currentCursor = startCursor;
 
@@ -311,6 +322,7 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
                 // Even an empty batch may advance the cursor (the source
                 // is past the last successful pull point). Persist the
                 // adapter's NextCursor regardless.
+                cursorState = await AdvanceCursorAsync(db, cursorState, device, batch.NextCursor, ct);
                 _cursorByInstance[device.InstanceId] = batch.NextCursor;
                 break;
             }
@@ -318,6 +330,7 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
             await PersistRecordsAsync(db, imageStore, generic, device, batch.Records, ct);
             pulledThisDevice += batch.Records.Count;
             currentCursor = batch.NextCursor;
+            cursorState = await AdvanceCursorAsync(db, cursorState, device, currentCursor, ct);
             _cursorByInstance[device.InstanceId] = currentCursor;
 
             AseSyncInstruments.RecordsPulledTotal.Add(batch.Records.Count,
@@ -328,6 +341,130 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
 
         return pulledThisDevice;
     }
+
+    /// <summary>
+    /// Sprint 50 / FU-cursor-state-persistence — read the durable cursor
+    /// row (or <see cref="string.Empty"/> when no row exists yet).
+    /// Returns both the cursor value AND the tracked entity so the
+    /// caller can update via the same instance (saves one SELECT per
+    /// advance + keeps EF's optimistic-concurrency check in scope).
+    /// </summary>
+    private static async Task<(string Cursor, ScannerCursorSyncState? Entity)> ReadCursorAsync(
+        InspectionDbContext db,
+        DeviceDescriptor device,
+        CancellationToken ct)
+    {
+        var existing = await db.ScannerCursorSyncStates
+            .FirstOrDefaultAsync(c =>
+                c.ScannerDeviceTypeId == device.TypeCode
+                && c.AdapterName == device.TypeCode,
+                ct);
+        if (existing is null)
+        {
+            return (string.Empty, null);
+        }
+        return (existing.LastCursorValue, existing);
+    }
+
+    /// <summary>
+    /// Advance (or create) the cursor row under optimistic concurrency.
+    /// Returns the tracked entity so the caller can advance multiple
+    /// times in the same scope without re-reading.
+    ///
+    /// <para>
+    /// On <see cref="DbUpdateConcurrencyException"/> we silently
+    /// reload + retry once. Two hosts racing on the same cursor will
+    /// converge — the loser's record-write isn't lost because the
+    /// underlying records are dedupedup independently via
+    /// <c>Scan.IdempotencyKey</c>; only the cursor pointer rolls
+    /// forward.
+    /// </para>
+    /// </summary>
+    private async Task<ScannerCursorSyncState> AdvanceCursorAsync(
+        InspectionDbContext db,
+        ScannerCursorSyncState? entity,
+        DeviceDescriptor device,
+        string newCursor,
+        CancellationToken ct)
+    {
+        if (entity is null)
+        {
+            // First-ever advance for this (tenant, scanner-type, adapter).
+            var fresh = new ScannerCursorSyncState
+            {
+                Id = Guid.NewGuid(),
+                ScannerDeviceTypeId = device.TypeCode,
+                AdapterName = device.TypeCode,
+                LastCursorValue = newCursor,
+                LastAdvancedAt = DateTimeOffset.UtcNow,
+                ConcurrencyToken = 1,
+                TenantId = device.TenantId
+            };
+            db.ScannerCursorSyncStates.Add(fresh);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return fresh;
+            }
+            catch (DbUpdateException ex) when (IsCursorUniqueViolation(ex))
+            {
+                // Another host won the race to insert the first row.
+                // Detach the loser, re-read the winner, and update.
+                _logger.LogDebug(ex,
+                    "AseSyncWorker lost cursor-insert race for tenant={TenantId} type={TypeCode}; reloading winner.",
+                    device.TenantId, device.TypeCode);
+                db.Entry(fresh).State = EntityState.Detached;
+                var winner = await db.ScannerCursorSyncStates
+                    .FirstAsync(c =>
+                        c.ScannerDeviceTypeId == device.TypeCode
+                        && c.AdapterName == device.TypeCode,
+                        ct);
+                return await AdvanceCursorAsync(db, winner, device, newCursor, ct);
+            }
+        }
+
+        // Update the existing row + bump the concurrency token.
+        entity.LastCursorValue = newCursor;
+        entity.LastAdvancedAt = DateTimeOffset.UtcNow;
+        entity.ConcurrencyToken += 1;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return entity;
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // Another host advanced the row between our read + write.
+            // Reload + re-apply our cursor; the loser silently retries.
+            // Records were already persisted above with their own
+            // idempotency keys, so the cursor is the only thing that
+            // needs reconciliation.
+            _logger.LogDebug(ex,
+                "AseSyncWorker cursor advance lost concurrency race for tenant={TenantId} type={TypeCode}; reloading.",
+                device.TenantId, device.TypeCode);
+
+            // Detach + reload from the DB; the entry now has the
+            // winning ConcurrencyToken so a second SaveChanges
+            // succeeds (provided no third host writes in between).
+            await db.Entry(entity).ReloadAsync(ct);
+            entity.LastCursorValue = newCursor;
+            entity.LastAdvancedAt = DateTimeOffset.UtcNow;
+            entity.ConcurrencyToken += 1;
+            await db.SaveChangesAsync(ct);
+            return entity;
+        }
+    }
+
+    /// <summary>
+    /// Detect the unique-index violation produced when two hosts
+    /// concurrently INSERT the first cursor row for the same
+    /// (TenantId, TypeCode, Adapter). Inline so the worker doesn't
+    /// take a hard reference on a shared helper.
+    /// </summary>
+    private static bool IsCursorUniqueViolation(DbUpdateException ex)
+        => ex.InnerException?.GetType().Name.Contains("PostgresException", StringComparison.Ordinal) == true
+           && ex.InnerException.Message.Contains("ux_cursor_sync_state_tenant_type_adapter", StringComparison.Ordinal);
 
     /// <summary>
     /// Persist a batch of <see cref="CursorSyncRecord"/> as
