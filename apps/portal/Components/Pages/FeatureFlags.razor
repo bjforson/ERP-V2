@@ -1,0 +1,236 @@
+@page "/admin/feature-flags"
+@* Sprint 35 / B8.2 — per-tenant feature flag admin page.
+   Lists every persisted FeatureFlag row for the current admin's
+   tenant + a curated catalogue of "well-known" flag keys so
+   operators can flip flags they expect to read in code. Toggling a
+   flag persists to tenancy.feature_flags via IFeatureFlagService and
+   emits a nickerp.tenancy.feature_flag_toggled audit event so the
+   trail of who-flipped-what survives. *@
+@attribute [Authorize]
+@using NickERP.Platform.Tenancy
+@using NickERP.Platform.Tenancy.Features
+
+@inject IFeatureFlagService Flags
+@inject ITenantContext TenantCtx
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Feature flags — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Feature flags</h1>
+        <p class="portal-page-subtitle">
+            Per-tenant on/off switches for opt-in features. A missing
+            row implies "use the default the calling code passed".
+        </p>
+    </div>
+</header>
+
+@if (!TenantCtx.IsResolved)
+{
+    <p class="portal-card-subtitle">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    <section class="portal-section">
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="portal-form-message">@_message</p>
+        }
+
+        <div class="portal-card">
+            <h2 class="portal-card-title">Set a flag</h2>
+            <p class="portal-card-subtitle">
+                Pick a known key from the catalogue, or type a custom
+                key (vendor-neutral lowercase, dot-separated).
+            </p>
+            <EditForm Model="_form" OnValidSubmit="SaveAsync" FormName="set-flag" class="portal-form">
+                <div class="portal-form-row">
+                    <label>
+                        <span>Catalogue</span>
+                        <InputSelect class="portal-input" @bind-Value="_form.SelectedKey" @bind-Value:after="OnCatalogueSelected">
+                            <option value="">— pick from catalogue —</option>
+                            @foreach (var k in KnownFlagKeys)
+                            {
+                                <option value="@k.Key">@k.Key — @k.Description</option>
+                            }
+                        </InputSelect>
+                    </label>
+                    <label>
+                        <span>Flag key</span>
+                        <InputText class="portal-input" @bind-Value="_form.FlagKey"
+                                   placeholder="module.feature.aspect" />
+                    </label>
+                    <label>
+                        <span>Enabled</span>
+                        <InputCheckbox class="portal-input" @bind-Value="_form.Enabled" />
+                    </label>
+                </div>
+                <div class="portal-form-actions">
+                    <button type="submit" class="portal-button portal-button-primary">Save</button>
+                </div>
+            </EditForm>
+        </div>
+
+        <div class="portal-card">
+            <h2 class="portal-card-title">Persisted flags</h2>
+            @if (_rows is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (_rows.Count == 0)
+            {
+                <p class="portal-card-subtitle">No flags persisted for this tenant. Set one above to override a default.</p>
+            }
+            else
+            {
+                <table class="portal-table">
+                    <thead>
+                        <tr>
+                            <th>Flag key</th>
+                            <th>Enabled</th>
+                            <th>Last updated</th>
+                            <th>Last updated by</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var f in _rows)
+                        {
+                            <tr>
+                                <td><code>@f.FlagKey</code></td>
+                                <td>
+                                    @if (f.Enabled)
+                                    {
+                                        <span class="portal-state-badge portal-state-active">Enabled</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="portal-state-badge portal-state-suspended">Disabled</span>
+                                    }
+                                </td>
+                                <td title="@f.UpdatedAt.ToString("O")">@f.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@(f.UpdatedByUserId?.ToString() ?? "—")</td>
+                                <td>
+                                    <button type="button" class="portal-button"
+                                            @onclick="() => ToggleAsync(f.FlagKey, !f.Enabled)">
+                                        @(f.Enabled ? "Disable" : "Enable")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    /// <summary>
+    /// Curated list of "well-known" flag keys an admin would want to
+    /// flip from the UI. Adding a flag here does not seed a row —
+    /// callers still pass a default when reading. The list grows as
+    /// new opt-in features land; keep it short + actionable.
+    /// </summary>
+    private static readonly KnownFlag[] KnownFlagKeys =
+    {
+        new("inspection.cross_record_split.auto_resolve",
+            "Auto-resolve obvious cross-record splits without analyst confirm."),
+        new("inspection.completeness.warn_on_missing_documents",
+            "Surface a warning banner on /cases/{id} when required documents are missing."),
+        new("inspection.posthoc.show_outcome_stub_link",
+            "Render the manual-entry link for post-hoc outcomes on /cases/{id}."),
+        new("portal.launcher.show_disabled_modules",
+            "Show disabled module tiles greyed-out (helpful while testing per-tenant module activation)."),
+        new("portal.notifications.poll_interval_fast",
+            "Bell + inbox poll every 5s instead of 30s (debug only)."),
+        new("comms.email.development_outbox_only",
+            "Override Email:Provider — force the noop / filesystem-outbox sender."),
+    };
+
+    private List<FeatureFlagDto>? _rows;
+    private string? _message;
+    private FlagForm _form = new();
+
+    /// <inheritdoc />
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (!TenantCtx.IsResolved) return;
+        var rows = await Flags.ListAsync(TenantCtx.TenantId);
+        _rows = rows.ToList();
+    }
+
+    private void OnCatalogueSelected()
+    {
+        if (!string.IsNullOrEmpty(_form.SelectedKey))
+        {
+            _form.FlagKey = _form.SelectedKey;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!TenantCtx.IsResolved) return;
+        if (string.IsNullOrWhiteSpace(_form.FlagKey))
+        {
+            _message = "Pick a catalogue key or type a custom key.";
+            return;
+        }
+        var actor = await ResolveActorAsync();
+        try
+        {
+            var dto = await Flags.SetAsync(_form.FlagKey, TenantCtx.TenantId, _form.Enabled, actor);
+            _message = $"Flag '{dto.FlagKey}' is now {(dto.Enabled ? "enabled" : "disabled")}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private async Task ToggleAsync(string flagKey, bool enabled)
+    {
+        if (!TenantCtx.IsResolved) return;
+        var actor = await ResolveActorAsync();
+        try
+        {
+            await Flags.SetAsync(flagKey, TenantCtx.TenantId, enabled, actor);
+            _message = $"Flag '{flagKey}' is now {(enabled ? "enabled" : "disabled")}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Toggle failed: {ex.Message}";
+        }
+    }
+
+    private async Task<Guid?> ResolveActorAsync()
+    {
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+            return Guid.TryParse(idClaim, out var g) ? g : null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record KnownFlag(string Key, string Description);
+
+    private sealed class FlagForm
+    {
+        public string SelectedKey { get; set; } = string.Empty;
+        public string FlagKey { get; set; } = string.Empty;
+        public bool Enabled { get; set; }
+    }
+}
