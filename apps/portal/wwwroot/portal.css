@@ -244,6 +244,26 @@ a { color: var(--nickerp-color-primary); }
 }
 .portal-input:focus { border-color: var(--nickerp-color-primary); }
 
+/* Sprint 49 / FU-feature-flag-key-validation — invalid-input + inline
+   error message styling for the FeatureFlags admin form. The Save
+   button uses the standard `disabled` attribute; CSS is just the
+   visual cue on the input + the helper text under it. */
+.portal-input-error,
+.portal-input-error:focus {
+    border-color: var(--nickerp-color-danger, #dc2626);
+}
+.portal-form-error {
+    display: block;
+    margin-top: var(--nickerp-space-1);
+    color: var(--nickerp-color-danger, #dc2626);
+    font-size: var(--nickerp-font-size-xs);
+    font-weight: var(--nickerp-font-weight-regular);
+}
+.portal-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .portal-button {
     height: 36px;
     padding: 0 var(--nickerp-space-4);

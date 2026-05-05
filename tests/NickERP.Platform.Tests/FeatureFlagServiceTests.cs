@@ -144,6 +144,79 @@ public sealed class FeatureFlagServiceTests
         await act.Should().ThrowAsync<ArgumentException>();
     }
 
+    // -- Sprint 49 / FU-feature-flag-key-validation -------------------
+
+    public static TheoryData<string> InvalidFlagKeys => new()
+    {
+        // Single segment — no dot.
+        "singlesegment",
+        "modulefeature",
+        // Leading digit.
+        "1leading.flag",
+        // Leading dot / empty first segment.
+        ".empty.first",
+        // Trailing dot / empty last segment.
+        "trailing.dot.",
+        // Dash not allowed.
+        "module.feature-with-dash.x",
+        // Double dot.
+        "module..feature",
+        // Whitespace within (NormaliseKey only trims edges).
+        "module . feature",
+    };
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [MemberData(nameof(InvalidFlagKeys))]
+    public async Task SetAsync_RejectsKeysThatDoNotMatchCuratedRegex(string raw)
+    {
+        await using var ctx = BuildCtx();
+        var svc = BuildService(ctx);
+
+        Func<Task> act = () => svc.SetAsync(raw, 1, enabled: true, actorUserId: null);
+
+        await act.Should().ThrowAsync<InvalidFeatureFlagKeyException>();
+        var rows = await ctx.FeatureFlags.AsNoTracking().ToListAsync();
+        rows.Should().BeEmpty(because: "rejected keys must not insert a row");
+    }
+
+    public static TheoryData<string> ValidFlagKeys => new()
+    {
+        "portal.test.flag",
+        "inspection.cross_record_split.auto_resolve",
+        "x.y",
+        // Underscores + digits inside segments are allowed.
+        "module_one.feature_two_3.aspect4",
+        // Mixed case is normalised before validation.
+        "Module.Feature.Aspect",
+        // Curated catalogue keys all pass.
+        "comms.email.development_outbox_only",
+    };
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [MemberData(nameof(ValidFlagKeys))]
+    public async Task SetAsync_AcceptsKeysMatchingCuratedRegex(string raw)
+    {
+        await using var ctx = BuildCtx();
+        var svc = BuildService(ctx);
+
+        var dto = await svc.SetAsync(raw, tenantId: 11, enabled: true, actorUserId: null);
+
+        dto.Enabled.Should().BeTrue();
+        dto.FlagKey.Should().Be(raw.Trim().ToLowerInvariant());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void IsValidFlagKey_StaticHelper_ReportsMatch()
+    {
+        FeatureFlagService.IsValidFlagKey("portal.test.flag").Should().BeTrue();
+        FeatureFlagService.IsValidFlagKey("nope").Should().BeFalse();
+        FeatureFlagService.IsValidFlagKey("").Should().BeFalse();
+        FeatureFlagService.IsValidFlagKey(null!).Should().BeFalse();
+    }
+
     [Fact]
     [Trait("Category", "Unit")]
     public async Task ListAsync_FiltersByTenant()
