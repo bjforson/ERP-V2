@@ -1,0 +1,228 @@
+@page "/admin/pilot-readiness"
+@* Sprint 43 — pilot readiness dashboard. Renders the 5 readiness
+   gates for the current admin's tenant, surfaces the multi-tenant
+   invariant probe's 3 sub-checks, and auto-refreshes every 30s
+   while the page is open. Vendor-neutral — no Ghana / FS6000 /
+   ASE / ICUMS strings. *@
+@attribute [Authorize]
+@using NickERP.Platform.Tenancy
+@using NickERP.Platform.Tenancy.Pilot
+@implements IDisposable
+
+@inject IPilotReadinessService Readiness
+@inject ITenantContext TenantCtx
+@inject ILogger<PilotReadiness> Logger
+
+<PageTitle>Pilot readiness — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Pilot readiness</h1>
+        <p class="portal-page-subtitle">
+            Five correctness gates that prove this tenant is ready for
+            pilot. Each gate is a proof — not an artificial precondition.
+            "Not yet observed" is not a failure; the operator drives it
+            with the "what's needed" hint.
+        </p>
+    </div>
+    <div class="portal-page-actions">
+        <button type="button" class="portal-button" @onclick="RefreshAsync" disabled="@_isRefreshing">
+            @(_isRefreshing ? "Refreshing…" : "Refresh now")
+        </button>
+    </div>
+</header>
+
+@if (!TenantCtx.IsResolved)
+{
+    <p class="portal-card-subtitle">Tenant context is not resolved. Sign out and back in.</p>
+}
+else if (_loadError is not null)
+{
+    <p class="portal-form-message">Could not run the readiness probe: @_loadError</p>
+}
+else if (_report is null)
+{
+    <p class="portal-card-subtitle">Loading…</p>
+}
+else
+{
+    <p class="portal-card-subtitle">
+        Last refreshed: <code>@_report.ObservedAt.ToString("u")</code>
+        (auto-refresh every 30s while this page is open)
+    </p>
+
+    <section class="portal-section pilot-readiness-grid">
+        @foreach (var gate in _report.Gates)
+        {
+            <div class="portal-card pilot-readiness-card">
+                <header class="pilot-readiness-card-header">
+                    <h2 class="portal-card-title">@FriendlyGateName(gate.GateId)</h2>
+                    <span class="@PillClass(gate.State)">
+                        @StateLabel(gate.State)
+                    </span>
+                </header>
+                <p class="portal-card-subtitle">
+                    <code>@gate.GateId</code>
+                </p>
+                @if (gate.ProofEventId is { } pid)
+                {
+                    <p class="pilot-readiness-proof">
+                        Proof event:
+                        <a href="/audit-log?eventId=@pid"><code>@pid</code></a>
+                    </p>
+                }
+                @if (!string.IsNullOrWhiteSpace(gate.Note))
+                {
+                    <p class="pilot-readiness-note">@gate.Note</p>
+                }
+                @if (gate.GateId == PilotReadinessGate.MultiTenantInvariants)
+                {
+                    @* The multi-tenant gate's note is a structured
+                       summary "rls_read_isolation:pass; system_context_register:pass; cross_tenant_export_gate:pass".
+                       Render it as three sub-pills for readability. *@
+                    @if (TryParseSubChecks(gate.Note, out var subChecks))
+                    {
+                        <ul class="pilot-readiness-subchecks">
+                            @foreach (var sc in subChecks)
+                            {
+                                <li>
+                                    <span class="@(sc.Pass ? "portal-pill is-ok" : "portal-pill is-down")">
+                                        @(sc.Pass ? "PASS" : "FAIL")
+                                    </span>
+                                    <code>@sc.Id</code>
+                                    @if (!sc.Pass && !string.IsNullOrWhiteSpace(sc.Detail))
+                                    {
+                                        <span class="pilot-readiness-subcheck-detail"> — @sc.Detail</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                }
+            </div>
+        }
+    </section>
+}
+
+@code {
+    private PilotReadinessReport? _report;
+    private string? _loadError;
+    private bool _isRefreshing;
+    private System.Threading.Timer? _autoRefreshTimer;
+    private CancellationTokenSource _cts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        // Auto-refresh every 30s while the page is open. Disposed in
+        // IDisposable.Dispose below. We use System.Threading.Timer
+        // rather than a Task.Delay loop so component disposal cancels
+        // cleanly without a lingering Task.
+        _autoRefreshTimer = new System.Threading.Timer(async _ =>
+        {
+            try { await InvokeAsync(RefreshAsync); }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex,
+                    "PilotReadiness auto-refresh tick threw; will retry on next tick.");
+            }
+        }, state: null, dueTime: TimeSpan.FromSeconds(30), period: TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (!TenantCtx.IsResolved) return;
+        if (_isRefreshing) return;
+        _isRefreshing = true;
+        try
+        {
+            _loadError = null;
+            _report = await Readiness.GetReadinessAsync(TenantCtx.TenantId, _cts.Token);
+        }
+        catch (OperationCanceledException) { /* component disposed */ }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex,
+                "PilotReadiness — refresh threw for tenant {TenantId}.",
+                TenantCtx.TenantId);
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _isRefreshing = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _autoRefreshTimer?.Dispose();
+        try { _cts.Cancel(); } catch { /* best-effort */ }
+        _cts.Dispose();
+    }
+
+    private static string FriendlyGateName(string gateId) => gateId switch
+    {
+        PilotReadinessGate.ScannerAdapter => "Scanner adapter wired",
+        PilotReadinessGate.EdgeRoundtrip => "Edge round-trip",
+        PilotReadinessGate.AnalystDecisionedRealCase => "Analyst decisioned a real case",
+        PilotReadinessGate.ExternalSystemRoundtrip => "External system round-trip",
+        PilotReadinessGate.MultiTenantInvariants => "Multi-tenant invariants",
+        _ => gateId,
+    };
+
+    private static string StateLabel(PilotReadinessState s) => s switch
+    {
+        PilotReadinessState.Pass => "PASS",
+        PilotReadinessState.Fail => "FAIL",
+        PilotReadinessState.NotYetObserved => "NOT YET OBSERVED",
+        _ => "?",
+    };
+
+    private static string PillClass(PilotReadinessState s) => s switch
+    {
+        PilotReadinessState.Pass => "portal-pill is-ok",
+        PilotReadinessState.Fail => "portal-pill is-down",
+        PilotReadinessState.NotYetObserved => "portal-pill is-pending",
+        _ => "portal-pill",
+    };
+
+    /// <summary>
+    /// The multi-tenant gate's <see cref="PilotReadinessGateResult.Note"/>
+    /// is a structured string of the form:
+    /// <c>rls_read_isolation:pass; system_context_register:pass; cross_tenant_export_gate:fail(reason text)</c>.
+    /// Parse it back out so the dashboard can render three sub-pills.
+    /// Returns false if the note doesn't match — the caller falls back
+    /// to rendering the raw text.
+    /// </summary>
+    private static bool TryParseSubChecks(string? note, out List<SubCheckRow> result)
+    {
+        result = new List<SubCheckRow>();
+        if (string.IsNullOrWhiteSpace(note)) return false;
+        var parts = note.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            // Form: "<id>:<pass|fail>" or "<id>:fail(<reason>)"
+            var colonIdx = part.IndexOf(':');
+            if (colonIdx <= 0 || colonIdx == part.Length - 1) continue;
+            var id = part[..colonIdx].Trim();
+            var rest = part[(colonIdx + 1)..].Trim();
+            string outcome;
+            string detail = string.Empty;
+            var paren = rest.IndexOf('(');
+            if (paren >= 0 && rest.EndsWith(")", StringComparison.Ordinal))
+            {
+                outcome = rest[..paren].Trim();
+                detail = rest.Substring(paren + 1, rest.Length - paren - 2).Trim();
+            }
+            else
+            {
+                outcome = rest;
+            }
+            var pass = outcome.Equals("pass", StringComparison.OrdinalIgnoreCase);
+            result.Add(new SubCheckRow(id, pass, detail));
+        }
+        return result.Count > 0;
+    }
+
+    private sealed record SubCheckRow(string Id, bool Pass, string Detail);
+}
