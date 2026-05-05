@@ -397,6 +397,11 @@ builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe
 
 builder.Services.Configure<IcumsSubmissionDispatchOptions>(
     builder.Configuration.GetSection(IcumsSubmissionDispatchOptions.SectionName));
+// Sprint 36 / FU-outbound-dispatch-retry — bounded retry budget +
+// exponential backoff for the dispatch worker. Defaults applied when
+// the section is absent (BaseBackoff=30s, MaxBackoff=1h, MaxRetries=5).
+builder.Services.Configure<OutboundSubmissionRetryOptions>(
+    builder.Configuration.GetSection(OutboundSubmissionRetryOptions.SectionName));
 builder.Services.AddSingleton<NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker>();
 builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker>());
@@ -418,6 +423,22 @@ builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
 builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.AuthorityDocumentMatcherWorker>());
+
+// ---------------------------------------------------------------------------
+// Sprint 36 / FU-sla-state-refresher-worker — periodic SLA window state
+// refresher. Calls SlaTracker.RefreshStatesAsync per case per tenant so
+// AtRisk → Breached transitions write to inspection.sla_window without
+// requiring a dashboard load. Default-disabled per Sprint 24 architectural
+// decision; opt-in per environment via
+// Inspection:Workers:SlaStateRefresher:Enabled=true.
+// ---------------------------------------------------------------------------
+builder.Services.Configure<SlaStateRefresherOptions>(
+    builder.Configuration.GetSection(SlaStateRefresherOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>();
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>());
+builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe>(
+    sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.SlaStateRefresherWorker>());
 
 // ---------------------------------------------------------------------------
 // Sprint 33 / B7 — reports + diagnostics services. Both scoped because

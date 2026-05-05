@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NickERP.Inspection.Database;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NickERP.Inspection.Database.Migrations
 {
     [DbContext(typeof(InspectionDbContext))]
-    partial class InspectionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260505100000_Add_OutboundSubmissionRetry")]
+    partial class Add_OutboundSubmissionRetry
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -134,9 +137,6 @@ namespace NickERP.Inspection.Database.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
-                    b.Property<DateTimeOffset?>("CompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<double>("ConfidenceScore")
                         .HasColumnType("double precision");
 
@@ -144,10 +144,6 @@ namespace NickERP.Inspection.Database.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-                    b.Property<string>("Outcome")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<int>("PeerDisagreementCount")
                         .HasColumnType("integer");
@@ -158,19 +154,11 @@ namespace NickERP.Inspection.Database.Migrations
                     b.Property<Guid>("ReviewSessionId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("ReviewType")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<string>("RoiInteractionsJson")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("jsonb")
                         .HasDefaultValueSql("'[]'::jsonb");
-
-                    b.Property<Guid?>("StartedByUserId")
-                        .HasColumnType("uuid");
 
                     b.Property<long>("TenantId")
                         .HasColumnType("bigint");
@@ -187,9 +175,6 @@ namespace NickERP.Inspection.Database.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ReviewSessionId");
-
-                    b.HasIndex("TenantId", "ReviewType", "CreatedAt")
-                        .HasDatabaseName("ix_analyst_reviews_tenant_type_time");
 
                     b.ToTable("analyst_reviews", "inspection");
                 });
@@ -556,11 +541,6 @@ namespace NickERP.Inspection.Database.Migrations
                     b.Property<Guid?>("OpenedByUserId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("ReviewQueue")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<int>("State")
                         .HasColumnType("integer");
 
@@ -603,10 +583,6 @@ namespace NickERP.Inspection.Database.Migrations
 
                     b.HasIndex("TenantId", "LocationId", "State", "OpenedAt")
                         .HasDatabaseName("ix_cases_tenant_loc_state_time");
-
-                    b.HasIndex("TenantId", "ReviewQueue", "State", "OpenedAt")
-                        .IsDescending(false, true, false, false)
-                        .HasDatabaseName("ix_cases_tenant_queue_state_time");
 
                     b.ToTable("cases", "inspection");
                 });

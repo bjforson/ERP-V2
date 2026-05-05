@@ -420,6 +420,13 @@ public sealed class InspectionDbContext : DbContext
             e.Property(x => x.SubmittedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             e.Property(x => x.Priority).IsRequired().HasDefaultValue(0);
             e.Property(x => x.LastAttemptAt);
+            // Sprint 36 / FU-outbound-dispatch-retry — bounded retry budget +
+            // exponential backoff scaffolding. Existing rows inherit
+            // RetryCount=0 (default) + NextAttemptAt=NULL (eligible now)
+            // after the migration so the production queue keeps moving
+            // without operator action.
+            e.Property(x => x.RetryCount).IsRequired().HasDefaultValue(0);
+            e.Property(x => x.NextAttemptAt);
             e.Property(x => x.TenantId).IsRequired();
 
             e.HasIndex(x => new { x.TenantId, x.IdempotencyKey }).IsUnique().HasDatabaseName("ux_outbound_tenant_idempotency");
@@ -431,6 +438,13 @@ public sealed class InspectionDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.Status, x.Priority, x.SubmittedAt })
                 .IsDescending(false, false, true, false)
                 .HasDatabaseName("ix_outbound_tenant_status_priority_time");
+            // Sprint 36 / FU-outbound-dispatch-retry — pickup query needs
+            // (Status, NextAttemptAt) so the dispatcher can ignore rows
+            // currently inside their backoff window. Postgres can use the
+            // existing (TenantId, Status, ...) index for the equality but
+            // the NULL-or-LE filter on NextAttemptAt is cheap to add here.
+            e.HasIndex(x => new { x.TenantId, x.Status, x.NextAttemptAt })
+                .HasDatabaseName("ix_outbound_tenant_status_next_attempt");
 
             e.HasOne(x => x.ExternalSystemInstance).WithMany().HasForeignKey(x => x.ExternalSystemInstanceId).OnDelete(DeleteBehavior.Restrict);
         });

@@ -29,7 +29,8 @@ public sealed record CompletenessContext(
     IReadOnlyList<AuthorityDocument> Documents,
     IReadOnlyList<AnalystReview> AnalystReviews,
     IReadOnlyList<Verdict> Verdicts,
-    long TenantId)
+    long TenantId,
+    IReadOnlyDictionary<string, decimal>? Thresholds = null)
 {
     /// <summary>
     /// Convenience accessor — true when the case has at least one
@@ -48,5 +49,19 @@ public sealed record CompletenessContext(
         return Documents
             .Where(d => string.Equals(d.DocumentType, documentType, StringComparison.OrdinalIgnoreCase))
             .ToList();
+    }
+
+    /// <summary>
+    /// Sprint 36 / FU-completeness-percent-requirements — the effective
+    /// numeric threshold for a percent-based requirement, resolved by
+    /// the engine from (tenant override → built-in default). Returns
+    /// <c>null</c> when the requirement is not percent-based or no
+    /// threshold has been configured. Requirements pull this via
+    /// <see cref="ICompletenessRequirement.RequirementId"/>.
+    /// </summary>
+    public decimal? ThresholdFor(string requirementId)
+    {
+        if (Thresholds is null || string.IsNullOrEmpty(requirementId)) return null;
+        return Thresholds.TryGetValue(requirementId, out var v) ? v : (decimal?)null;
     }
 }
