@@ -272,6 +272,39 @@ public sealed class ValidationEngine
                     TenantId = tenantId
                 });
             }
+        }
+
+        // Sprint 48 / Phase B — append-only snapshot per (case, rule).
+        // Lets /cases/{id} hydrate the validation pane on cold reload
+        // without re-running the engine. All outcomes (including Skip)
+        // get a row so the analyst can see "rule X abstained because
+        // (reason)" without re-evaluation. Snapshots are never UPDATEd
+        // and never DELETEd; history accumulates.
+        foreach (var outcome in outcomes)
+        {
+            var propsJson = outcome.Properties is { Count: > 0 }
+                ? JsonSerializer.Serialize(outcome.Properties)
+                : "{}";
+            _db.ValidationRuleSnapshots.Add(new ValidationRuleSnapshot
+            {
+                Id = Guid.NewGuid(),
+                CaseId = @case.Id,
+                RuleId = outcome.RuleId,
+                Severity = (int)outcome.Severity,
+                Outcome = outcome.Severity.ToString().ToLowerInvariant(),
+                Message = outcome.Message,
+                PropertiesJson = propsJson,
+                EvaluatedAt = now,
+                TenantId = tenantId
+            });
+        }
+
+        // Single SaveChangesAsync covers both the synthetic-review +
+        // findings group AND the snapshot rows so they land in the same
+        // EF transaction (atomic under Postgres; in-memory EF doesn't
+        // enforce it but the contract is honoured).
+        if (findingsToWrite.Count > 0 || outcomes.Count > 0)
+        {
             await _db.SaveChangesAsync(ct);
         }
 

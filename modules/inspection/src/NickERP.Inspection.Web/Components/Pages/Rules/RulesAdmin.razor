@@ -29,6 +29,13 @@
             off to silence it for this tenant. Drill into a row to see
             recent failures.
         </p>
+        <p class="inspection-page-subtitle">
+            <strong>Strict mode</strong> (Sprint 48 / Phase A) — when enabled,
+            submission throws if the engine reports any error-severity
+            outcome on the most recent run. Default off; flip per tenant
+            via the toggle below. The change is audited via
+            <code>nickerp.inspection.validation.strict_mode_changed</code>.
+        </p>
     </div>
 </header>
 
@@ -47,6 +54,21 @@ else
         {
             <p class="inspection-form-message">@_message</p>
         }
+
+        @* Sprint 48 / Phase A — strict-mode toggle. Lives at the top of
+           the page so the audit trail of who-flipped-what stays in plain
+           sight while the analyst is reviewing rule rows. *@
+        <div class="inspection-form-row" data-testid="strict-mode-row">
+            <span class="inspection-badge @(_strictMode ? "inspection-badge-warning" : "inspection-badge-good")">
+                Strict mode: @(_strictMode ? "ON" : "OFF")
+            </span>
+            <button type="button"
+                    class="inspection-button"
+                    data-testid="strict-mode-toggle"
+                    @onclick="ToggleStrictModeAsync">
+                @(_strictMode ? "Disable strict mode" : "Enable strict mode")
+            </button>
+        </div>
 
         @if (_rows.Count == 0)
         {
@@ -111,6 +133,9 @@ else
 @code {
     private List<RuleAdminRow>? _rows;
     private string? _message;
+    // Sprint 48 / Phase A — local view of the per-tenant strict-mode flag.
+    // Loaded in OnInitializedAsync; mutated by ToggleStrictModeAsync.
+    private bool _strictMode;
 
     protected override async Task OnInitializedAsync()
     {
@@ -123,6 +148,7 @@ else
         if (!Tenant.IsResolved) return;
         var rows = await AdminService.ListRulesAsync(Tenant.TenantId);
         _rows = rows.ToList();
+        _strictMode = await AdminService.GetStrictModeAsync(Tenant.TenantId);
     }
 
     private async Task ToggleAsync(string ruleId, bool enabled)
@@ -138,6 +164,23 @@ else
         catch (Exception ex)
         {
             _message = $"Toggle failed: {ex.Message}";
+        }
+    }
+
+    private async Task ToggleStrictModeAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        var actor = await ResolveActorAsync();
+        var newValue = !_strictMode;
+        try
+        {
+            await AdminService.SetStrictModeAsync(Tenant.TenantId, newValue, actor);
+            _strictMode = newValue;
+            _message = $"Strict mode is now {(newValue ? "ON" : "OFF")} for this tenant.";
+        }
+        catch (Exception ex)
+        {
+            _message = $"Strict-mode toggle failed: {ex.Message}";
         }
     }
 

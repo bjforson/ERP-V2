@@ -232,11 +232,17 @@ builder.Services.AddScoped<NickERP.Inspection.Web.Services.RulesAdminService>();
 
 // Sprint 31 / B5.1 — vendor-neutral completeness rollup engine. Same
 // posture as the Sprint 28 validation engine: built-in requirements
-// ship with the host, plugin requirements would land via a future
-// CompletenessRequirementRegistration pass; the engine auto-fires on
-// the Open→Validated transition.
+// ship with the host, plugin requirements land via the Sprint 48
+// PluginCompletenessRequirementRegistration pass below; the engine
+// auto-fires on the Open→Validated transition.
 builder.Services.AddNickErpInspectionCompleteness();
 builder.Services.AddNickErpInspectionCompletenessDbProvider();
+// Sprint 48 / Phase C — pick up plugin-supplied completeness
+// requirements (e.g. CustomsGh's CmrPortStateRequirement +
+// RegimeSpecificDocumentsRequirement) from the same plugins folder the
+// validation-rule pass uses. Idempotent.
+NickERP.Inspection.Application.Completeness.PluginCompletenessRequirementRegistration
+    .RegisterPluginCompletenessRequirements(builder.Services, pluginsDir);
 builder.Services.AddScoped<NickERP.Inspection.Web.Services.CompletenessService>();
 
 // Sprint 31 / B5.1 — SLA window tracker + dashboard service. Tracker

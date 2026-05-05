@@ -32,6 +32,13 @@ public sealed class InspectionDbContext : DbContext
     public DbSet<Verdict> Verdicts => Set<Verdict>();
     public DbSet<OutboundSubmission> OutboundSubmissions => Set<OutboundSubmission>();
     public DbSet<RuleEvaluation> RuleEvaluations => Set<RuleEvaluation>();
+    /// <summary>
+    /// Sprint 48 / Phase B — append-only per-(case, rule) snapshot rows
+    /// from <see cref="NickERP.Inspection.Application.Validation.ValidationEngine"/>.
+    /// Allows the case-detail page to hydrate the validation pane on
+    /// cold reload without re-running the engine.
+    /// </summary>
+    public DbSet<ValidationRuleSnapshot> ValidationRuleSnapshots => Set<ValidationRuleSnapshot>();
     public DbSet<IcumsSigningKey> IcumsSigningKeys => Set<IcumsSigningKey>();
     public DbSet<ScannerThresholdProfile> ScannerThresholdProfiles => Set<ScannerThresholdProfile>();
     public DbSet<OutcomePullCursor> OutcomePullCursors => Set<OutcomePullCursor>();
@@ -558,6 +565,41 @@ public sealed class InspectionDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.CaseId, x.AuthorityCode })
                 .IsUnique()
                 .HasDatabaseName("ux_rule_eval_tenant_case_authority");
+        });
+
+        // ----- ValidationRuleSnapshot (Sprint 48 / Phase B) -------------------------
+        // Append-only per-(case, rule) snapshot from the ValidationEngine.
+        // No unique index — each evaluation appends a fresh row so the
+        // history of past validation runs is implicit (most-recent-per-
+        // (case, rule) is the read path used by the case-detail page on
+        // cold reload). Composite (TenantId, CaseId, EvaluatedAt DESC)
+        // covers the read-by-case ordering; (TenantId, CaseId, RuleId,
+        // EvaluatedAt DESC) covers per-rule history drill-downs.
+        modelBuilder.Entity<ValidationRuleSnapshot>(e =>
+        {
+            e.ToTable("validation_rule_snapshots");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.RuleId).IsRequired().HasMaxLength(128);
+            e.Property(x => x.Severity).IsRequired();
+            e.Property(x => x.Outcome).IsRequired().HasMaxLength(16);
+            e.Property(x => x.Message).HasMaxLength(2000);
+            e.Property(x => x.PropertiesJson)
+                .IsRequired().HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb");
+            e.Property(x => x.EvaluatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Hot path — page reload reads "snapshots for this case,
+            // most-recent first, then dedupes by RuleId in memory".
+            e.HasIndex(x => new { x.TenantId, x.CaseId, x.EvaluatedAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("ix_validation_snap_tenant_case_at");
+
+            // Per-rule history drill-down on /admin/rules/{ruleId}.
+            e.HasIndex(x => new { x.TenantId, x.RuleId, x.EvaluatedAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("ix_validation_snap_tenant_rule_at");
         });
 
         // ----- ScannerThresholdProfile (Phase R3 / §6.5) ----------------------------
