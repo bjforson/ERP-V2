@@ -1,0 +1,152 @@
+@page "/admin/reports/throughput"
+@* Sprint 33 / B7.1 — throughput drill-down page.
+
+   Surfaces the per-day breakdown over the trailing 30 days plus a CSV
+   export button. Read-only; no state mutation. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using System.Globalization
+@using System.Text
+@using Microsoft.AspNetCore.Components
+@using NickERP.Inspection.Web.Components.Shared
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject ReportsService Reports
+@inject ITenantContext Tenant
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+
+<PageTitle>Throughput — Reports — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Throughput drill-down</h1>
+        <p class="inspection-page-subtitle">
+            Cases created vs. decided per day over the trailing 30 days. <a href="/admin/reports">Back to dashboard</a>.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved.</p>
+}
+else if (_summary is null && _loadError is null)
+{
+    <p>Loading…</p>
+}
+else if (_loadError is not null)
+{
+    <p class="inspection-empty">Failed to load: @_loadError</p>
+}
+else if (_summary is not null && _buckets is not null)
+{
+    <section class="inspection-section">
+        <ReportSummaryCard
+            Title="Trailing windows"
+            Headline="@_summary.CreatedLast24h.ToString("N0")"
+            HeadlineSubtitle="cases created in the last 24h"
+            Rows="@_summaryRows" />
+    </section>
+
+    <section class="inspection-section">
+        <div class="inspection-card">
+            <header class="inspection-filter-bar inspection-button-row">
+                <h2 class="inspection-card-title">Per-day breakdown (last @_days days)</h2>
+                <span class="inspection-page-subtitle">@_buckets.Count day(s) with activity</span>
+                <button class="inspection-button" type="button" @onclick="DownloadCsvAsync"
+                        disabled="@(_buckets.Count == 0)">
+                    Export CSV
+                </button>
+            </header>
+
+            @if (_buckets.Count == 0)
+            {
+                <p class="inspection-empty">No cases created in the trailing window.</p>
+            }
+            else
+            {
+                <table class="inspection-table">
+                    <thead>
+                        <tr>
+                            <th>Day (UTC)</th>
+                            <th>Created</th>
+                            <th>Decided</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var b in _buckets)
+                        {
+                            <tr>
+                                <td>@b.Day.ToString("yyyy-MM-dd")</td>
+                                <td>@b.Created</td>
+                                <td>@b.Decided</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private const int _days = 30;
+    private ThroughputSummary? _summary;
+    private IReadOnlyList<ThroughputDayBucket>? _buckets;
+    private List<ReportSummaryRow> _summaryRows = new();
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if (!Tenant.IsResolved) return;
+            _summary = await Reports.GetThroughputSummaryAsync();
+            _buckets = await Reports.GetThroughputDailyAsync(_days);
+            _summaryRows = new()
+            {
+                new("Created (24h / 7d / 30d)", $"{_summary.CreatedLast24h:N0} / {_summary.CreatedLast7d:N0} / {_summary.CreatedLast30d:N0}"),
+                new("Decided (24h / 7d / 30d)", $"{_summary.DecidedLast24h:N0} / {_summary.DecidedLast7d:N0} / {_summary.DecidedLast30d:N0}"),
+                new("Submitted (24h / 7d / 30d)", $"{_summary.SubmittedLast24h:N0} / {_summary.SubmittedLast7d:N0} / {_summary.SubmittedLast30d:N0}"),
+            };
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"{ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Build the CSV inline + invoke a tiny JS helper on the client to
+    /// trigger the download. Keeps the controller-free pattern v2 has
+    /// adopted on its other dashboard pages — no MVC controller, no
+    /// minimal API needed.
+    /// </summary>
+    private async Task DownloadCsvAsync()
+    {
+        if (_buckets is null) return;
+        var sb = new StringBuilder();
+        sb.AppendLine("day,created,decided");
+        foreach (var b in _buckets)
+        {
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "{0},{1},{2}", b.Day.ToString("yyyy-MM-dd"), b.Created, b.Decided));
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var b64 = Convert.ToBase64String(bytes);
+        var filename = $"throughput-{DateTime.UtcNow:yyyyMMdd-HHmmss}.csv";
+
+        try
+        {
+            await Js.InvokeVoidAsync("nickerpReportsDownloadCsv", b64, filename);
+        }
+        catch (Microsoft.JSInterop.JSException)
+        {
+            // Helper isn't installed yet — fall back to a data URI nav.
+            // The JS helper is added to the same module as the existing
+            // copy-to-clipboard helpers in a follow-up.
+            Nav.NavigateTo($"data:text/csv;base64,{b64}", forceLoad: true);
+        }
+    }
+}
