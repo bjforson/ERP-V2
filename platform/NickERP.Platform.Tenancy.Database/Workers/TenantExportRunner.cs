@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -246,15 +247,104 @@ public sealed class TenantExportRunner : BackgroundService
     /// <summary>
     /// Atomically claim up to <paramref name="batchSize"/> Pending rows
     /// by flipping their status to Running. Returns the ids picked.
+    /// Sprint 51 / Phase C — uses <c>FOR UPDATE SKIP LOCKED</c> on
+    /// Postgres so multiple hosts running this runner can't dual-claim
+    /// the same row. Falls back to the EF LINQ path on the in-memory
+    /// provider (where FOR UPDATE is meaningless) so unit tests stay
+    /// independent of Npgsql.
     /// </summary>
     private async Task<List<Guid>> PickPendingAsync(int batchSize, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
-        // FOR UPDATE SKIP LOCKED would be the multi-host story; today we
-        // assume single-host. The status flip in a transaction prevents
-        // cross-tick double-pickup within a host.
+
+        if (db.Database.IsNpgsql())
+        {
+            return await PickPendingPostgresAsync(db, batchSize, ct);
+        }
+        return await PickPendingInMemoryAsync(db, batchSize, ct);
+    }
+
+    /// <summary>
+    /// Sprint 51 / Phase C — Postgres pickup using
+    /// <c>FOR UPDATE SKIP LOCKED</c>. Two hosts running this query
+    /// concurrently each claim a disjoint subset of Pending rows; rows
+    /// locked by one host are invisible to the other for the duration
+    /// of the SELECT-and-flip transaction.
+    /// </summary>
+    private async Task<List<Guid>> PickPendingPostgresAsync(
+        TenancyDbContext db, int batchSize, CancellationToken ct)
+    {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var conn = (NpgsqlConnection)db.Database.GetDbConnection();
+
+        // Postgres column identifiers are case-sensitive when quoted;
+        // the migration writes them with the EF default casing. Use
+        // explicit quoted column names so the query stays correct
+        // regardless of search_path.
+        var picked = new List<Guid>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx.GetDbTransaction() as NpgsqlTransaction;
+            cmd.CommandText = @"
+SELECT ""Id""
+FROM tenancy.tenant_export_requests
+WHERE ""Status"" = @pendingStatus
+ORDER BY ""RequestedAt""
+LIMIT @batchSize
+FOR UPDATE SKIP LOCKED;";
+            var statusParam = cmd.CreateParameter();
+            statusParam.ParameterName = "pendingStatus";
+            statusParam.Value = (int)TenantExportStatus.Pending;
+            cmd.Parameters.Add(statusParam);
+            var batchParam = cmd.CreateParameter();
+            batchParam.ParameterName = "batchSize";
+            batchParam.Value = batchSize;
+            cmd.Parameters.Add(batchParam);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                picked.Add(reader.GetGuid(0));
+            }
+        }
+
+        if (picked.Count > 0)
+        {
+            // Flip the picked rows to Running inside the same tx — the
+            // SKIP LOCKED clause held the row locks until commit, so
+            // this UPDATE is the atomic claim that releases them.
+            await using var updCmd = conn.CreateCommand();
+            updCmd.Transaction = tx.GetDbTransaction() as NpgsqlTransaction;
+            updCmd.CommandText = @"
+UPDATE tenancy.tenant_export_requests
+SET ""Status"" = @runningStatus
+WHERE ""Id"" = ANY(@ids);";
+            var runningParam = updCmd.CreateParameter();
+            runningParam.ParameterName = "runningStatus";
+            runningParam.Value = (int)TenantExportStatus.Running;
+            updCmd.Parameters.Add(runningParam);
+            var idsParam = new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid)
+            {
+                Value = picked.ToArray()
+            };
+            updCmd.Parameters.Add(idsParam);
+            await updCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await tx.CommitAsync(ct);
+        return picked;
+    }
+
+    /// <summary>
+    /// Pre-Sprint-51 EF LINQ pickup. Kept for the in-memory provider
+    /// path so the unit tests don't need a Postgres connection. SKIP
+    /// LOCKED is meaningless without row-level locking; the in-memory
+    /// tests already run sequentially so dual-claim isn't a risk.
+    /// </summary>
+    private async Task<List<Guid>> PickPendingInMemoryAsync(
+        TenancyDbContext db, int batchSize, CancellationToken ct)
+    {
         var pending = await db.TenantExportRequests
             .Where(r => r.Status == TenantExportStatus.Pending)
             .OrderBy(r => r.RequestedAt)
@@ -268,7 +358,6 @@ public sealed class TenantExportRunner : BackgroundService
         {
             await db.SaveChangesAsync(ct);
         }
-        await tx.CommitAsync(ct);
         return pending.Select(p => p.Id).ToList();
     }
 
