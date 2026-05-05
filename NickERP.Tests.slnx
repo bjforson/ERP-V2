@@ -20,6 +20,7 @@
     <Project Path="modules/inspection/src/NickERP.Inspection.Inference.Abstractions/NickERP.Inspection.Inference.Abstractions.csproj" />
     <Project Path="modules/inspection/src/NickERP.Inspection.Scanners.Abstractions/NickERP.Inspection.Scanners.Abstractions.csproj" />
     <Project Path="modules/inspection/src/NickERP.Inspection.Web/NickERP.Inspection.Web.csproj" />
+    <Project Path="modules/inspection/src/NickERP.Inspection.Webhooks.Abstractions/NickERP.Inspection.Webhooks.Abstractions.csproj" />
   </Folder>
   <Folder Name="/modules/inspection/tools/">
     <Project Path="modules/inspection/tools/InferenceSmokeTest/NickERP.Inspection.Tools.InferenceSmokeTest.csproj" />

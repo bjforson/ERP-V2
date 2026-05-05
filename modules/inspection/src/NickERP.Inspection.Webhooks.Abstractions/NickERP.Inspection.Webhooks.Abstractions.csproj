@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Inspection.Webhooks.Abstractions</RootNamespace>
+    <AssemblyName>NickERP.Inspection.Webhooks.Abstractions</AssemblyName>
+    <Description>NickERP Inspection v2 — IOutboundWebhookAdapter contract + standard event vocabulary. Adapter projects (post-pilot) implement the adapter and ship as plugin DLLs; the host's WebhookDispatchWorker discovers them via IPluginRegistry.GetContributedTypes.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+  </ItemGroup>
+
+  <!--
+    Stamp this Abstractions assembly with a [ContractVersion]. v0.1.0 ships
+    the Sprint 47 contract (IOutboundWebhookAdapter + WebhookEvent +
+    WebhookEventTypes). Bump major on breaking changes; bump minor on
+    additive changes (e.g. new standard event-type constants).
+  -->
+  <ItemGroup>
+    <AssemblyAttribute Include="NickERP.Platform.Plugins.ContractVersionAttribute">
+      <_Parameter1>1.0</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>
