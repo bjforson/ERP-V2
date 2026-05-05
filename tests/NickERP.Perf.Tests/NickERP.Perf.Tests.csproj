@@ -31,6 +31,16 @@
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+    <!--
+      Sprint 52 / FU-perf-auth-mocking-decision (Sprint 30) — JWT signing for the
+      mock auth seam. The mock-JWT path (Auth/MockJwtBearerHandler.cs) signs
+      CF-Access-shaped JWTs against a per-run key pair; the matching API-side
+      JWKS-mock is wired by Phase V follow-up. Real-CF-Access spot-check path
+      uses an out-of-band token via NICKERP_PERF_BEARER_TOKEN env var (no
+      package needed for that path). Same major version Identity uses.
+    -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.16.0" />
   </ItemGroup>
 
   <ItemGroup>

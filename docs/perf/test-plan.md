@@ -215,6 +215,10 @@ The summary feeds back into the security audit — `SEC-DB-9 Connection pool tun
 
 ## 11. Open questions (deferred to Phase V kickoff)
 
-- **Auth latency in tests.** CF Access JWT-validate path adds ~10-50ms per request; do we mock this in load tests, or hit real CF? Recommend mock JWKS validation for rep-volume tests + spot-check with real auth.
+- **Auth latency in tests.** CF Access JWT-validate path adds ~10-50ms per request; do we mock this in load tests, or hit real CF? **Decided 2026-05-05 (Sprint 52 / FU-perf-auth-mocking-decision):** mock JWKS validation for rep-volume tests + spot-check with real auth at 1/10 the rate.
+   - **Mock path:** `tests/NickERP.Perf.Tests/Auth/MockJwtBearerHandler.cs` produces signed-but-CF-Access-shaped JWTs against a per-run RSA-2048 key pair. The matching API-side JWKS-mock is a Phase V follow-up; the seam is wired via `MockJwksEndpoint`.
+   - **Real path (spot-check):** when `NICKERP_PERF_BEARER_TOKEN` env var is set, scenarios use that token verbatim against the real CF Access JWKS path. Operator obtains the token via an out-of-band CF Access login.
+   - **Decision rationale:** real JWKS validation in NBomber against pilot RPS bombards CF Access's edge, which (a) breaks the SLA we trust them to maintain and (b) doesn't measure pilot reality (CF Access caches public keys; the second token validates against the cache). Mock-rep-volume + real-spot-check captures both shapes without the cost.
+   - **Production path is unchanged:** the API host always validates real CF Access JWTs in production; the mock path only exists for the perf rig.
 - **Image-volume realism.** Pilot scanners produce ~50-200MB per case; do we run perf with real scan artifacts (slower, more realistic) or synthetic placeholders (faster, less realistic)? Recommend hybrid: synthetic for hot-path RPS measurement; real for image-gallery latency.
-- **Tenant data shape.** Need realistic row counts in `audit.events`, `inspection.cases`, etc. before perf testing. Plan: replay 30 days of v1 NSCIM production data into a perf-test database (PII-scrubbed).
+- **Tenant data shape.** Need realistic row counts in `audit.events`, `inspection.cases`, etc. before perf testing. **Decided 2026-05-05 (Sprint 52 / FU-perf-tenant-data-shape):** `tools/perf-seed/` console seeds N tenants × M cases each with the brief's distribution (10% open / 70% closed / 10% verdict-rendered / 10% submitted). All seeded rows carry `IsSynthetic = true` so the pilot probe `gate.analyst.decisioned_real_case` ignores them.
