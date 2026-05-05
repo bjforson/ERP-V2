@@ -1,0 +1,319 @@
+@page "/admin/retention"
+@* Sprint 44 / Phase B — admin index for retention management.
+
+   Lists every case currently under a legal hold + a paged view of
+   cases by retention class. Operators apply / release legal holds and
+   reclassify cases here; both actions emit audit events
+   (nickerp.inspection.legal_hold_applied / .released /
+   .retention_class_changed) per Phase A's RetentionService.
+
+   Vendor-neutral — no Ghana customs / regime / commodity references;
+   the retention posture is generic and adopted from doc-analysis §9 +
+   §13 + Annex D Table 35. *@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using System.Security.Claims
+@using NickERP.Inspection.Core.Retention
+@using NickERP.Inspection.Web.Services
+@using NickERP.Platform.Tenancy
+@inject RetentionService Retention
+@inject ITenantContext Tenant
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Retention - Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Retention management</h1>
+        <p class="inspection-page-subtitle">
+            Sprint 39 retention posture. Apply or release a legal hold
+            (cascades to every artifact under the case); reclassify a
+            case to Standard / Extended / Enforcement / Training. See
+            <a href="/admin/retention/purge-candidates">purge candidates</a>
+            for cases past their retention window.
+        </p>
+    </div>
+</header>
+
+@if (!Tenant.IsResolved)
+{
+    <p class="inspection-empty">Tenant context is not resolved. Sign out and back in.</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <p class="inspection-form-message">@_message</p>
+    }
+
+    <section class="inspection-section">
+        <h2>Cases under legal hold</h2>
+        @if (_holds is null)
+        {
+            <p>Loading...</p>
+        }
+        else if (_holds.Count == 0)
+        {
+            <p class="inspection-empty">No cases are currently under a legal hold.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Case</th>
+                        <th>Subject</th>
+                        <th>Class</th>
+                        <th>Reason</th>
+                        <th>Held since</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in _holds)
+                    {
+                        <tr>
+                            <td><a href="/cases/@c.CaseId">@c.CaseId.ToString().Substring(0, 8)</a></td>
+                            <td>@c.SubjectIdentifier</td>
+                            <td><code>@c.RetentionClass</code></td>
+                            <td>@c.LegalHoldReason</td>
+                            <td>
+                                @if (c.LegalHoldAppliedAt is { } t)
+                                {
+                                    <span title="@t.ToString("O")">@t.ToString("yyyy-MM-dd HH:mm")</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-empty">-</span>
+                                }
+                            </td>
+                            <td>
+                                <button type="button"
+                                        class="inspection-button"
+                                        @onclick="() => ReleaseAsync(c.CaseId)">Release</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="inspection-section">
+        <h2>Browse by class</h2>
+        <div class="inspection-form-row">
+            <label for="cls">Class:</label>
+            <select id="cls" @bind="_selectedClass" @bind:after="ReloadAsync">
+                @foreach (var cls in _allClasses)
+                {
+                    <option value="@cls">@cls</option>
+                }
+            </select>
+        </div>
+
+        @if (_byClass is null)
+        {
+            <p>Loading...</p>
+        }
+        else if (_byClass.Count == 0)
+        {
+            <p class="inspection-empty">No cases in class <code>@_selectedClass</code>.</p>
+        }
+        else
+        {
+            <table class="inspection-table">
+                <thead>
+                    <tr>
+                        <th>Case</th>
+                        <th>Subject</th>
+                        <th>Class</th>
+                        <th>Hold</th>
+                        <th>Opened</th>
+                        <th>Closed</th>
+                        <th>Reclassify</th>
+                        <th>Hold action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in _byClass)
+                    {
+                        <tr>
+                            <td><a href="/cases/@c.CaseId">@c.CaseId.ToString().Substring(0, 8)</a></td>
+                            <td>@c.SubjectIdentifier</td>
+                            <td><code>@c.RetentionClass</code></td>
+                            <td>
+                                @if (c.LegalHold)
+                                {
+                                    <span class="inspection-badge inspection-badge-warning">Held</span>
+                                }
+                                else
+                                {
+                                    <span class="inspection-badge inspection-badge-good">Open</span>
+                                }
+                            </td>
+                            <td>@c.OpenedAt.ToString("yyyy-MM-dd")</td>
+                            <td>
+                                @if (c.ClosedAt is { } t)
+                                {
+                                    @t.ToString("yyyy-MM-dd")
+                                }
+                                else
+                                {
+                                    <span class="inspection-empty">-</span>
+                                }
+                            </td>
+                            <td>
+                                <select @onchange="@(e => ReclassifyAsync(c.CaseId, e.Value?.ToString()))">
+                                    <option value="">-</option>
+                                    @foreach (var cls in _allClasses)
+                                    {
+                                        <option value="@cls" disabled="@(cls == c.RetentionClass)">@cls</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>
+                                @if (c.LegalHold)
+                                {
+                                    <button type="button"
+                                            class="inspection-button"
+                                            @onclick="() => ReleaseAsync(c.CaseId)">Release</button>
+                                }
+                                else
+                                {
+                                    <button type="button"
+                                            class="inspection-button"
+                                            @onclick="() => PromptHoldAsync(c.CaseId)">Hold</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    @if (_holdPromptCaseId is { } hpid)
+    {
+        <section class="inspection-section">
+            <h2>Apply legal hold</h2>
+            <p>Case <code>@hpid.ToString().Substring(0, 8)</code></p>
+            <div class="inspection-form-row">
+                <label for="hr">Reason:</label>
+                <input id="hr" type="text" maxlength="500" @bind="_holdReason" />
+            </div>
+            <button type="button"
+                    class="inspection-button"
+                    @onclick="ConfirmHoldAsync">Apply hold</button>
+            <button type="button"
+                    class="inspection-button"
+                    @onclick="() => { _holdPromptCaseId = null; _holdReason = string.Empty; }">Cancel</button>
+        </section>
+    }
+}
+
+@code {
+    private static readonly RetentionClass[] _allClasses = new[]
+    {
+        RetentionClass.Standard,
+        RetentionClass.Extended,
+        RetentionClass.Enforcement,
+        RetentionClass.Training,
+        RetentionClass.LegalHold
+    };
+
+    private List<RetentionCaseRow>? _holds;
+    private List<RetentionCaseRow>? _byClass;
+    private RetentionClass _selectedClass = RetentionClass.Standard;
+    private string? _message;
+    private Guid? _holdPromptCaseId;
+    private string _holdReason = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (!Tenant.IsResolved) return;
+        var holds = await Retention.ListLegalHoldsAsync(Tenant.TenantId);
+        _holds = holds.ToList();
+        var byClass = await Retention.ListByRetentionClassAsync(Tenant.TenantId, _selectedClass);
+        _byClass = byClass.ToList();
+    }
+
+    private async Task ReclassifyAsync(Guid caseId, string? newClassRaw)
+    {
+        if (string.IsNullOrEmpty(newClassRaw)) return;
+        if (!Enum.TryParse<RetentionClass>(newClassRaw, out var newClass)) return;
+        var actor = await ResolveActorAsync();
+        try
+        {
+            await Retention.SetRetentionClassAsync(caseId, newClass, actor);
+            _message = $"Case {caseId.ToString().Substring(0, 8)} reclassified to {newClass}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Reclassify failed: {ex.Message}";
+        }
+    }
+
+    private void PromptHoldAsync(Guid caseId)
+    {
+        _holdPromptCaseId = caseId;
+        _holdReason = string.Empty;
+    }
+
+    private async Task ConfirmHoldAsync()
+    {
+        if (_holdPromptCaseId is not { } caseId) return;
+        if (string.IsNullOrWhiteSpace(_holdReason))
+        {
+            _message = "A reason is required to apply a legal hold.";
+            return;
+        }
+        var actor = await ResolveActorAsync();
+        try
+        {
+            await Retention.ApplyLegalHoldAsync(caseId, _holdReason, actor);
+            _message = $"Legal hold applied to case {caseId.ToString().Substring(0, 8)}.";
+            _holdPromptCaseId = null;
+            _holdReason = string.Empty;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Apply hold failed: {ex.Message}";
+        }
+    }
+
+    private async Task ReleaseAsync(Guid caseId)
+    {
+        var actor = await ResolveActorAsync();
+        try
+        {
+            await Retention.ReleaseLegalHoldAsync(caseId, "Released via admin UI", actor);
+            _message = $"Legal hold released for case {caseId.ToString().Substring(0, 8)}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Release failed: {ex.Message}";
+        }
+    }
+
+    private async Task<Guid?> ResolveActorAsync()
+    {
+        try
+        {
+            var state = await AuthState.GetAuthenticationStateAsync();
+            var idClaim = state.User?.FindFirst("nickerp:id")?.Value;
+            return Guid.TryParse(idClaim, out var g) ? g : null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+}
