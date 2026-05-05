@@ -6,11 +6,12 @@
    an inspection.validation_rule.toggled audit event so the trail of
    who-disabled-what survives.
 
-   TODO(team-A): replace `Inspection.Admin` with the dedicated
-   `inspection.rules_admin` role once it's added to the v2 identity role
-   list. Until then, fall back to the most-restrictive existing admin
-   role. *@
-@attribute [Authorize(Roles = "Inspection.Admin")]
+   Sprint 37 / FU-rules-admin-role — Inspection.RulesAdmin is the
+   dedicated role for this page; Inspection.Admin is kept in the
+   any-of list so existing generic-admin grants continue to work
+   without a per-grant migration. Role constants live in
+   platform/NickERP.Platform.Identity/Auth/InspectionRoles.cs. *@
+@attribute [Authorize(Roles = "Inspection.RulesAdmin,Inspection.Admin")]
 @using System.Security.Claims
 @using NickERP.Inspection.Web.Services
 @using NickERP.Platform.Tenancy

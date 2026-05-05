@@ -149,10 +149,24 @@ Every `AppScope.Code` MUST match the regex `^[A-Z][A-Za-z]+(\.[A-Z][A-Za-z]+)+$`
 - Each segment starts with an uppercase letter, then 1+ letters (no digits, no underscores, no dashes).
 - The first segment is the **app prefix** — `Identity`, `Inspection`, `Finance`, etc. — and acts as the namespace. Two apps cannot reuse a leaf without colliding (e.g. `Identity.Admin` and `Finance.Admin` are two different scopes).
 
-Valid: `Identity.Admin`, `Inspection.CaseReviewer`, `Finance.PettyCash.Approver`, `Finance.Reports.Read`.
+Valid: `Identity.Admin`, `Inspection.CaseReviewer`, `Inspection.Admin`, `Inspection.RulesAdmin`, `Finance.PettyCash.Approver`, `Finance.Reports.Read`.
 Rejected at `POST /scopes`: `admin` (single segment), `admin.foo` (lowercase), `Finance.123Approver` (digits), `Finance.Petty_Cash` (underscore), `Finance.A.B` (single-letter segment).
 
 The validator runs at the API boundary; existing rows from before G1 are not retroactively re-validated, but the dev seeder + tests use compliant names.
+
+**Reference list of canonical role constants** (kept in code so renames are caught at compile time):
+
+| App | File | Role constants |
+|---|---|---|
+| Identity | `Identity.Api/IdentityAdminEndpoints.cs` | `Identity.Admin` |
+| Inspection | `Identity/Auth/InspectionRoles.cs` (Sprint 37) | `Inspection.Admin`, `Inspection.RulesAdmin` |
+| NickFinance | `NickFinance.Core/Roles/PettyCashRoles.cs` | `petty_cash.reopen_period`, `petty_cash.publish_fx`, `petty_cash.manage_periods` |
+
+> NickFinance's role codes are lowercased + dotted today — they
+> predate the G1 #6 PascalCase regex and are NOT validated by
+> `POST /scopes` (the validator runs only at the admin-API boundary,
+> not on existing rows). A future sprint will rename them to the
+> regex-compliant shape (e.g. `Finance.PettyCash.ReopenPeriod`).
 
 ### Service tokens
 

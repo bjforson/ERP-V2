@@ -25,6 +25,23 @@ namespace NickERP.Inspection.Authorities.CustomsGh.Validation;
 /// </para>
 ///
 /// <para>
+/// <strong>Sprint 37 / FU-fyco-export-pattern-eport — typo coverage.</strong>
+/// The default export regex matches the canonical spelling
+/// <c>EXPORT</c> plus three observed single-letter typos:
+/// <list type="bullet">
+///   <item><description><c>EXORT</c> (missing P)</description></item>
+///   <item><description><c>EPORT</c> (missing X)</description></item>
+///   <item><description><c>EXPRT</c> (missing O)</description></item>
+/// </list>
+/// Truly-exotic free-text (<c>EXPROT</c> anagram, <c>X-PORT</c>
+/// hyphenation, etc.) is intentionally NOT matched — those need an
+/// operator call to confirm they're real export indicators rather than
+/// random data noise. Adding more typos here later is cheap;
+/// over-matching silently flips Skip outcomes into Errors and is the
+/// more expensive regression to walk back.
+/// </para>
+///
+/// <para>
 /// Direction also resolves through the BOE's <c>RegimeCode</c>:
 /// import = 40/50/61/62/70/90, export = 10/19/20/34/39, transit = 80/88/89.
 /// Per the 2026-05-04 operator clarification, transit is NOT skipped — a
@@ -45,6 +62,27 @@ public sealed class FycoDirectionRule : IValidationRule
     /// <summary>The metadata key adapters use for the Fyco flag (<c>scanner.fyco_present</c>).</summary>
     public const string FycoMetadataKey = "scanner.fyco_present";
 
+    /// <summary>
+    /// Default export-match regex — Sprint 37 tightening. Matches the
+    /// canonical <c>EXPORT</c> plus three observed single-letter typos
+    /// (<c>EXORT</c>, <c>EPORT</c>, <c>EXPRT</c>) inside any
+    /// surrounding free-text (e.g. <c>WAYBILL/EXPORT</c>,
+    /// <c>WAYBIL/EXPORT</c>, <c>WAYBILL/EPORT</c>). Also matches the
+    /// v1 narrow flags <c>1</c>, <c>Y</c>, <c>YES</c>, <c>TRUE</c> as
+    /// standalone values. Word-boundary protected so <c>NOEXPORT</c>
+    /// is matched as <c>EXPORT</c> only via the boundary — there's no
+    /// negation handling, but operators don't write the negative
+    /// inline today. Case-insensitive.
+    /// </summary>
+    public const string DefaultExportPattern = @"(?i)\b(export|exort|eport|exprt)\b|^\s*[1Yy]\s*$|^\s*(yes|true)\s*$";
+
+    /// <summary>
+    /// Default import-match regex. Matches <c>IMPORT</c> case-
+    /// insensitively or the v1 narrow flags <c>0</c>, <c>N</c>,
+    /// <c>NO</c>, <c>FALSE</c> as standalone values.
+    /// </summary>
+    public const string DefaultImportPattern = @"(?i)\bimport\b|^\s*[0Nn]\s*$|^\s*(no|false)\s*$";
+
     private readonly IOptions<CustomsGhValidationOptions> _options;
     private readonly Regex _exportRegex;
     private readonly Regex _importRegex;
@@ -54,10 +92,10 @@ public sealed class FycoDirectionRule : IValidationRule
         _options = options ?? throw new ArgumentNullException(nameof(options));
         // Compile once at construction. Patterns come from configuration
         // so a busted regex shouldn't crash the engine — fall back to the
-        // memoised v1 narrow patterns if compilation fails, log nothing
+        // memoised default patterns if compilation fails, log nothing
         // (the rule is a no-op anyway).
-        _exportRegex = TryCompile(options.Value.FycoExportPattern, @"(?i)\bex(p?)ort\b|^\s*[1Yy]\s*$|^\s*(yes|true)\s*$");
-        _importRegex = TryCompile(options.Value.FycoImportPattern, @"(?i)\bimport\b|^\s*[0Nn]\s*$|^\s*(no|false)\s*$");
+        _exportRegex = TryCompile(options.Value.FycoExportPattern, DefaultExportPattern);
+        _importRegex = TryCompile(options.Value.FycoImportPattern, DefaultImportPattern);
     }
 
     public string RuleId => Id;

@@ -72,13 +72,22 @@ public sealed class CustomsGhValidationOptions
     /// FS6000 FycoPresent field; the v1 narrow parser missed these.
     /// Default broadened pattern is case-insensitive and tolerates
     /// typos.
+    ///
+    /// <para>
+    /// Sprint 37 / FU-fyco-export-pattern-eport — the default now
+    /// matches the canonical <c>EXPORT</c> plus three observed
+    /// single-letter typos (<c>EXORT</c>, <c>EPORT</c>, <c>EXPRT</c>).
+    /// Symbol kept in sync with
+    /// <see cref="Validation.FycoDirectionRule.DefaultExportPattern"/>.
+    /// </para>
     /// </summary>
-    public string FycoExportPattern { get; set; } = @"(?i)\bex(p?)ort\b|^\s*[1Yy]\s*$|^\s*(yes|true)\s*$";
+    public string FycoExportPattern { get; set; } = @"(?i)\b(export|exort|eport|exprt)\b|^\s*[1Yy]\s*$|^\s*(yes|true)\s*$";
 
     /// <summary>
     /// Regex matching FycoPresent values that mean "this scan is an
     /// import". Far less data-entry variability in the wild than
-    /// export, so the default is conservative.
+    /// export, so the default is conservative. Symbol kept in sync
+    /// with <see cref="Validation.FycoDirectionRule.DefaultImportPattern"/>.
     /// </summary>
     public string FycoImportPattern { get; set; } = @"(?i)\bimport\b|^\s*[0Nn]\s*$|^\s*(no|false)\s*$";
 }
