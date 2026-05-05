@@ -1323,6 +1323,46 @@ namespace NickERP.Inspection.Database.Migrations
                     b.ToTable("scanner_device_instances", "inspection");
                 });
 
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.ScannerOnboardingResponse", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RecordedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ScannerDeviceTypeId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("ix_scanner_onboarding_tenant");
+
+                    b.HasIndex("TenantId", "ScannerDeviceTypeId", "FieldName", "RecordedAt")
+                        .IsDescending(false, false, false, true)
+                        .HasDatabaseName("ix_scanner_onboarding_tenant_type_field_time");
+
+                    b.ToTable("scanner_onboarding_responses", "inspection");
+                });
+
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.ScannerThresholdProfile", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1495,88 +1535,6 @@ namespace NickERP.Inspection.Database.Migrations
                     b.ToTable("stations", "inspection");
                 });
 
-            modelBuilder.Entity("NickERP.Inspection.Core.Entities.Verdict", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Basis")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<Guid>("CaseId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("DecidedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-                    b.Property<Guid>("DecidedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Decision")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("RevisedVerdictId")
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("TenantId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CaseId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_verdicts_case");
-
-                    b.HasIndex("TenantId", "Decision", "DecidedAt")
-                        .HasDatabaseName("ix_verdicts_tenant_decision_time");
-
-                    b.ToTable("verdicts", "inspection");
-                });
-
-            modelBuilder.Entity("NickERP.Inspection.Core.Entities.ScannerOnboardingResponse", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("FieldName")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTimeOffset>("RecordedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("RecordedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ScannerDeviceTypeId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<long>("TenantId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("ix_scanner_onboarding_tenant");
-
-                    b.HasIndex("TenantId", "ScannerDeviceTypeId", "FieldName", "RecordedAt")
-                        .IsDescending(false, false, false, true)
-                        .HasDatabaseName("ix_scanner_onboarding_tenant_type_field_time");
-
-                    b.ToTable("scanner_onboarding_responses", "inspection");
-                });
-
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.ThresholdProfileHistory", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1624,6 +1582,48 @@ namespace NickERP.Inspection.Database.Migrations
                         .HasDatabaseName("ix_threshold_history_tenant_scanner_time");
 
                     b.ToTable("threshold_profile_history", "inspection");
+                });
+
+            modelBuilder.Entity("NickERP.Inspection.Core.Entities.Verdict", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Basis")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid>("CaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("DecidedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<Guid>("DecidedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Decision")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("RevisedVerdictId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CaseId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_verdicts_case");
+
+                    b.HasIndex("TenantId", "Decision", "DecidedAt")
+                        .HasDatabaseName("ix_verdicts_tenant_decision_time");
+
+                    b.ToTable("verdicts", "inspection");
                 });
 
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.WebhookCursor", b =>
