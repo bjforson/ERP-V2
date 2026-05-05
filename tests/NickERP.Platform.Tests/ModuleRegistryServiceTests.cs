@@ -135,31 +135,44 @@ public sealed class ModuleRegistryServiceTests
     [Trait("Category", "Unit")]
     public async Task GetModulesForTenant_ScopesByTenantId()
     {
+        // Sprint 43 / Phase D — FU-launcher-rls-with-postgres dropped
+        // the explicit Where(TenantId == tenantId) belt-and-suspenders
+        // filter that previously masked RLS gaps. Under the in-memory
+        // provider there is no RLS, so this test now asserts the
+        // catalogue-merging behaviour using DISTINCT DbContext
+        // instances (= isolated in-memory stores) per tenant. Real
+        // Postgres tests live in TenantModuleSettingsRlsIntegrationTests.
         var options = BuildOptionsFromConfig(new Dictionary<string, string?>());
-        using var ctx = BuildCtx();
-        // Tenant 1 disables nickhr.
-        ctx.TenantModuleSettings.Add(new TenantModuleSetting
+
+        // Tenant 1 — disables nickhr.
+        using (var ctx1 = BuildCtx())
         {
-            TenantId = 1, ModuleId = "nickhr", Enabled = false, UpdatedAt = DateTimeOffset.UtcNow,
-        });
-        // Tenant 2 disables inspection.
-        ctx.TenantModuleSettings.Add(new TenantModuleSetting
+            ctx1.TenantModuleSettings.Add(new TenantModuleSetting
+            {
+                TenantId = 1, ModuleId = "nickhr", Enabled = false, UpdatedAt = DateTimeOffset.UtcNow,
+            });
+            await ctx1.SaveChangesAsync();
+            var svc1 = new ModuleRegistryService(ctx1, options);
+            var t1 = await svc1.GetModulesForTenantAsync(1);
+            t1.Select(m => m.Id).Should().BeEquivalentTo(
+                new[] { "inspection", "nickfinance" },
+                opts => opts.WithStrictOrdering());
+        }
+
+        // Tenant 2 — disables inspection.
+        using (var ctx2 = BuildCtx())
         {
-            TenantId = 2, ModuleId = "inspection", Enabled = false, UpdatedAt = DateTimeOffset.UtcNow,
-        });
-        await ctx.SaveChangesAsync();
-
-        var svc = new ModuleRegistryService(ctx, options);
-
-        var t1 = await svc.GetModulesForTenantAsync(1);
-        t1.Select(m => m.Id).Should().BeEquivalentTo(
-            new[] { "inspection", "nickfinance" },
-            opts => opts.WithStrictOrdering());
-
-        var t2 = await svc.GetModulesForTenantAsync(2);
-        t2.Select(m => m.Id).Should().BeEquivalentTo(
-            new[] { "nickfinance", "nickhr" },
-            opts => opts.WithStrictOrdering());
+            ctx2.TenantModuleSettings.Add(new TenantModuleSetting
+            {
+                TenantId = 2, ModuleId = "inspection", Enabled = false, UpdatedAt = DateTimeOffset.UtcNow,
+            });
+            await ctx2.SaveChangesAsync();
+            var svc2 = new ModuleRegistryService(ctx2, options);
+            var t2 = await svc2.GetModulesForTenantAsync(2);
+            t2.Select(m => m.Id).Should().BeEquivalentTo(
+                new[] { "nickfinance", "nickhr" },
+                opts => opts.WithStrictOrdering());
+        }
     }
 
     private static TenancyDbContext BuildCtx()

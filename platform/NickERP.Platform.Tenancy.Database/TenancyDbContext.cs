@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NickERP.Platform.Tenancy.Entities;
+using NickERP.Platform.Tenancy.Pilot;
 
 namespace NickERP.Platform.Tenancy.Database;
 
@@ -81,6 +82,16 @@ public sealed class TenancyDbContext : DbContext
     /// <c>tenant_isolation_tenant_settings</c>.
     /// </summary>
     public DbSet<TenantSetting> TenantSettings => Set<TenantSetting>();
+
+    /// <summary>
+    /// Sprint 43 — append-only snapshot rows from
+    /// <c>PilotReadinessService.GetReadinessAsync</c>. One row per
+    /// <c>(TenantId, GateId)</c> per refresh; the dashboard at
+    /// <c>/admin/pilot-readiness</c> reads the latest row per gate.
+    /// Cross-tenant by design (admin tooling); not under RLS — same
+    /// posture as <c>TenantPurgeLog</c> + <c>TenantExportRequest</c>.
+    /// </summary>
+    public DbSet<PilotReadinessSnapshot> PilotReadinessSnapshots => Set<PilotReadinessSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -345,12 +356,32 @@ public sealed class TenancyDbContext : DbContext
                 .HasDatabaseName("ux_tenant_settings_tenant_key");
         });
 
-        // Sprint 38 — PilotReadinessSnapshot persistence DEFERRED to
-        // fix-forward (master rate-limited before completing the service
-        // impl + migration). The entity types in
-        // platform/NickERP.Platform.Tenancy/Pilot/ are scaffolding ready
-        // for the deferred sprint to wire up here + add the matching
-        // tenancy migration.
+        // Sprint 43 — PilotReadinessSnapshot. Cross-tenant by design
+        // (admin tooling); not under RLS, same posture as
+        // tenant_purge_log + tenant_export_requests. Append-only —
+        // INSERT only in the role grants, no UPDATE / DELETE so the
+        // gate-state history is preserved across refreshes for the
+        // dashboard's "first observed / latest observed" rendering.
+        modelBuilder.Entity<PilotReadinessSnapshot>(e =>
+        {
+            e.ToTable("pilot_readiness_snapshots");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TenantId).IsRequired();
+            e.Property(x => x.GateId).IsRequired().HasMaxLength(128);
+            e.Property(x => x.State).HasConversion<int>().IsRequired();
+            e.Property(x => x.ObservedAt).IsRequired();
+            e.Property(x => x.ProofEventId);
+            e.Property(x => x.Note).HasMaxLength(1000);
+
+            // Index supports the dashboard's "latest snapshot per gate per
+            // tenant" query: SELECT ... WHERE TenantId = @t ORDER BY
+            // ObservedAt DESC LIMIT 1 (per gate). DESC on ObservedAt so
+            // the index can satisfy the ORDER BY without a sort.
+            e.HasIndex(x => new { x.TenantId, x.GateId, x.ObservedAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("ix_pilot_readiness_snapshots_tenant_gate_observedat");
+        });
     }
 }
 

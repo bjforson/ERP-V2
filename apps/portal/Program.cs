@@ -127,8 +127,34 @@ if (inspectionEnabled)
             sp.GetRequiredService<TenantOwnedEntityInterceptor>());
     });
     builder.Services.AddAnalysisServiceBootstrap();
+    // Sprint 43 — Phase C — IInspectionPilotProbeDataSource impl
+    // pulls from the InspectionDbContext we just wired. Only register
+    // when inspection is enabled; the platform-side
+    // AddNickErpPilotReadiness wireup below depends on this in DI but
+    // PilotReadinessService catches a missing data source as a "fail"
+    // gate so the dashboard never crashes on a config gap.
+    builder.Services.AddScoped<NickERP.Platform.Tenancy.Pilot.IInspectionPilotProbeDataSource,
+        NickERP.Portal.Services.InspectionPilotProbeDataSource>();
 }
 builder.Services.AddSingleton(new NickERP.Portal.Services.InspectionFeatureFlag(inspectionEnabled));
+
+// ---------------------------------------------------------------------------
+// Sprint 43 — Phase C — Pilot readiness dashboard wireup. Registers
+// IPilotReadinessService + MultiTenantInvariantProbe (the marquee
+// active probe). The IInspectionPilotProbeDataSource that
+// PilotReadinessService consumes is registered above only when
+// ConnectionStrings:Inspection is set; if it's not set, we still
+// register a no-op fallback so PilotReadinessService can resolve the
+// service in DI and surface "inspection module not deployed" via
+// gate.analyst.decisioned_real_case + gate.external_system.roundtrip's
+// "not yet observed" notes.
+// ---------------------------------------------------------------------------
+if (!inspectionEnabled)
+{
+    builder.Services.AddScoped<NickERP.Platform.Tenancy.Pilot.IInspectionPilotProbeDataSource,
+        NickERP.Portal.Services.NoopInspectionPilotProbeDataSource>();
+}
+builder.Services.AddNickErpPilotReadiness();
 
 // ---------------------------------------------------------------------------
 // Sprint 29 — three-module co-deploy launcher. Catalogue assembled at
