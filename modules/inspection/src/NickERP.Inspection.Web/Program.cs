@@ -379,6 +379,11 @@ builder.Services.AddSingleton<NickERP.Platform.Telemetry.IBackgroundServiceProbe
 
 builder.Services.Configure<IcumsSubmissionDispatchOptions>(
     builder.Configuration.GetSection(IcumsSubmissionDispatchOptions.SectionName));
+// Sprint 36 / FU-outbound-dispatch-retry — bounded retry budget +
+// exponential backoff for the dispatch worker. Defaults applied when
+// the section is absent (BaseBackoff=30s, MaxBackoff=1h, MaxRetries=5).
+builder.Services.Configure<OutboundSubmissionRetryOptions>(
+    builder.Configuration.GetSection(OutboundSubmissionRetryOptions.SectionName));
 builder.Services.AddSingleton<NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker>();
 builder.Services.AddHostedService(
     sp => sp.GetRequiredService<NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker>());

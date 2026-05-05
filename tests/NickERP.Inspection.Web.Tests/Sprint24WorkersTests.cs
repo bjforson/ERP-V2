@@ -68,6 +68,11 @@ public sealed class Sprint24WorkersTests : IDisposable
         services.Configure<IcumsApiPullOptions>(o => { o.Enabled = true; o.PollInterval = TimeSpan.FromSeconds(1); o.StartupDelay = TimeSpan.Zero; });
         services.Configure<IcumsFileScannerOptions>(o => { o.Enabled = true; o.PollInterval = TimeSpan.FromSeconds(1); o.StartupDelay = TimeSpan.Zero; });
         services.Configure<IcumsSubmissionDispatchOptions>(o => { o.Enabled = true; o.PollInterval = TimeSpan.FromSeconds(1); o.StartupDelay = TimeSpan.Zero; o.BatchLimit = 50; });
+        // Sprint 36 — retry options. Defaults are fine for the existing
+        // Sprint 24 tests since the existing failure-path tests assert
+        // the post-budget-exhaustion behaviour (status=error) — match the
+        // real defaults for compatibility.
+        services.Configure<OutboundSubmissionRetryOptions>(o => { o.MaxRetries = 5; o.BaseBackoff = TimeSpan.FromSeconds(30); o.MaxBackoff = TimeSpan.FromHours(1); });
         services.Configure<IcumsSubmissionResultPollerOptions>(o => { o.Enabled = true; o.PollInterval = TimeSpan.FromSeconds(1); o.StartupDelay = TimeSpan.Zero; o.BatchLimit = 50; });
         services.Configure<ContainerDataMatcherOptions>(o => { o.Enabled = true; o.PollInterval = TimeSpan.FromSeconds(1); o.StartupDelay = TimeSpan.Zero; o.CaptureWindow = TimeSpan.FromHours(24); o.BatchLimit = 200; });
 
@@ -85,6 +90,7 @@ public sealed class Sprint24WorkersTests : IDisposable
             NullLogger<AuthorityDocumentInboxWorker>.Instance));
         services.AddSingleton<OutboundSubmissionDispatchWorker>(sp => new OutboundSubmissionDispatchWorker(
             sp, sp.GetRequiredService<IOptions<IcumsSubmissionDispatchOptions>>(),
+            sp.GetRequiredService<IOptions<OutboundSubmissionRetryOptions>>(),
             NullLogger<OutboundSubmissionDispatchWorker>.Instance));
         services.AddSingleton<OutboundSubmissionResultPollerWorker>(sp => new OutboundSubmissionResultPollerWorker(
             sp, sp.GetRequiredService<IOptions<IcumsSubmissionResultPollerOptions>>(),
@@ -469,8 +475,12 @@ public sealed class Sprint24WorkersTests : IDisposable
     }
 
     [Fact]
-    public async Task OutboundDispatch_AdapterThrows_MarkedError()
+    public async Task OutboundDispatch_AdapterThrows_RequeuesWithBackoff()
     {
+        // Sprint 36 / FU-outbound-dispatch-retry — first failure no
+        // longer flips straight to error; the dispatcher requeues with
+        // exponential backoff and only flips to error once the retry
+        // budget is exhausted (covered by a separate test below).
         await SeedTenantAsync();
         await SeedExternalSystemAsync();
         var caseId = await SeedCaseAsync(_locationId, "MSCU0000012");
@@ -484,7 +494,9 @@ public sealed class Sprint24WorkersTests : IDisposable
         using var scope = _sp.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
         var sub = await db.OutboundSubmissions.AsNoTracking().FirstAsync();
-        Assert.Equal("error", sub.Status);
+        Assert.Equal("pending", sub.Status);
+        Assert.Equal(1, sub.RetryCount);
+        Assert.NotNull(sub.NextAttemptAt);
         Assert.NotNull(sub.ErrorMessage);
     }
 

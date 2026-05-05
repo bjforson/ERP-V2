@@ -54,5 +54,28 @@ public sealed class OutboundSubmission : ITenantOwned
     /// </summary>
     public DateTimeOffset? LastAttemptAt { get; set; }
 
+    /// <summary>
+    /// Sprint 36 / FU-outbound-dispatch-retry — count of dispatch attempts
+    /// that resulted in a transient failure. Incremented on every adapter
+    /// throw before the row is requeued (status flipped back to
+    /// <c>pending</c>). Reset to 0 only when an admin manually requeues
+    /// (operator UI). Once <see cref="RetryCount"/> exceeds
+    /// <c>MaxRetries</c> in <c>OutboundSubmissionRetryOptions</c>, the
+    /// dispatcher gives up and flips status to <c>error</c> for operator
+    /// requeue.
+    /// </summary>
+    public int RetryCount { get; set; }
+
+    /// <summary>
+    /// Sprint 36 / FU-outbound-dispatch-retry — the earliest wall-clock
+    /// time at which the dispatcher may retry this submission. Computed
+    /// on every transient failure as
+    /// <c>now + min(MaxBackoff, BaseBackoff * 2^RetryCount + jitter)</c>
+    /// (exponential backoff with jitter). Null on a fresh row (= eligible
+    /// immediately); the pickup query filters by
+    /// <c>NextAttemptAt &lt;= now OR NextAttemptAt IS NULL</c>.
+    /// </summary>
+    public DateTimeOffset? NextAttemptAt { get; set; }
+
     public long TenantId { get; set; }
 }
