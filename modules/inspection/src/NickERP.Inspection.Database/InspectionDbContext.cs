@@ -56,6 +56,29 @@ public sealed class InspectionDbContext : DbContext
     /// </summary>
     public DbSet<CrossRecordDetection> CrossRecordDetections => Set<CrossRecordDetection>();
 
+    /// <summary>
+    /// Sprint 41 / Phase A — scanner onboarding questionnaire responses
+    /// (per Annex B Table 55). One row per (TenantId, ScannerDeviceTypeId,
+    /// FieldName) per recording. Append-on-overwrite — the
+    /// <c>ScannerOnboardingService</c> reader takes the latest
+    /// <see cref="ScannerOnboardingResponse.RecordedAt"/> per field.
+    /// </summary>
+    public DbSet<ScannerOnboardingResponse> ScannerOnboardingResponses => Set<ScannerOnboardingResponse>();
+
+    /// <summary>
+    /// Sprint 41 / Phase B — append-only history of threshold-value
+    /// changes per scanner. One row per (ScannerDeviceInstanceId,
+    /// ModelId, ClassId) per change. Auto-emitted from
+    /// <c>ThresholdAdminService.ApproveAsync</c>.
+    /// </summary>
+    public DbSet<ThresholdProfileHistory> ThresholdProfileHistory => Set<ThresholdProfileHistory>();
+
+    /// <summary>
+    /// Sprint 41 / Phase C — per-tenant per-adapter cursor for the
+    /// outbound webhook dispatcher. One row per (TenantId, AdapterName).
+    /// </summary>
+    public DbSet<WebhookCursor> WebhookCursors => Set<WebhookCursor>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -840,6 +863,81 @@ public sealed class InspectionDbContext : DbContext
 
             e.HasIndex(x => new { x.TenantId, x.CaseId })
                 .HasDatabaseName("ix_cross_record_detection_tenant_case");
+        });
+
+        // ----- ScannerOnboardingResponse (Sprint 41 / Phase A) ----------------------
+        // One row per (TenantId, ScannerDeviceTypeId, FieldName) per
+        // recording. Append-on-overwrite; reader takes the latest
+        // RecordedAt per field. No unique constraint — the history view
+        // is the typical query so we keep prior rows.
+        modelBuilder.Entity<ScannerOnboardingResponse>(e =>
+        {
+            e.ToTable("scanner_onboarding_responses");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ScannerDeviceTypeId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.FieldName).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Value).IsRequired().HasColumnType("text");
+            e.Property(x => x.RecordedAt).IsRequired();
+            e.Property(x => x.RecordedByUserId);
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Reader hot-path — "latest answers for this scanner type
+            // for this tenant". Composite (TenantId,
+            // ScannerDeviceTypeId, FieldName, RecordedAt DESC) covers it.
+            e.HasIndex(x => new { x.TenantId, x.ScannerDeviceTypeId, x.FieldName, x.RecordedAt })
+                .IsDescending(false, false, false, true)
+                .HasDatabaseName("ix_scanner_onboarding_tenant_type_field_time");
+
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_scanner_onboarding_tenant");
+        });
+
+        // ----- ThresholdProfileHistory (Sprint 41 / Phase B) ------------------------
+        // Append-only — no DELETE. Mirrors the audit posture of
+        // audit.events for the "reversible" requirement of doc-analysis
+        // Table 21. One row per (ScannerDeviceInstanceId, ModelId,
+        // ClassId) per change.
+        modelBuilder.Entity<ThresholdProfileHistory>(e =>
+        {
+            e.ToTable("threshold_profile_history");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ScannerDeviceInstanceId).IsRequired();
+            e.Property(x => x.ModelId).IsRequired().HasMaxLength(128);
+            e.Property(x => x.ClassId).IsRequired().HasMaxLength(128);
+            e.Property(x => x.OldThreshold);
+            e.Property(x => x.NewThreshold).IsRequired();
+            e.Property(x => x.ChangedAt).IsRequired();
+            e.Property(x => x.ChangedByUserId);
+            e.Property(x => x.Reason).HasMaxLength(2000);
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Hot path — "show me every change for scanner X, newest first".
+            e.HasIndex(x => new { x.TenantId, x.ScannerDeviceInstanceId, x.ChangedAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("ix_threshold_history_tenant_scanner_time");
+
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_threshold_history_tenant");
+        });
+
+        // ----- WebhookCursor (Sprint 41 / Phase C) ----------------------------------
+        // One row per (TenantId, AdapterName); the dispatcher records
+        // the highest audit.events.event_id it has successfully forwarded
+        // to the adapter, and reads forward from there on the next tick.
+        modelBuilder.Entity<WebhookCursor>(e =>
+        {
+            e.ToTable("webhook_cursors");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.AdapterName).IsRequired().HasMaxLength(128);
+            e.Property(x => x.LastProcessedEventId).IsRequired();
+            e.Property(x => x.UpdatedAt).IsRequired();
+            e.Property(x => x.TenantId).IsRequired();
+
+            // One cursor per (Tenant, Adapter); upsert on this constraint.
+            e.HasIndex(x => new { x.TenantId, x.AdapterName })
+                .IsUnique()
+                .HasDatabaseName("ux_webhook_cursors_tenant_adapter");
         });
     }
 }
