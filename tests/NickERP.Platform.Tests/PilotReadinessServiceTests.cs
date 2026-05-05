@@ -275,32 +275,35 @@ public sealed class PilotReadinessServiceTests
         await using var tenancyCtx = BuildTenancyCtx();
         await using var auditCtx = BuildAuditCtx();
         var inspection = new FakeInspectionProbeDataSource();
-        // Use a stepped clock so the two refreshes produce different
-        // ObservedAt values — otherwise the index's tie-break is
-        // non-deterministic across providers and the "latest" assertion
-        // becomes flaky.
-        var clock = new SteppedClock(Now, TimeSpan.FromSeconds(1));
-        var svc = new PilotReadinessService(
+        // Two refreshes with explicitly distinct clocks so the snapshot
+        // rows carry distinct ObservedAt values regardless of in-memory
+        // provider ordering tie-break behaviour.
+        var clockA = new FakeClock(Now);
+        var clockB = new FakeClock(Now.AddSeconds(5));
+
+        var svcA = new PilotReadinessService(
             tenancyCtx, auditCtx, inspection, new StubInvariantProbe(true),
-            clock, NullLogger<PilotReadinessService>.Instance);
+            clockA, NullLogger<PilotReadinessService>.Instance);
 
         // First refresh — no scan yet, NotYetObserved.
-        await svc.GetReadinessAsync(TenantId);
-        // Now seed a scan event and refresh again.
+        await svcA.GetReadinessAsync(TenantId);
+
+        // Now seed a scan event and refresh again under a later clock so
+        // ObservedAt is unambiguously later for the second snapshot row.
         auditCtx.Events.Add(NewEvent(Guid.NewGuid(), TenantId, "nickerp.inspection.scan_recorded", "Scan", "s1", Now));
         await auditCtx.SaveChangesAsync();
-        await svc.GetReadinessAsync(TenantId);
+        var svcB = new PilotReadinessService(
+            tenancyCtx, auditCtx, inspection, new StubInvariantProbe(true),
+            clockB, NullLogger<PilotReadinessService>.Instance);
+        await svcB.GetReadinessAsync(TenantId);
 
-        var latest = await tenancyCtx.PilotReadinessSnapshots.AsNoTracking()
+        var rows = await tenancyCtx.PilotReadinessSnapshots.AsNoTracking()
             .Where(r => r.TenantId == TenantId && r.GateId == PilotReadinessGate.ScannerAdapter)
-            .OrderByDescending(r => r.ObservedAt)
-            .FirstAsync();
+            .ToListAsync();
+        rows.Should().HaveCount(2);
+        var latest = rows.OrderByDescending(r => r.ObservedAt).First();
         latest.State.Should().Be(PilotReadinessState.Pass);
-
-        var first = await tenancyCtx.PilotReadinessSnapshots.AsNoTracking()
-            .Where(r => r.TenantId == TenantId && r.GateId == PilotReadinessGate.ScannerAdapter)
-            .OrderBy(r => r.ObservedAt)
-            .FirstAsync();
+        var first = rows.OrderBy(r => r.ObservedAt).First();
         first.State.Should().Be(PilotReadinessState.NotYetObserved);
     }
 
