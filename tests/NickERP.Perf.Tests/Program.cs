@@ -3,18 +3,22 @@ using NBomber.CSharp;
 using NickERP.Perf.Tests;
 using NickERP.Perf.Tests.Scenarios;
 
-// Sprint 30 Phase V perf-test harness entry point.
-//
-// This is NOT a unit-test runner. It is a load-test runner that builds + reports
-// against pilot-shaped traffic profiles defined in docs/perf/test-plan.md.
+// Sprint 55 — Phase V perf-test harness entry point. Replaces the
+// Sprint 30 stubs with live-running scenarios.
 //
 // Usage:
 //   dotnet run --project tests/NickERP.Perf.Tests -- <scenario> [--profile 1x|5x|10x]
 //
 // Available scenarios:
-//   * health       smoke against /healthz; verifies harness wiring + target reachability
-//   * case-create  STUB; will exercise POST /api/inspection/cases. Requires Phase V fixtures
-//   * edge-replay  STUB; will exercise POST /api/edge/replay. Requires Phase V fixtures
+//   * health              smoke against /healthz/live
+//   * case-create         POST /api/inspection/cases (replaces Sprint 30 stub)
+//   * edge-replay         POST /api/edge/replay (replaces Sprint 30 stub)
+//   * edge-replay-backlog 24h backlog reconnect — verifies SEC-EDGE-7 rate limit
+//
+// Skip-on-misconfigured behaviour:
+//   * Each live scenario inspects required config (target URL, auth token,
+//     edge HMAC key) and gracefully exits 0 if missing. This keeps CI green
+//     when the perf rig has no target wired.
 //
 // Reports land in tests/NickERP.Perf.Tests/bin/<config>/<tfm>/reports/{date}/{scenario}/
 
@@ -34,8 +38,9 @@ try
     return scenarioName switch
     {
         "health" => RunHealthScenario(config, profile),
-        "case-create" => RunCaseCreateScenarioStub(),
-        "edge-replay" => RunEdgeReplayScenarioStub(),
+        "case-create" => RunCaseCreateScenario(config, profile),
+        "edge-replay" => RunEdgeReplayScenario(config, profile),
+        "edge-replay-backlog" => RunEdgeReplayBacklogScenario(config),
         _ => UnknownScenario(scenarioName),
     };
 }
@@ -75,38 +80,53 @@ static int RunHealthScenario(IConfiguration config, LoadProfile profile)
         .WithReportFolder(GetReportFolder("health"))
         .Run();
 
-    // Acceptance gate per test-plan §3.1: healthz p99 < 100ms (warn), no BLOCK.
-    // Exit non-zero only if scenario itself failed.
     return stats.AllFailCount == 0 ? 0 : 1;
 }
 
-static int RunCaseCreateScenarioStub()
+static int RunCaseCreateScenario(IConfiguration config, LoadProfile profile)
 {
-    Console.WriteLine("STUB: case-create scenario not yet executable.");
-    Console.WriteLine("Phase V execution will:");
-    Console.WriteLine("  1. Provision a test tenant + analyst user with CF Access JWT");
-    Console.WriteLine("  2. Wire NBomber HTTP client with the JWT bearer");
-    Console.WriteLine("  3. POST cases at the RPS profile (0.35 RPS pilot peak; 1.75 RPS at 5x)");
-    Console.WriteLine("  4. Assert p99 < 1000ms acceptance gate (BLOCK at 2000ms per test-plan §3.1)");
-    Console.WriteLine("See docs/perf/test-plan.md §11 'Open questions' for auth-mocking discussion.");
-    return 0;
+    var scenario = CaseCreateScenario.Build(config, profile);
+    if (scenario is null)
+    {
+        // Skip-on-misconfigured — already logged by Build.
+        return 0;
+    }
+
+    var stats = NBomberRunner
+        .RegisterScenarios(scenario)
+        .WithTestSuite("nickerp-perf")
+        .WithTestName("case-create")
+        .WithReportFolder(GetReportFolder("case-create"))
+        .Run();
+
+    if (stats.AllOkCount == 0)
+    {
+        Console.WriteLine($"case-create: FAIL — 0 successful requests (all={stats.AllFailCount} failed). " +
+                          "Target unreachable or returning errors. p99 acceptance gate cannot be evaluated.");
+        return 1;
+    }
+    var p99 = ExtractP99Ms(stats, CaseCreateScenario.ScenarioName);
+    var gateExit = CaseCreateScenario.CheckAcceptanceGate(p99, profile);
+    return gateExit != 0 || stats.AllFailCount > stats.AllOkCount ? 1 : 0;
 }
 
-static int RunEdgeReplayScenarioStub()
+static int RunEdgeReplayScenario(IConfiguration config, LoadProfile profile)
 {
-    Console.WriteLine("STUB: edge-replay scenario not yet executable.");
-    Console.WriteLine("Phase V execution will:");
-    Console.WriteLine("  1. Provision a test edge node identity with per-edge HMAC key");
-    Console.WriteLine("  2. Generate buffer fixtures (mixed event types: audit + scan-captured + scanner-status-changed)");
-    Console.WriteLine("  3. Replay batches at the per-edge flush profile (every 30s, 5 events mean)");
-    Console.WriteLine("  4. Stress test: 24h backlog reconnection (rate-limit verification per SEC-EDGE-7)");
-    Console.WriteLine("  5. Assert p99 < 500ms (BLOCK at 1500ms)");
-    return 0;
+    // Phase B — implementation lands in EdgeReplayScenario.cs.
+    // The dispatcher routes here; the scenario's own ShouldSkip logic
+    // gates at-run.
+    return EdgeReplayScenarioRunner.Run(config, profile, GetReportFolder, ExtractP99Ms);
+}
+
+static int RunEdgeReplayBacklogScenario(IConfiguration config)
+{
+    return EdgeReplayScenarioRunner.RunBacklog(config, GetReportFolder);
 }
 
 static int UnknownScenario(string name)
 {
-    Console.Error.WriteLine($"Unknown scenario '{name}'. Available: health, case-create, edge-replay");
+    Console.Error.WriteLine(
+        $"Unknown scenario '{name}'. Available: health, case-create, edge-replay, edge-replay-backlog");
     return 1;
 }
 
@@ -116,4 +136,20 @@ static string GetReportFolder(string scenarioName)
     var path = Path.Combine(AppContext.BaseDirectory, "reports", date, scenarioName);
     Directory.CreateDirectory(path);
     return path;
+}
+
+// Pull the p99 from NBomber's stats. The ScenarioStats type exposes
+// Ok.Latency.Percent99 in milliseconds. When the scenario produced no
+// successful requests we report +inf so the gate fails loudly.
+static double ExtractP99Ms(NBomber.Contracts.Stats.NodeStats stats, string scenarioName)
+{
+    foreach (var s in stats.ScenarioStats)
+    {
+        if (string.Equals(s.ScenarioName, scenarioName, StringComparison.Ordinal))
+        {
+            // Latency is reported in ms.
+            return s.Ok.Latency.Percent99;
+        }
+    }
+    return double.PositiveInfinity;
 }
