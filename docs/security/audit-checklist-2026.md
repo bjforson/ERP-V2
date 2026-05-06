@@ -198,9 +198,9 @@ ORDER BY 1,2,3;
 ## SECRETS — Secrets management
 
 ### SEC-SECRETS-1 — No secrets in `appsettings.json` (any environment)
-**Verify:** `grep -rEn "(password|secret|key|token)\s*[:=]\s*[\"'][A-Za-z0-9]{8,}" --include='appsettings*.json' apps/ modules/ platform/`
-**Expect:** No matches with real-looking secrets. Placeholders / dev-only test values acceptable; flag for review.
-**Severity:** P0.
+**Verify:** Canonical Phase V tool — `tools/security-scan/run-trufflehog.ps1` (Sprint 52) — scans the full git history with trufflehog's verifier mode, distinguishing live secrets from inactive matches. Smoke-only fallback: `tools/security-scan/check-secrets.ps1` (regex-based, kept as a fast local check).
+**Expect:** Zero `Verified` findings in the trufflehog report. Unverified high-entropy matches are P2 (manual review; annotate false-positives with `# trufflehog:ignore`).
+**Severity:** P0 (verified findings); P2 (unverified matches).
 
 ### SEC-SECRETS-2 — Secrets in environment variables only
 **Verify:** `ConnectionStrings__Platform`, `ConnectionStrings__Inspection`, `ConnectionStrings__NickFinance`, `Email__Smtp__Password`, `EdgeNode:HmacKey`, etc. all sourced from machine env vars.
@@ -233,8 +233,8 @@ ORDER BY 1,2,3;
 **Severity:** P1.
 
 ### SEC-SECRETS-8 — Run secret-scan tool
-**Verify:** `tools/security-scan/check-secrets.ps1` executed against current tree; report shows zero unexpected matches.
-**Expect:** Clean report (or every match documented as a false-positive).
+**Verify:** `tools/security-scan/run-trufflehog.ps1` (Sprint 52) executed in `-Mode history` against the full git history. Tool MUST be present on the audit host (skip-when-unavailable is dev-box-only; pilot-readiness audit blocks on tool absence).
+**Expect:** Clean trufflehog report — zero `Verified` findings. Every Unverified match either explainable (test fixture, placeholder) or annotated with `# trufflehog:ignore`.
 **Severity:** P1.
 
 ---
@@ -482,8 +482,8 @@ See SEC-TLS-7.
 **Severity:** P2.
 
 ### SEC-DEP-3 — License compatibility
-**Verify:** Every third-party NuGet license is MIT / Apache-2 / BSD / similar permissive (or commercial with payment in place).
-**Expect:** No GPL / AGPL / unknown-license deps.
+**Verify:** Run `tools/security-scan/run-license-audit.ps1` (Sprint 52). The script wraps `dotnet list package --include-transitive` per project, resolves each package's license via the global packages folder's `.nuspec`, and cross-references against `tools/security-scan/license-allowlist.json` (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MS-PL, MS-EULA, Unlicense).
+**Expect:** Report shows zero non-allowlisted licenses; no GPL / AGPL / unknown-license deps.
 **Severity:** P1.
 
 ### SEC-DEP-4 — MailKit version

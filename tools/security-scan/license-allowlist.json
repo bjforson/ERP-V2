@@ -1,0 +1,54 @@
+{
+    "$comment": [
+        "Sprint 52 / FU-license-audit-tool (Sprint 30) — curated allowlist for",
+        "third-party NuGet package licenses. Maps SPDX-style ids to whether the",
+        "license is permissive enough for v2's posture per audit-checklist-2026 SEC-DEP-3.",
+        "",
+        "Conservative posture: anything not on this list is flagged. The allowlist is",
+        "deliberately narrow to force an explicit operator decision on edge cases",
+        "rather than silently admitting unknown licenses.",
+        "",
+        "How to add a license: append below, AND add a one-sentence rationale in the",
+        "'rationale' map. Bump the version. Commit message MUST link the PR / issue",
+        "where the legal review happened.",
+        "",
+        "Out-of-allowlist examples (intentionally not allowed): GPL-2.0, GPL-3.0,",
+        "AGPL-3.0, LGPL-2.1, LGPL-3.0, MPL-1.1, MPL-2.0 (case-by-case), CC-BY-NC-*,",
+        "any 'commercial' / 'proprietary' / 'unknown' designation."
+    ],
+    "version": "2026-05-05",
+    "allowed": [
+        "MIT",
+        "Apache-2.0",
+        "BSD-3-Clause",
+        "BSD-2-Clause",
+        "ISC",
+        "MS-PL",
+        "MS-EULA",
+        "Unlicense"
+    ],
+    "alias_normalisations": {
+        "$comment": "Map free-form license-strings observed in NuGet metadata onto canonical SPDX ids.",
+        "Apache-2": "Apache-2.0",
+        "Apache 2.0": "Apache-2.0",
+        "Apache License 2.0": "Apache-2.0",
+        "BSD": "BSD-3-Clause",
+        "MIT License": "MIT",
+        "The MIT License (MIT)": "MIT",
+        "Microsoft Public License (Ms-PL)": "MS-PL",
+        "Microsoft Software License Terms": "MS-EULA",
+        "Microsoft .NET Library": "MS-EULA",
+        "ms-net-library": "MS-EULA",
+        "ms-net-library-2020": "MS-EULA"
+    },
+    "rationale": {
+        "MIT": "Permissive; commercial-use OK; no copyleft; default for .NET ecosystem.",
+        "Apache-2.0": "Permissive; explicit patent grant; commercial-use OK; widely used by Microsoft / Google libraries.",
+        "BSD-3-Clause": "Permissive; commercial-use OK; common for academic-origin libraries.",
+        "BSD-2-Clause": "Permissive; commercial-use OK; minimal restrictions vs BSD-3.",
+        "ISC": "Permissive; equivalent to BSD-2/MIT in effect.",
+        "MS-PL": "Microsoft Public License; permissive for commercial use; used by some legacy MS NuGets.",
+        "MS-EULA": "Microsoft .NET Library license terms; covers framework / first-party Microsoft NuGets like System.* and Microsoft.* packages.",
+        "Unlicense": "Public-domain dedication; no restrictions."
+    }
+}
