@@ -482,9 +482,11 @@ See SEC-TLS-7.
 **Severity:** P2.
 
 ### SEC-DEP-3 — License compatibility
-**Verify:** Run `tools/security-scan/run-license-audit.ps1` (Sprint 52). The script wraps `dotnet list package --include-transitive` per project, resolves each package's license via the global packages folder's `.nuspec`, and cross-references against `tools/security-scan/license-allowlist.json` (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MS-PL, MS-EULA, Unlicense).
-**Expect:** Report shows zero non-allowlisted licenses; no GPL / AGPL / unknown-license deps.
+**Verify:** Run `tools/security-scan/run-license-audit.ps1` (Sprint 52). The script wraps `dotnet list package --include-transitive` per project, resolves each package's license via the global packages folder's `.nuspec`, and cross-references against `tools/security-scan/license-allowlist.json` (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MS-PL, MS-EULA, PostgreSQL, Unlicense).
+**Expect:** Report shows zero non-allowlisted licenses; no GPL / AGPL / unknown-license deps. Per-package overrides for unresolved findings live in `tools/security-scan/license-allowlist.json` `package_license_overrides` (rationale in `tools/security-scan/license-allowlist-rationale.md`).
 **Severity:** P1.
+
+**Open finding (Sprint 57 triage):** **NBomber 6.1.0** ships under a proprietary commercial subscription license (NBOMBER LICENSE AGREEMENT v2.0, effective 2024-05-01), NOT MIT. The package is referenced by `tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj` for the Phase V perf-test harness; the csproj comment that called it "MIT-licensed" is incorrect. **Severity P0** because the agreement explicitly restricts use to "Customer's internal operations" under a paid Activation Key, and we currently have no subscription. **Resolution path (operator decision required):** (a) purchase NBomber commercial subscription, (b) replace with `dotnet-bombardier` / `k6` HTTP runner, (c) hand-roll an `NBomber.Contracts`-only harness (Contracts is Apache-2.0; only the NBomber runtime is proprietary), or (d) drop the perf harness from CI and gate Phase V execution on a separately-licensed alternative. Full triage notes in `tools/security-scan/license-allowlist-rationale.md` §2. **Default if no decision before pilot scoping (~Sprint 22-24): pause NBomber-based perf work.** This finding is the only P0 in the SEC-DEP family and is independent of the rest of the audit checklist's P0 + P1 gates.
 
 ### SEC-DEP-4 — MailKit version
 **Verify:** MailKit ≥ 4.16 (NU1902 CVE GHSA-9j88-vvj5-vhgr resolved Sprint 21).
