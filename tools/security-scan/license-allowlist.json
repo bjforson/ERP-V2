@@ -10,13 +10,24 @@
         "",
         "How to add a license: append below, AND add a one-sentence rationale in the",
         "'rationale' map. Bump the version. Commit message MUST link the PR / issue",
-        "where the legal review happened.",
+        "where the legal review happened. Per-package overrides (when nuspec metadata",
+        "is missing or wrong) live in the 'package_license_overrides' map below; each",
+        "override carries a rationale string referencing the upstream LICENSE source.",
         "",
         "Out-of-allowlist examples (intentionally not allowed): GPL-2.0, GPL-3.0,",
         "AGPL-3.0, LGPL-2.1, LGPL-3.0, MPL-1.1, MPL-2.0 (case-by-case), CC-BY-NC-*,",
-        "any 'commercial' / 'proprietary' / 'unknown' designation."
+        "any 'commercial' / 'proprietary' / 'unknown' designation.",
+        "",
+        "Sprint 57 update: triaged the 9 candidate findings from Sprint 52's first",
+        "audit. Added PostgreSQL to allowed (BSD-style, MIT-compatible); added per-",
+        "package overrides for FuncyDown (MIT), HdrHistogram (BSD-2-Clause),",
+        "FSharp.UMX (MIT), OneOf (MIT), xunit.abstractions (Apache-2.0). NBomber",
+        "6.1.0 is a P0 finding — the package's bundled LICENSE is the NBomber",
+        "Commercial Subscription Agreement, NOT MIT (csproj comment was wrong).",
+        "Documented under SEC-DEP-3 in audit-checklist-2026.md; see also",
+        "license-allowlist-rationale.md for full triage notes."
     ],
-    "version": "2026-05-05",
+    "version": "2026-05-06",
     "allowed": [
         "MIT",
         "Apache-2.0",
@@ -25,6 +36,7 @@
         "ISC",
         "MS-PL",
         "MS-EULA",
+        "PostgreSQL",
         "Unlicense"
     ],
     "alias_normalisations": {
@@ -39,7 +51,70 @@
         "Microsoft Software License Terms": "MS-EULA",
         "Microsoft .NET Library": "MS-EULA",
         "ms-net-library": "MS-EULA",
-        "ms-net-library-2020": "MS-EULA"
+        "ms-net-library-2020": "MS-EULA",
+        "PostgreSQL License": "PostgreSQL"
+    },
+    "package_license_overrides": {
+        "$comment": [
+            "Map of (package-id-lowercase) -> { license: SPDX-id, rationale: string }",
+            "for packages whose .nuspec metadata is missing, wrong, or maps via a",
+            "licenseUrl shape the run-license-audit.ps1 url-pattern table doesn't",
+            "currently recognise. Each entry MUST cite the upstream LICENSE file as",
+            "evidence so the audit-trail survives package version bumps.",
+            "",
+            "Note: this map is consumed by run-license-audit.ps1 only AFTER the",
+            "nuspec resolution loop. If a package version's nuspec already resolves",
+            "cleanly to a SPDX id on the allowlist, the override is ignored. Override",
+            "kicks in for status='url-only' / 'no-license-metadata' / 'no-nuspec'.",
+            "",
+            "If the run-license-audit.ps1 script is later extended to consult this",
+            "map, it will read it via the JSON shape below. Until that wiring lands,",
+            "the report's triage section references this allowlist as the authority",
+            "and operators eyeball-check each finding against the override entry."
+        ],
+        "fsharp.umx": {
+            "license": "MIT",
+            "rationale": "fsprojects standard MIT license. nuspec has neither <license> nor <licenseUrl>; license confirmed from https://github.com/fsprojects/FSharp.UMX repo licence display (LICENSE file in master).",
+            "evidenceUrl": "https://github.com/fsprojects/FSharp.UMX",
+            "addedSprint": 57
+        },
+        "funcydown": {
+            "license": "MIT",
+            "rationale": "G DATA Software CyberDefense AG MIT license. nuspec has licenseUrl https://raw.githubusercontent.com/GDATASoftwareAG/FuncyDown/master/LICENSE; LICENSE file opens 'MIT License Copyright (c) 2019 G DATA Software'.",
+            "evidenceUrl": "https://raw.githubusercontent.com/GDATASoftwareAG/FuncyDown/master/LICENSE",
+            "addedSprint": 57
+        },
+        "hdrhistogram": {
+            "license": "BSD-2-Clause",
+            "rationale": "Dual-licensed: primary release is CC0 / public domain; author Lee Campbell additionally provides BSD-2-Clause for those who prefer it. nuspec has licenseUrl https://raw.githubusercontent.com/HdrHistogram/HdrHistogram.NET/master/LICENSE.txt. Pinning to BSD-2-Clause so we have a SPDX-mappable allowlisted entry.",
+            "evidenceUrl": "https://raw.githubusercontent.com/HdrHistogram/HdrHistogram.NET/master/LICENSE.txt",
+            "addedSprint": 57
+        },
+        "oneof": {
+            "license": "MIT",
+            "rationale": "Harry McIntyre MIT license. nuspec has licenseUrl https://github.com/mcintyre321/OneOf/blob/master/licence.md (note: 'licence' British spelling); file content is the MIT License with 'Copyright (c) 2016 Harry McIntyre'.",
+            "evidenceUrl": "https://raw.githubusercontent.com/mcintyre321/OneOf/master/licence.md",
+            "addedSprint": 57
+        },
+        "xunit.abstractions": {
+            "license": "Apache-2.0",
+            "rationale": "Matches xunit.core posture: Apache-2.0 majority + MIT for imported dotnet/core-setup chunks. nuspec has licenseUrl https://raw.githubusercontent.com/xunit/xunit/master/license.txt; the existing url-pattern table in run-license-audit.ps1 misses this because the pattern is *github.com/xunit/*LICENSE (case-sensitive 'LICENSE' suffix) but the URL ends in 'license.txt' (lowercase).",
+            "evidenceUrl": "https://raw.githubusercontent.com/xunit/xunit/master/license.txt",
+            "addedSprint": 57
+        },
+        "nbomber": {
+            "license": "PROPRIETARY",
+            "rationale": "P0 FINDING — NBomber 6.1.0's bundled LICENSE file is the 'NBOMBER LICENSE AGREEMENT Version 2.0' (commercial subscription terms; 'limited, non-exclusive, non-sublicensable, non-transferable, revocable' license tied to a paid Activation Key). The csproj comment in tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj that calls it 'MIT-licensed' was incorrect. NBomber.Contracts is Apache-2.0 (separate package) but the runtime engine NBomber requires a paid commercial subscription. NOT added to overrides — must be resolved by either purchasing a subscription or replacing with a permissive-licensed alternative (e.g. dotnet-bombardier, k6 via HTTP runner, or a hand-rolled NBomber.Contracts-only harness). See SEC-DEP-3 in audit-checklist-2026.md for the resolution decision.",
+            "evidenceUrl": "https://github.com/PragmaticFlow/NBomber/blob/develop/LICENSE",
+            "addedSprint": 57,
+            "status": "p0-finding-not-allowlisted"
+        },
+        "nbomber.contracts": {
+            "license": "Apache-2.0",
+            "rationale": "nbomber.contracts (Apache-2.0) is a separate package from nbomber (commercial). The contracts library is OK to use under Apache-2.0 terms; only the nbomber runtime triggers the proprietary subscription requirement.",
+            "evidenceUrl": "https://github.com/PragmaticFlow/NBomber/blob/develop/LICENSE",
+            "addedSprint": 57
+        }
     },
     "rationale": {
         "MIT": "Permissive; commercial-use OK; no copyleft; default for .NET ecosystem.",
@@ -49,6 +124,7 @@
         "ISC": "Permissive; equivalent to BSD-2/MIT in effect.",
         "MS-PL": "Microsoft Public License; permissive for commercial use; used by some legacy MS NuGets.",
         "MS-EULA": "Microsoft .NET Library license terms; covers framework / first-party Microsoft NuGets like System.* and Microsoft.* packages.",
+        "PostgreSQL": "PostgreSQL License (BSD-style, MIT-compatible per the PostgreSQL Global Development Group's official wording: 'similar to the BSD or MIT licenses'); covers Npgsql + Npgsql.EntityFrameworkCore.PostgreSQL, the canonical .NET driver for our Postgres backend.",
         "Unlicense": "Public-domain dedication; no restrictions."
     }
 }
