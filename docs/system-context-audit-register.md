@@ -4,8 +4,10 @@ Append-only register of every code path that calls
 `ITenantContext.SetSystemContext()`. Reviewed at every sprint boundary by
 the rolling master and at every security review by the user.
 
-**Last reviewed:** 2026-05-06 (Sprint 57 — full sweep across sprints
-8-52). Previous full sweep was Sprint 21 / Tenant-Pt-2.
+**Last reviewed:** 2026-05-06 (Sprint 59 — `scanner_threshold_profiles`
+opt-in shipped, gap from Sprint 57 sweep closed). Sprint 57 (also
+2026-05-06) was the full sweep across sprints 8-52; previous full
+sweep was Sprint 21 / Tenant-Pt-2.
 
 ## Format
 
@@ -27,7 +29,7 @@ the rolling master and at every security review by the user.
 | `InviteService.MarkRedeemedAsync` | `platform/NickERP.Platform.Identity.Database/Services/InviteService.cs:324` (mark-redeemed block) | Same posture as `RedeemInviteAsync` — the mark-redeemed UPDATE happens during the bootstrap window where no tenant context exists yet. The unique partial index on `TokenHash` (filtered to active rows) is what makes concurrent redemptions race-safe; the system-context flip is the gate that lets the UPDATE itself succeed. | None new — same `tenant_isolation_invite_tokens` opt-in covers UPDATE via the WITH CHECK clause. | 2026-05-04 | Sprint 21 / Tenant-Pt-2 |
 | `AcceptInvite.razor` (page lifecycle) | `apps/portal/Components/Pages/AcceptInvite.razor` (`OnInitializedAsync` + `ConfirmAsync`) | Invitee is anonymous up to and through the redemption page. The page reads `tenancy.tenants` (no RLS — root of the tenant graph) for the tenant name, then writes the new `IdentityUser` + `UserScope` rows under system context because the user has no tenant scope yet (it's exactly what we're adding). Both writes carry the row's correct `TenantId` so the WITH CHECK passes via the standard tenant-equals-row clause; the `'-1'` opt-in is what admits the read of `identity.invite_tokens` indirectly through `InviteService` and is also what admits the UPDATE on the invite row when marking redeemed. | `identity.invite_tokens` opt-in (above). `identity.identity_users` already admits system-context writes from Sprint 9 / FU-userid (the projector pattern); the new caller is documented here for completeness. | 2026-05-04 | Sprint 21 / Tenant-Pt-2 |
 | `WebhookDispatchWorker.ReadNewAuditEventsAsync` | `modules/inspection/src/NickERP.Inspection.Web/Services/WebhookDispatchWorker.cs:393` | Cross-tenant fan-out worker discovers new audit events per tenant since the per-tenant cursor and dispatches them through registered `IOutboundWebhookAdapter` plugins. SetSystemContext is needed for the `audit.events` read because the worker is a singleton background service, not a per-tenant request — the per-tenant context is built fresh each tick from `TenancyDbContext.Tenants` discovery. The LINQ `e.TenantId == tenantId` filter narrows the read to the current tenant, defending against a future RLS misconfiguration. Pattern matches `AuditNotificationProjector` exactly. | None new — `audit.events` already opts in (Sprint 5). | 2026-05-06 | Sprint 24 / B3 webhook dispatch (registered Sprint 57) |
-| `ScannerThresholdResolver.LoadFromDbAsync` | `modules/inspection/src/NickERP.Inspection.Application/Thresholds/ScannerThresholdResolver.cs:137` | **GAP — see "Pending opt-in: scanner_threshold_profiles" section below.** Cross-tenant resolver opens a fresh DI scope on cache miss and reads the active threshold profile by scanner-id under system context. The resolver is shared infrastructure (singleton + LISTEN/NOTIFY-driven cache); the request-scoped tenant context isn't available in the resolver's scope. | **MISSING** — `inspection.scanner_threshold_profiles` policy `tenant_isolation_scanner_threshold_profiles` does NOT have an `OR app.tenant_id = '-1'` clause. The SetSystemContext call effectively sets `app.tenant_id = '-1'` and the SELECT then fails the policy's USING test. Triage section below. | 2026-04-29 (caller landed Sprint 12); 2026-05-06 (gap surfaced Sprint 57) | Sprint 12 — Phase R3 / §6.5 thresholds (registered Sprint 57) |
+| `ScannerThresholdResolver.LoadFromDbAsync` | `modules/inspection/src/NickERP.Inspection.Application/Thresholds/ScannerThresholdResolver.cs:137` | Cross-tenant lookup of per-scanner ML thresholds. Resolver is shared infrastructure cached at the host level; the request-scope tenant context isn't available here. Scanner-id is sufficient to scope the SELECT (each scanner's TenantId is on the row). | `inspection.scanner_threshold_profiles` opt-in (`tenant_isolation_scanner_threshold_profiles`) added Sprint 59 (`Add_ThresholdProfiles_SystemContext_OptIn`). | 2026-05-06 | Sprint 59 / FU-thresholdresolver-optin-gap |
 
 ## Tables that opt in to system context
 
@@ -38,8 +40,45 @@ the rolling master and at every security review by the user.
 | `nickfinance.fx_rate` | `20260429131858_Add_RLS_And_Grants` | G2 / NickFinance pathfinder | Suite-wide FX rates carry NULL `TenantId`; a per-tenant insert would fail WITH CHECK. The system-context OR clause admits NULL-tenant writes from `FxRatePublishService.PublishAsync`. Reads are intentionally permissive (the policy USING clause also admits NULL-tenant rows) so every per-tenant ledger write can resolve the rate without a system-context hop. |
 | `audit.edge_node_api_keys` | `20260430105510_Add_EdgeNodeApiKeys` | Sprint 13 / P2-FU-edge-auth | Edge node auth runs pre-tenant-resolution: the request arrives with only an opaque API key, the row carries the `TenantId`. SetSystemContext + the OR clause is the only path to look up the row before the tenant is known. Reads under system context are limited to the auth handler's lookup-by-hash + the issuance/revocation admin flow. |
 | `identity.invite_tokens` | `20260504160000_Add_InviteTokens` | Sprint 21 / Tenant-Pt-2 | Invite redemption runs pre-tenant-resolution: the invitee is anonymous; the row carries the `TenantId`. SetSystemContext + the OR clause is the only path for `InviteService.RedeemInviteAsync` and `InviteService.MarkRedeemedAsync` to succeed. Single-use semantics enforced via the unique partial index on `(TokenHash) WHERE RedeemedAt IS NULL AND RevokedAt IS NULL`. |
+| `inspection.scanner_threshold_profiles` | `Add_ThresholdProfiles_SystemContext_OptIn` (Sprint 59) | Sprint 12 / §6.5 threshold calibration | The resolver is a singleton cache on the inference hot path; per-tenant fan-out would defeat the cache. SetSystemContext + the OR clause is the only path for cross-tenant reads. Reads under system context are limited to ScannerThresholdResolver.LoadFromDbAsync; admin writes happen under per-tenant context via /admin/rules + /admin/scanners surfaces. |
 
-## Pending opt-in: `inspection.scanner_threshold_profiles` (Sprint 57 sweep finding)
+## Resolved: `inspection.scanner_threshold_profiles` opt-in (Sprint 59)
+
+**Closed.** Sprint 57's audit-register sweep surfaced that
+`ScannerThresholdResolver.LoadFromDbAsync`
+(`modules/inspection/src/NickERP.Inspection.Application/Thresholds/ScannerThresholdResolver.cs:137`)
+called `tenant.SetSystemContext()` for the cross-tenant threshold
+lookup, but the policy created in Phase R3
+(`20260429062458_Add_PhaseR3_TablesInferenceModernization`,
+`tenant_isolation_scanner_threshold_profiles`) was the strict
+per-tenant shape with NO `OR app.tenant_id = '-1'` clause. Effect:
+under SetSystemContext (`app.tenant_id = '-1'`) the policy USING test
+evaluated `"TenantId" = -1` and yielded zero rows; `LoadFromDbAsync`
+fell through to `ScannerThresholdSnapshot.V1Defaults()` on every cache
+miss, silently making operator-tuned threshold profiles invisible to
+the resolver.
+
+**Resolution (Sprint 59).** Migration
+`Add_ThresholdProfiles_SystemContext_OptIn` (file:
+`modules/inspection/src/NickERP.Inspection.Database/Migrations/20260506115644_Add_ThresholdProfiles_SystemContext_OptIn.cs`)
+drops + recreates the policy with the established opt-in shape used
+by `audit.events`, `nickfinance.fx_rate`,
+`audit.edge_node_api_keys`, `identity.invite_tokens`,
+`audit.notifications`. The resolver code is unchanged — Sprint 12's
+`SetSystemContext()` call already encoded the correct intent; this
+sprint only fixes the missing policy clause that was blocking it.
+
+The corresponding rows in the "Entries" and "Tables that opt in"
+sections above were updated as part of this sprint.
+
+**Posture.** Filling a gap, not weakening — the opt-in clause matches
+the established pattern across five other tables. Per
+`feedback_confirm_before_weakening_security.md`, the user explicitly
+greenlit the fix after Sprint 57's audit register sweep documented
+the three resolution options (option (a) selected: smallest delta,
+matches established pattern). Recorded here for sprint traceability.
+
+## Original triage notes (Sprint 57 sweep — preserved for history)
 
 `ScannerThresholdResolver.LoadFromDbAsync` (Sprint 12 / Phase R3, file
 `modules/inspection/src/NickERP.Inspection.Application/Thresholds/ScannerThresholdResolver.cs:137`)
@@ -242,10 +281,34 @@ register matches live code. Findings:
 - **All 5 opt-in tables verified** to still have their `'-1'` OR
   clauses intact in `tools/migrations/sprint-13-deploy/*.sql` and the
   matching EF migration files.
-- **1 gap surfaced** — `inspection.scanner_threshold_profiles` is a
-  caller without an opt-in. Triage notes in the "Pending opt-in"
-  section above; operator decision required for resolution path.
+- **1 gap surfaced** — `inspection.scanner_threshold_profiles` was a
+  caller without an opt-in. **Resolved Sprint 59** with migration
+  `Add_ThresholdProfiles_SystemContext_OptIn` (option (a) of the
+  triage notes — opt-in clause added, matches established pattern).
+  Original triage preserved in the "Original triage notes (Sprint 57
+  sweep — preserved for history)" section above.
 - **Pattern documentation added** for per-tenant fan-out workers
   (Sprints 36 / 43 / 44 / 50) that deliberately don't register.
 - **No zombie entries** — every register entry corresponds to a real
   code path.
+
+## Sprint 59 follow-up notes (2026-05-06)
+
+The Sprint 57 gap (`scanner_threshold_profiles`) was the single open
+register-vs-policy mismatch. Sprint 59 closed it by shipping the
+opt-in migration; the register Entries row, Tables row, and `Last
+reviewed` field above were updated as part of the same commit. Tests
+added in `tests/NickERP.Inspection.Web.Tests/ScannerThresholdResolverIntegrationTests.cs`
+provide regression coverage:
+
+- **In-memory variant** (always runs) — verifies the resolver
+  correctly returns seeded-row values vs `V1Defaults()` fallback +
+  cache-hit semantics, exercising the resolver code path.
+- **Postgres variant** (`[Trait("Category", "RequiresLiveDb")]`) —
+  connects as a non-superuser role with the new opt-in policy
+  installed and confirms the SELECT returns the seeded row under
+  system context (would have returned 0 rows pre-Sprint-59).
+
+The `MultiTenantInvariantProbe` (Sprint 43) sub-check 5 catches future
+register-vs-source drift; sub-check 7 catches register-vs-policy
+drift on the Tables list. Both pass at `HEAD`.

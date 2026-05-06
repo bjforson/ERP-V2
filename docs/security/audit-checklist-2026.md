@@ -21,7 +21,7 @@
 |---|---|---|
 | AUTH | Authentication + identity | 8 |
 | AUTHZ | Authorization | 7 |
-| TENANT | Tenant isolation (RLS) | 12 |
+| TENANT | Tenant isolation (RLS) | 13 |
 | SECRETS | Secrets management | 8 |
 | TLS | Network + transport security | 7 |
 | DB | Database posture | 10 |
@@ -31,7 +31,7 @@
 | DEP | Dependency hygiene | 6 |
 | HEAD | HTTP headers + cookies | 6 |
 
-**Total: ~89 items.**
+**Total: ~90 items.**
 
 ---
 
@@ -192,6 +192,19 @@ ORDER BY 1,2,3;
 **Verify:** Sprint 29's `tenancy.tenant_module_settings` enforces per-tenant module flags.
 **Expect:** Disabling NickHR for tenant A leaves it active for tenant B.
 **Severity:** P2 (CF Access can also gate).
+
+### SEC-TENANT-13 — `inspection.scanner_threshold_profiles` system-context opt-in (Sprint 59)
+**Why:** `ScannerThresholdResolver.LoadFromDbAsync` is a singleton, LISTEN/NOTIFY-cached resolver on the inference hot path. It calls `ITenantContext.SetSystemContext()` for the cross-tenant lookup because the request-scoped tenant context isn't available in the resolver's own scope. The Sprint 12 / Phase R3 policy was the strict per-tenant shape with no `OR app.tenant_id = '-1'` clause, which silently made operator-tuned thresholds invisible to the resolver. Sprint 59 closed the gap with `Add_ThresholdProfiles_SystemContext_OptIn`.
+**Verify:**
+```sql
+SELECT policyname, qual, with_check
+FROM pg_policies
+WHERE schemaname = 'inspection'
+  AND tablename = 'scanner_threshold_profiles';
+```
+The single `tenant_isolation_scanner_threshold_profiles` row must include `OR COALESCE(current_setting('app.tenant_id', true), '0') = '-1'` in BOTH the `qual` (USING) and `with_check` columns. Cross-check `docs/system-context-audit-register.md` "Tables that opt in to system context" — this table must appear there with migration `Add_ThresholdProfiles_SystemContext_OptIn`.
+**Expect:** Policy carries the opt-in disjunct; register row present with the matching migration name; `ScannerThresholdResolver.LoadFromDbAsync` is the only caller listed (admin writes happen under per-tenant context via the `/admin/rules` + `/admin/scanners` surfaces, which use `SetTenant`, not system context). Regression test: `tests/NickERP.Inspection.Web.Tests/ScannerThresholdResolverIntegrationTests.cs` Postgres variant (`[Trait("Category", "RequiresLiveDb")]`) proves the SELECT under `app.tenant_id = '-1'` admits the seeded row, and the negative control proves the fail-closed default ('0') still blocks reads.
+**Severity:** P1 (silently inert ML calibration is functional, not security; the policy itself is well-formed in either shape).
 
 ---
 
