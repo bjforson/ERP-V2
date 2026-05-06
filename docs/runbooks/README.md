@@ -24,7 +24,9 @@ Are you responding to an alert / user report / log line?
 │   ├── Configuring pgbackrest backups ............ 10-pgbackrest-backup-restore.md
 │   ├── Quarterly restore drill ................... 10-pgbackrest-backup-restore.md §8
 │   ├── Upgrading an older PG to PG17 ............. 11-postgres-version-lock-pg17.md
-│   └── Operating NickFinance (G2 pathfinder) ..... 12-nickfinance-runbook.md
+│   ├── Operating NickFinance (G2 pathfinder) ..... 12-nickfinance-runbook.md
+│   └── Confirming a deployed pilot tenant is
+│       ready for real traffic (acceptance suite) . 15-pilot-acceptance-test.md
 │
 └── Yes — what's the failure shape?
     ├── /healthz/ready is Unhealthy
@@ -88,6 +90,7 @@ Are you responding to an alert / user report / log line?
 | [11](11-postgres-version-lock-pg17.md) | PG17 version lock + upgrade-from-older procedure | n/a — operator-initiated | P1 (failed upgrade rollback) |
 | [12](12-nickfinance-runbook.md) | NickFinance (G2 pathfinder) operations — deploy / health / migrations / backup / FX-rate publish | n/a — operator-initiated; or `postgres-nickfinance` Unhealthy | P2 (`postgres-nickfinance` Unhealthy) / P1 (data loss → runbook 10 §7) |
 | [13](13-comms-gateway-settings.md) | Comms-gateway settings reference — vendor-neutral `comms.email.*` key catalogue, audit trail, rotation guidance (Sprint 35) | n/a — operator-initiated when configuring tenant comms | P3 (config drift) |
+| [15](15-pilot-acceptance-test.md) | Pilot acceptance test — running the four-scenario integration suite + dashboard interpretation post-deploy (Sprint 53) | n/a — operator-initiated before opening a pilot tenant up to real traffic; or any acceptance gate Fail | P1 (cross-tenant invariant Fail) / P2 (single capability Fail) |
 
 > Slots 07 + 08 are post-incident / analytical runbooks (sprint-13
 > live-deploy backlog and 2026-05-04 OCR baseline) — they sit
