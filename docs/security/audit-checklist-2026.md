@@ -563,7 +563,7 @@ For each failure during execution:
 - The pilot site's edge keys are issued + tested.
 - Backup + restore drill executed once on the pilot's data shape.
 
-When all five lines are checked, Phase V is complete; pilot can ship.
+When all six lines are checked, Phase V security is complete and the pilot can advance to runbook 14 §11 (real-traffic cutover). Final pilot sign-off — three signatures within a 24 h window per [`../runbooks/14-pilot-site-standup.md`](../runbooks/14-pilot-site-standup.md) §11.4 — happens after the §11 7-day soak, not at Phase V exit.
 
 ---
 

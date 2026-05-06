@@ -23,6 +23,10 @@
 > - [`07-sprint-13-live-deploy.md`](07-sprint-13-live-deploy.md) §4.5
 >   — mandatory-backup-before-DDL pattern; same applies before any
 >   `pg_upgrade` run.
+> - [`14-pilot-site-standup.md`](14-pilot-site-standup.md) §2.1 +
+>   §4.1 — the pilot stand-up runbook treats PG17 as a pre-flight
+>   gate; if a candidate node is on an older major, finish this
+>   runbook before runbook 14 §4.
 > - `ROADMAP.md` §1 (locked answer 3) — the PG17 lock.
 
 ---

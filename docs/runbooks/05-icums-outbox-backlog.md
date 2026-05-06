@@ -18,6 +18,11 @@
 > **Sister docs:** [`04-plugin-load-failure.md`](04-plugin-load-failure.md)
 > — if the IcumsGh plugin failed to load, this runbook doesn't apply
 > (you'd see no submissions at all, not a backlog).
+>
+> **See also:** [`14-pilot-site-standup.md`](14-pilot-site-standup.md)
+> §9.2 — outbound submission failures that block the
+> `gate.external_system.roundtrip` pilot-readiness gate route here
+> for resolution.
 
 ---
 

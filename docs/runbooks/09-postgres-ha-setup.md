@@ -25,6 +25,10 @@
 > - [`07-sprint-13-live-deploy.md`](07-sprint-13-live-deploy.md) —
 >   mandatory backup-before-DDL pattern; same posture applies before
 >   any failover that involves repointing connection strings.
+> - [`14-pilot-site-standup.md`](14-pilot-site-standup.md) §4 — the
+>   pilot stand-up runbook calls into §3 + §5 here for the cluster
+>   provisioning step. If you're standing this cluster up as part
+>   of a fresh pilot, runbook 14 is the parent procedure.
 > - `ROADMAP.md` §1 (locked answer 3) — the operational shape this
 >   runbook delivers.
 

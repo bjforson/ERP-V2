@@ -4,6 +4,12 @@
 > tenant-settings rows. v1 had a separate `NickComms.Gateway` service;
 > v2 reuses the existing email infrastructure (Sprint 21) plus the
 > generic per-tenant key/value table introduced in Sprint 35.
+>
+> **See also:** [`14-pilot-site-standup.md`](14-pilot-site-standup.md)
+> §6.3 + §6.4 — the pilot stand-up runbook calls into the
+> `comms.email.*` keys here for first-user invite delivery and
+> mirrors the cooperation MOU as `pilot.cooperation_mou.*` settings
+> through the same `/admin/tenant-settings` page.
 
 ## Summary
 

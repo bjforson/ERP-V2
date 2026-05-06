@@ -1,5 +1,11 @@
 # Runbook 06 — Edge node stalled
 
+> **See also:** [`14-pilot-site-standup.md`](14-pilot-site-standup.md)
+> §8.2 — first-pass smoke verifies the edge round-trip; if smoke
+> fails because no `inspection.scan.captured` audit row appears with
+> `replay_source = "edge"`, this runbook is the diagnostic path
+> before re-running smoke.
+
 ## 1. Symptom
 
 An edge node's local `edge_outbox` queue depth is growing and the

@@ -27,6 +27,9 @@
 > - [`01-deploy.md`](01-deploy.md) — the application deploy mechanics;
 >   pgbackrest does not interact with the application except at PITR
 >   time (the application stays stopped during a restore).
+> - [`14-pilot-site-standup.md`](14-pilot-site-standup.md) §4.3 +
+>   §10.3 — the pilot stand-up runbook calls in for the SSH-Linux
+>   backup posture decision and the pre-cutover restore drill.
 
 ---
 

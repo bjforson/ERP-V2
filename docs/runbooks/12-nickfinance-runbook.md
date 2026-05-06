@@ -40,6 +40,9 @@
 > - [`../system-context-audit-register.md`](../system-context-audit-register.md)
 >   — registers `FxRatePublishService` as a `SetSystemContext` caller
 >   (suite-wide `fx_rate` writes need `app.tenant_id = '-1'`).
+> - [`14-pilot-site-standup.md`](14-pilot-site-standup.md) §6 — if
+>   the pilot tenant opts NickFinance in, runbook 14 §6 walks the
+>   tenant provisioning that precedes any NickFinance ops here.
 > - `ROADMAP.md` §1 (locked answer 7) — the "fold v1-clone into
 >   v2-native" arc this runbook flags as post-pilot scope.
 >
