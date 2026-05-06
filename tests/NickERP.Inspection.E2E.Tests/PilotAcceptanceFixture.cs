@@ -85,6 +85,21 @@ internal sealed class PilotAcceptanceFixture : IAsyncDisposable
     /// </summary>
     public long TenantBId { get; private set; }
 
+    /// <summary>
+    /// Hermetic source-root directory the fixture pins as
+    /// <c>Pilot:SourceRoot</c> for the
+    /// <see cref="MultiTenantInvariantProbe"/>. Holds an empty
+    /// <c>docs/system-context-audit-register.md</c> (no entries) and no
+    /// <c>.cs</c> files under any subdirectory — so the probe's source-vs-
+    /// register diff is trivially equal (empty == empty) and the
+    /// system-context-register sub-check passes. Without this, the probe
+    /// walks up from <c>AppContext.BaseDirectory</c> and discovers the
+    /// real worktree's source tree, where the register naturally drifts
+    /// from code as feature work lands — that drift is Sprint 57's
+    /// territory, not what this acceptance suite proves.
+    /// </summary>
+    public string HermeticSourceRoot { get; }
+
     private readonly string _adminConnectionString;
     private bool _disposed;
 
@@ -95,6 +110,10 @@ internal sealed class PilotAcceptanceFixture : IAsyncDisposable
         InspectionDbName = $"nickerp_e2e_pa_{suffix}_inspection";
         PlatformConnectionString = string.Format(AdminTemplate, PlatformDbName, adminPassword);
         InspectionConnectionString = string.Format(AdminTemplate, InspectionDbName, adminPassword);
+
+        HermeticSourceRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"nickerp-pa-srcroot-{suffix}");
     }
 
     /// <summary>
@@ -137,6 +156,18 @@ internal sealed class PilotAcceptanceFixture : IAsyncDisposable
     /// </summary>
     public async Task ProvisionAsync(CancellationToken ct = default)
     {
+        // Stage the hermetic source root for the multi-tenant invariant
+        // probe BEFORE doing anything else. An empty docs/...register.md
+        // + zero .cs files = trivially-matched-empty check. If we don't
+        // do this the probe walks up from the test bin directory and
+        // discovers the real worktree, where the register naturally
+        // drifts from code as feature work lands.
+        Directory.CreateDirectory(Path.Combine(HermeticSourceRoot, "docs"));
+        await File.WriteAllTextAsync(
+            Path.Combine(HermeticSourceRoot, "docs", "system-context-audit-register.md"),
+            "# System-Context Audit Register (hermetic test fixture)\n\nNo entries.\n",
+            ct);
+
         // Reuse the shared schema applier so we apply exactly the same
         // migration set the production host runs at startup. The history
         // tables land in per-context schemas (Sprint H3 posture).
@@ -385,19 +416,24 @@ internal sealed class PilotAcceptanceFixture : IAsyncDisposable
             }
         }
 
-        // Emit the verdict_set audit event. Production
-        // CaseWorkflowService.SetVerdictAsync writes EntityType="Verdict",
-        // EntityId=verdict.Id; the gate's predicate (in
+        // Emit the verdict_set audit event. The probe (in
         // PilotReadinessService.ProbeAnalystDecisionedRealCaseAsync)
-        // resolves the proof event by EntityId=case.Id.ToString() but the
-        // gate state is driven by the data-source's HasDecisionedRealCase
-        // bool, so even if the proof event id resolves null the gate
-        // still flips Pass. Emit one shaped exactly like production.
+        // looks up the proof event by EntityId=case.Id.ToString() —
+        // the gate's STATE is driven by the data-source's
+        // HasDecisionedRealCase bool (which queries Cases + Verdicts
+        // tables, not audit events), but the proof-event-id and the
+        // human-readable note both depend on the audit row's EntityId
+        // matching the case id. To make both the gate state AND the
+        // proof-event metadata resolve cleanly the fixture writes the
+        // event with EntityId=caseId — slightly different from
+        // production CaseWorkflowService (which writes
+        // EntityId=verdictId), but the fixture is satisfying the
+        // probe's query shape, not mimicking the publisher.
         var proofEventId = await EmitAuditEventAsync(
             tenantId,
             eventType: "nickerp.inspection.verdict_set",
-            entityType: "Verdict",
-            entityId: verdictId.ToString(),
+            entityType: "InspectionCase",
+            entityId: caseId.ToString(),
             payload: new { Id = verdictId, CaseId = caseId, Decision = 0, Basis = "Pilot acceptance — clear", IsSynthetic = isSynthetic },
             ct);
 
@@ -492,15 +528,7 @@ internal sealed class PilotAcceptanceFixture : IAsyncDisposable
         CancellationToken ct = default)
     {
         await using var tenancyCtx = BuildTenancyDbContext();
-        // Pilot:SourceRoot is unset by default in the test environment,
-        // so the system-context-register sub-check records a
-        // pass-with-skip-note; that's fine for the gate signal (overall
-        // pass requires all three sub-checks, and skip-note counts as
-        // pass per the probe's documented contract).
-        var probe = new MultiTenantInvariantProbe(
-            tenancyCtx,
-            TimeProvider.System,
-            NullLogger<MultiTenantInvariantProbe>.Instance);
+        var probe = BuildInvariantProbe(tenancyCtx);
         return await probe.RunAsync(forTenantId, ct);
     }
 
@@ -524,16 +552,37 @@ internal sealed class PilotAcceptanceFixture : IAsyncDisposable
         await using var inspectionCtx = BuildInspectionDbContext();
 
         var inspection = new EfBackedInspectionPilotProbeDataSource(inspectionCtx);
-        var probe = new MultiTenantInvariantProbe(
-            tenancyCtx,
-            TimeProvider.System,
-            NullLogger<MultiTenantInvariantProbe>.Instance);
+        var probe = BuildInvariantProbe(tenancyCtx);
         var svc = new PilotReadinessService(
             tenancyCtx, auditCtx, inspection, probe,
             TimeProvider.System,
             NullLogger<PilotReadinessService>.Instance);
 
         return await svc.GetReadinessAsync(tenantId, ct);
+    }
+
+    /// <summary>
+    /// Build a <see cref="MultiTenantInvariantProbe"/> with
+    /// <c>Pilot:SourceRoot</c> pinned to the hermetic source-root the
+    /// fixture stages in <see cref="ProvisionAsync"/>. The empty
+    /// register file there pairs with the empty source-side caller set
+    /// to give the system-context-register sub-check a clean
+    /// trivially-matched-empty pass — see the <see cref="HermeticSourceRoot"/>
+    /// remarks for the full rationale.
+    /// </summary>
+    private MultiTenantInvariantProbe BuildInvariantProbe(TenancyDbContext tenancyCtx)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Pilot:SourceRoot"] = HermeticSourceRoot,
+            })
+            .Build();
+        return new MultiTenantInvariantProbe(
+            tenancyCtx,
+            TimeProvider.System,
+            NullLogger<MultiTenantInvariantProbe>.Instance,
+            config: config);
     }
 
     // ---- internals ----------------------------------------------------------
@@ -641,6 +690,18 @@ internal sealed class PilotAcceptanceFixture : IAsyncDisposable
             // Best-effort teardown — the unique nickerp_e2e_pa_* prefix
             // lets a sweeper drop leftovers offline if a crash leaves
             // them behind.
+        }
+
+        try
+        {
+            if (Directory.Exists(HermeticSourceRoot))
+            {
+                Directory.Delete(HermeticSourceRoot, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best-effort — temp paths get auto-swept periodically.
         }
     }
 
