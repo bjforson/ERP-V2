@@ -31,6 +31,9 @@ namespace NickERP.Platform.Audit.Database.Migrations
                         .HasColumnType("uuid")
                         .HasDefaultValueSql("gen_random_uuid()");
 
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid?>("ActorUserId")
                         .HasColumnType("uuid");
 
@@ -63,9 +66,6 @@ namespace NickERP.Platform.Audit.Database.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
-                    b.Property<DateTimeOffset>("OccurredAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<JsonDocument>("Payload")
                         .IsRequired()
                         .HasColumnType("jsonb");
@@ -92,12 +92,12 @@ namespace NickERP.Platform.Audit.Database.Migrations
                     b.HasIndex("TenantId", "EventType", "OccurredAt")
                         .HasDatabaseName("ix_audit_events_type_time");
 
-                    b.HasIndex("TenantId", "EntityType", "EntityId", "OccurredAt")
-                        .HasDatabaseName("ix_audit_events_entity_time");
-
                     b.HasIndex("TenantId", "IdempotencyKey", "OccurredAt")
                         .IsUnique()
                         .HasDatabaseName("ux_audit_events_tenant_idempotency");
+
+                    b.HasIndex("TenantId", "EntityType", "EntityId", "OccurredAt")
+                        .HasDatabaseName("ix_audit_events_entity_time");
 
                     b.ToTable("events", "audit");
                 });
