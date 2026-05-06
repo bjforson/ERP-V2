@@ -4,19 +4,24 @@
    Membership). Sprint 18 adds the lifecycle section: suspend / resume /
    soft-delete / restore / hard-purge actions, gated on the current State.
    Sprint 29 adds the module-activation card: per-tenant on/off for each
-   module catalogued in IModuleRegistry. *@
+   module catalogued in IModuleRegistry. Sprint 56 adds the audit-activity
+   card: per-tenant drill-down sourced from ICrossTenantAuditService, with
+   filters by event-type substring + errors-only and a payload-detail
+   modal. *@
 @attribute [Authorize]
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Platform.Tenancy
 @using NickERP.Platform.Tenancy.Database
 @using NickERP.Platform.Tenancy.Database.Services
 @using NickERP.Platform.Tenancy.Entities
+@using NickERP.Portal.Services
 @using NickERP.Portal.Services.Modules
 @inject TenancyDbContext Db
 @inject ITenantLifecycleService Lifecycle
 @inject ITenantExportService Exports
 @inject IModuleRegistry ModuleRegistry
 @inject ITenantModuleSettingsService ModuleSettings
+@inject ICrossTenantAuditService AuditActivity
 @inject AuthenticationStateProvider AuthState
 @inject Microsoft.AspNetCore.Components.NavigationManager Nav
 @implements IDisposable
@@ -402,6 +407,136 @@ else
                 }
             </div>
         }
+
+        @* Sprint 56 / FU-cross-tenant-aggregation — per-tenant audit
+           activity. Reuses the cross-tenant aggregator service with this
+           tenant's id so we share caching with the global Audit Dashboard
+           (/admin/audit-dashboard). Surfaces last 50 events for the
+           tenant in the trailing window (24h default, expandable). *@
+        <div class="portal-card">
+            <h2 class="portal-card-title">Audit activity</h2>
+            <p class="portal-card-subtitle">
+                Recent <code>audit.events</code> rows for this tenant.
+                Use the filters to narrow by event type or to show only
+                <code>*.error</code> rows. Click a row to view the full payload.
+            </p>
+            <div class="portal-button-row">
+                @foreach (var w in _auditWindowChoices)
+                {
+                    <button type="button"
+                            class="portal-button @(w.Span == _auditWindow ? "portal-button-primary" : string.Empty)"
+                            @onclick="() => SelectAuditWindowAsync(w.Span)">@w.Label</button>
+                }
+                <button type="button"
+                        class="portal-button @(_auditErrorsOnly ? "portal-button-primary" : string.Empty)"
+                        @onclick="ToggleAuditErrorsOnlyAsync">Errors only</button>
+                <button type="button" class="portal-button" @onclick="ReloadAuditAsync">Refresh</button>
+            </div>
+            <div class="portal-filter-bar">
+                <input class="portal-input"
+                       placeholder="Filter by event type substring (e.g. nickerp.tenancy)"
+                       @bind="_auditTypeFilter"
+                       @bind:event="oninput" />
+                <button type="button" class="portal-button" @onclick="ReloadAuditAsync">Apply</button>
+            </div>
+
+            @if (_auditError is not null)
+            {
+                <p class="portal-form-message portal-form-error">@_auditError</p>
+            }
+
+            @if (_auditActivity is null)
+            {
+                <p class="portal-card-subtitle">Loading audit activity…</p>
+            }
+            else if (_auditActivity.Rows.Count == 0)
+            {
+                <p class="portal-empty">
+                    @(_auditErrorsOnly || !string.IsNullOrWhiteSpace(_auditTypeFilter)
+                        ? "No matching audit events for this tenant in the window."
+                        : "No audit events for this tenant in the window.")
+                </p>
+            }
+            else
+            {
+                <p class="portal-card-subtitle">
+                    Showing the most-recent @_auditActivity.Rows.Count of
+                    @_auditActivity.TotalCount matching event(s).
+                </p>
+                <table class="portal-table">
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>Event type</th>
+                            <th>Entity</th>
+                            <th>Actor</th>
+                            <th>Correlation</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _auditActivity.Rows)
+                        {
+                            <tr class="@(row.IsError ? "portal-row-error" : string.Empty)">
+                                <td><code>@row.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                                <td>
+                                    @if (row.IsError)
+                                    {
+                                        <strong class="portal-stat-error"><code>@row.EventType</code></strong>
+                                    }
+                                    else
+                                    {
+                                        <code>@row.EventType</code>
+                                    }
+                                </td>
+                                <td>@row.EntityType <code>@row.EntityId</code></td>
+                                <td>@(row.ActorUserId?.ToString()[..8] ?? "—")</td>
+                                <td><code>@(row.CorrelationId is null ? "—" : row.CorrelationId[..Math.Min(12, row.CorrelationId.Length)])</code></td>
+                                <td>
+                                    <button type="button"
+                                            class="portal-button"
+                                            @onclick="() => OpenAuditDetail(row)">View payload</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            @* Audit-event detail modal — shown when _auditDetail is non-null.
+               Inline render (rather than a child component) since the
+               layout is so small the abstraction would cost more than it
+               saves. *@
+            @if (_auditDetail is not null)
+            {
+                <div class="portal-modal-backdrop" @onclick="CloseAuditDetail">
+                    <div class="portal-modal" @onclick:stopPropagation="true">
+                        <div class="portal-modal-header">
+                            <h3>@_auditDetail.EventType</h3>
+                            <button type="button" class="portal-button" @onclick="CloseAuditDetail">Close</button>
+                        </div>
+                        <dl class="portal-detail-list">
+                            <dt>Event id</dt>
+                            <dd><code>@_auditDetail.EventId</code></dd>
+                            <dt>Occurred at</dt>
+                            <dd><code>@_auditDetail.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss.fff")</code></dd>
+                            <dt>Entity</dt>
+                            <dd>@_auditDetail.EntityType <code>@_auditDetail.EntityId</code></dd>
+                            <dt>Actor</dt>
+                            <dd>@(_auditDetail.ActorUserId?.ToString() ?? "—")</dd>
+                            <dt>Correlation</dt>
+                            <dd><code>@(_auditDetail.CorrelationId ?? "—")</code></dd>
+                            <dt>Severity</dt>
+                            <dd>@(_auditDetail.IsError ? "error" : "info")</dd>
+                        </dl>
+                        <details open>
+                            <summary>Payload (JSON)</summary>
+                            <pre class="portal-payload-pre">@_auditDetail.PayloadJson</pre>
+                        </details>
+                    </div>
+                </div>
+            }
+        </div>
     </section>
 }
 
@@ -427,6 +562,21 @@ else
     // catalogue (IModuleRegistry.GetAllModules) + the per-tenant
     // overrides loaded via ITenantModuleSettingsService.
     private IReadOnlyList<ModuleActivationRow>? _moduleRows;
+
+    // Sprint 56 / FU-cross-tenant-aggregation — audit-activity card state.
+    private TenantAuditActivity? _auditActivity;
+    private TenantAuditActivityRow? _auditDetail;
+    private TimeSpan _auditWindow = TimeSpan.FromHours(24);
+    private string _auditTypeFilter = string.Empty;
+    private bool _auditErrorsOnly;
+    private string? _auditError;
+    private const int AuditTakeRows = 50;
+    private readonly (TimeSpan Span, string Label)[] _auditWindowChoices = new[]
+    {
+        (TimeSpan.FromHours(24), "24h"),
+        (TimeSpan.FromDays(7), "7d"),
+        (TimeSpan.FromDays(30), "30d"),
+    };
     private string _moduleMessage = string.Empty;
 
     public sealed record ModuleActivationRow(
@@ -464,6 +614,46 @@ else
         };
         await ReloadExportsAsync();
         await ReloadModulesAsync();
+        await ReloadAuditAsync();
+    }
+
+    private async Task ReloadAuditAsync()
+    {
+        _auditError = null;
+        try
+        {
+            var filter = new TenantAuditActivityFilter(
+                EventTypeContains: string.IsNullOrWhiteSpace(_auditTypeFilter) ? null : _auditTypeFilter.Trim(),
+                ErrorsOnly: _auditErrorsOnly);
+            _auditActivity = await AuditActivity.GetTenantAuditActivityAsync(
+                TenantId, _auditWindow, AuditTakeRows, filter);
+        }
+        catch (Exception ex)
+        {
+            _auditError = $"{ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    private async Task SelectAuditWindowAsync(TimeSpan span)
+    {
+        _auditWindow = span;
+        await ReloadAuditAsync();
+    }
+
+    private async Task ToggleAuditErrorsOnlyAsync()
+    {
+        _auditErrorsOnly = !_auditErrorsOnly;
+        await ReloadAuditAsync();
+    }
+
+    private void OpenAuditDetail(TenantAuditActivityRow row)
+    {
+        _auditDetail = row;
+    }
+
+    private void CloseAuditDetail()
+    {
+        _auditDetail = null;
     }
 
     private async Task ReloadModulesAsync()
