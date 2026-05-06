@@ -1,21 +1,19 @@
-using System.Net.Http.Headers;
-using System.Text;
 using Microsoft.Extensions.Configuration;
-using NBomber.Contracts;
-using NBomber.CSharp;
-using NBomber.Http.CSharp;
+using NickERP.Perf.Tests.Runner;
+using NickERP.Perf.Tests.Runner.Http;
 using NickERP.Perf.Tests.Scenarios.Helpers;
 
 namespace NickERP.Perf.Tests.Scenarios;
 
 /// <summary>
 /// Sprint 55 — edge-replay scenario for the central-write hot path
-/// (<c>POST /api/edge/replay</c> per test-plan §2.1 EP-005). Replaces
-/// the Sprint 30 stub.
+/// (<c>POST /api/edge/replay</c> per test-plan §2.1 EP-005).
+/// Sprint 58 — ported from NBomber to the homegrown
+/// <see cref="NickPerfRunner"/>; behaviour unchanged.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Two NBomber scenarios.</b>
+/// <b>Two NickPerf scenarios.</b>
 /// <list type="bullet">
 ///   <item><see cref="Build"/> — steady-state replay at the per-edge
 ///         flush cadence. Profiles 1x/5x/10x per
@@ -67,11 +65,11 @@ public static class EdgeReplayScenario
     public const string EdgeHmacKeyEnvVar = "NICKERP_PERF_EDGE_HMAC_KEY";
 
     /// <summary>
-    /// Build the steady-state edge-replay NBomber scenario. Returns
+    /// Build the steady-state edge-replay NickPerf scenario. Returns
     /// null when scenario should skip (missing target / missing HMAC
     /// key).
     /// </summary>
-    public static ScenarioProps? Build(
+    public static NickPerfScenario? Build(
         IConfiguration config,
         LoadProfile profile,
         Action<string>? log = null)
@@ -86,7 +84,7 @@ public static class EdgeReplayScenario
         }
 
         var url = ResolveEndpointUrl(config);
-        var apiKey = ResolveEdgeHmacKey();
+        var apiKey = ResolveEdgeHmacKey()!;
         var (edgeNodeId, tenantId, meanEvents, maxEvents) = ResolveBatchConfig(config);
         var rng = ResolveRng(config);
         var rngLock = new object();
@@ -96,32 +94,33 @@ public static class EdgeReplayScenario
             Timeout = TimeSpan.FromMilliseconds(
                 config.GetSection("ScenarioDefaults:TimeoutMs").Get<int?>() ?? 5000)
         };
-        http.DefaultRequestHeaders.Add(ApiKeyHeader, apiKey);
+        // Pre-seed the API-key header on every request via PostJsonAsync's
+        // extra headers. We don't use DefaultRequestHeaders because the
+        // header has stricter validation rules under some hosts.
+        var extraHeaders = new Dictionary<string, string>
+        {
+            [ApiKeyHeader] = apiKey
+        };
 
         var duration = TimeSpan.FromSeconds(
             config.GetSection("EdgeReplay:DurationSeconds").Get<int?>() ?? 60);
 
-        var scenario = Scenario.Create(ScenarioName, async _ =>
+        return new NickPerfScenario
         {
-            string body;
-            lock (rngLock)
+            Name = ScenarioName,
+            LoadProfile = LoadSimulationFactory.BuildEdgeReplay(profile, duration),
+            RunStep = async ct =>
             {
-                body = EdgeReplayPayloadBuilder.BuildBatch(
-                    rng, edgeNodeId, tenantId, meanEvents, maxEvents);
+                string body;
+                lock (rngLock)
+                {
+                    body = EdgeReplayPayloadBuilder.BuildBatch(
+                        rng, edgeNodeId, tenantId, meanEvents, maxEvents);
+                }
+
+                return await NickPerfHttp.PostJsonAsync(http, url, body, extraHeaders, ct).ConfigureAwait(false);
             }
-
-            var request = Http.CreateRequest("POST", url)
-                .WithHeader("Accept", "application/json")
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(new StringContent(body, Encoding.UTF8, "application/json"));
-
-            var response = await Http.Send(http, request);
-            return response;
-        })
-        .WithoutWarmUp()
-        .WithLoadSimulations(LoadSimulationFactory.BuildEdgeReplay(profile, duration));
-
-        return scenario;
+        };
     }
 
     /// <summary>
@@ -129,7 +128,7 @@ public static class EdgeReplayScenario
     /// burst over a short duration to verify the central rate-limit
     /// holds (per Sprint 30 SEC-EDGE-7). Returns null on misconfigured.
     /// </summary>
-    public static ScenarioProps? BuildBacklog(
+    public static NickPerfScenario? BuildBacklog(
         IConfiguration config,
         Action<string>? log = null)
     {
@@ -143,7 +142,7 @@ public static class EdgeReplayScenario
         }
 
         var url = ResolveEndpointUrl(config);
-        var apiKey = ResolveEdgeHmacKey();
+        var apiKey = ResolveEdgeHmacKey()!;
         var (edgeNodeId, tenantId, meanEvents, maxEvents) = ResolveBatchConfig(config);
         var rng = ResolveRng(config);
         var rngLock = new object();
@@ -153,7 +152,10 @@ public static class EdgeReplayScenario
             Timeout = TimeSpan.FromMilliseconds(
                 config.GetSection("ScenarioDefaults:TimeoutMs").Get<int?>() ?? 5000)
         };
-        http.DefaultRequestHeaders.Add(ApiKeyHeader, apiKey);
+        var extraHeaders = new Dictionary<string, string>
+        {
+            [ApiKeyHeader] = apiKey
+        };
 
         // Simulate a 24h backlog: 24h × 60min × 2 flushes/min = 2880
         // batches typically queued, but cap at the configured size to
@@ -164,31 +166,25 @@ public static class EdgeReplayScenario
         var duration = TimeSpan.FromSeconds(
             config.GetSection("EdgeReplay:BacklogDurationSeconds").Get<int?>() ?? 60);
 
-        var scenario = Scenario.Create(BacklogScenarioName, async _ =>
+        return new NickPerfScenario
         {
-            string body;
-            lock (rngLock)
+            Name = BacklogScenarioName,
+            LoadProfile = LoadSimulationFactory.BuildEdgeBacklog(duration, batches),
+            RunStep = async ct =>
             {
-                // Backlog flushes typically max out the per-batch size
-                // (an offline edge has accumulated lots of events). Use
-                // maxEvents for the count to reflect that.
-                body = EdgeReplayPayloadBuilder.BuildBatch(
-                    rng, edgeNodeId, tenantId,
-                    meanEvents: maxEvents, maxEvents: maxEvents);
+                string body;
+                lock (rngLock)
+                {
+                    // Backlog flushes typically max out the per-batch size
+                    // (an offline edge has accumulated lots of events).
+                    body = EdgeReplayPayloadBuilder.BuildBatch(
+                        rng, edgeNodeId, tenantId,
+                        meanEvents: maxEvents, maxEvents: maxEvents);
+                }
+
+                return await NickPerfHttp.PostJsonAsync(http, url, body, extraHeaders, ct).ConfigureAwait(false);
             }
-
-            var request = Http.CreateRequest("POST", url)
-                .WithHeader("Accept", "application/json")
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(new StringContent(body, Encoding.UTF8, "application/json"));
-
-            var response = await Http.Send(http, request);
-            return response;
-        })
-        .WithoutWarmUp()
-        .WithLoadSimulations(LoadSimulationFactory.BuildEdgeBacklog(duration, batches));
-
-        return scenario;
+        };
     }
 
     /// <summary>
@@ -257,7 +253,7 @@ public static class EdgeReplayScenario
     }
 
     /// <summary>
-    /// Acceptance-gate check against an NBomber stats result. 1x is the
+    /// Acceptance-gate check against a NickPerf p99 result. 1x is the
     /// gate; 5x relaxes 50%; 10x is informative. Public for testability.
     /// </summary>
     public static int CheckAcceptanceGate(double p99Ms, LoadProfile profile, Action<string>? log = null)

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using NickERP.Perf.Tests.Runner;
 
 namespace NickERP.Perf.Tests.Scenarios.Helpers;
 
@@ -31,6 +32,7 @@ namespace NickERP.Perf.Tests.Scenarios.Helpers;
 ///   <item>EdgeReplayScenario.ShouldSkip for missing HMAC key.</item>
 ///   <item>EdgeReplayScenario URL composition (base + path).</item>
 ///   <item>Acceptance-gate boundary check (PASS / WARN / BLOCK regions).</item>
+///   <item>NickPerf runner: percentile math, scheduling, report formatting (Sprint 58).</item>
 /// </list>
 /// </remarks>
 public static class HelperUnitTests
@@ -64,6 +66,17 @@ public static class HelperUnitTests
         failures += Run(log, nameof(CaseCreate_AcceptanceGate_BlockRegion), CaseCreate_AcceptanceGate_BlockRegion);
         failures += Run(log, nameof(EdgeReplay_AcceptanceGate_BlockRegion), EdgeReplay_AcceptanceGate_BlockRegion);
         failures += Run(log, nameof(EdgeReplay_AcceptanceGate_Stress10x_AlwaysPass), EdgeReplay_AcceptanceGate_Stress10x_AlwaysPass);
+        // Sprint 58 — NickPerf runner internals.
+        failures += Run(log, nameof(NickPerf_Percentile_NearestRank), NickPerf_Percentile_NearestRank);
+        failures += Run(log, nameof(NickPerf_Percentile_EmptyArray), NickPerf_Percentile_EmptyArray);
+        failures += Run(log, nameof(NickPerf_Percentile_BoundaryClamp), NickPerf_Percentile_BoundaryClamp);
+        failures += Run(log, nameof(NickPerf_Stats_RecordsOkAndFailCounts), NickPerf_Stats_RecordsOkAndFailCounts);
+        failures += Run(log, nameof(NickPerf_Stats_ComputesElapsed), NickPerf_Stats_ComputesElapsed);
+        failures += Run(log, nameof(NickPerf_LoadProfile_TickDelay), NickPerf_LoadProfile_TickDelay);
+        failures += Run(log, nameof(NickPerf_Report_HasExpectedSections), NickPerf_Report_HasExpectedSections);
+        failures += Run(log, nameof(NickPerf_Runner_RunsToCompletion), NickPerf_Runner_RunsToCompletion);
+        failures += Run(log, nameof(NickPerf_Runner_RecordsFailuresFromExceptions), NickPerf_Runner_RecordsFailuresFromExceptions);
+        failures += Run(log, nameof(NickPerf_Runner_WritesReportFile), NickPerf_Runner_WritesReportFile);
 
         log($"selftest: {failures} failure(s).");
         return failures;
@@ -331,6 +344,216 @@ public static class HelperUnitTests
         var lines = new List<string>();
         var exit = Scenarios.EdgeReplayScenario.CheckAcceptanceGate(99_999.0, LoadProfile.Stress10x, lines.Add);
         if (exit != 0) throw new InvalidOperationException("10x stress should never BLOCK");
+    }
+
+    // ---------------------------------------------------------------- NickPerf runner (Sprint 58)
+
+    private static void NickPerf_Percentile_NearestRank()
+    {
+        // Sorted [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] — 10 samples.
+        // p50 nearest-rank = ceil(0.5 * 10) = 5 → index 4 → 50.
+        // p95 = ceil(0.95 * 10) = 10 → index 9 → 100.
+        // p99 = ceil(0.99 * 10) = 10 → index 9 → 100.
+        var arr = new double[] { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+        if (NickPerfStats.Percentile(arr, 50) != 50)
+            throw new InvalidOperationException($"p50 expected 50, got {NickPerfStats.Percentile(arr, 50)}");
+        if (NickPerfStats.Percentile(arr, 95) != 100)
+            throw new InvalidOperationException($"p95 expected 100, got {NickPerfStats.Percentile(arr, 95)}");
+        if (NickPerfStats.Percentile(arr, 99) != 100)
+            throw new InvalidOperationException($"p99 expected 100, got {NickPerfStats.Percentile(arr, 99)}");
+    }
+
+    private static void NickPerf_Percentile_EmptyArray()
+    {
+        var empty = Array.Empty<double>();
+        if (NickPerfStats.Percentile(empty, 50) != 0)
+            throw new InvalidOperationException("p50 of empty should be 0");
+        if (NickPerfStats.Percentile(empty, 99) != 0)
+            throw new InvalidOperationException("p99 of empty should be 0");
+    }
+
+    private static void NickPerf_Percentile_BoundaryClamp()
+    {
+        var arr = new double[] { 5, 10, 15 };
+        if (NickPerfStats.Percentile(arr, 0) != 5)
+            throw new InvalidOperationException("p0 should clamp to first element");
+        if (NickPerfStats.Percentile(arr, 100) != 15)
+            throw new InvalidOperationException("p100 should clamp to last element");
+        if (NickPerfStats.Percentile(arr, -10) != 5)
+            throw new InvalidOperationException("negative percentile should clamp to first");
+        if (NickPerfStats.Percentile(arr, 250) != 15)
+            throw new InvalidOperationException(">100 percentile should clamp to last");
+    }
+
+    private static void NickPerf_Stats_RecordsOkAndFailCounts()
+    {
+        var stats = new NickPerfStats();
+        var now = DateTime.UtcNow;
+        stats.Record(NickPerfStepResult.OkResult(), 100, now, now.AddMilliseconds(100));
+        stats.Record(NickPerfStepResult.OkResult(), 200, now.AddMilliseconds(50), now.AddMilliseconds(250));
+        stats.Record(NickPerfStepResult.Fail("test"), 5000, now.AddMilliseconds(100), now.AddMilliseconds(5100));
+        var snap = stats.Snapshot();
+        if (snap.ok != 2) throw new InvalidOperationException($"ok expected 2, got {snap.ok}");
+        if (snap.fail != 1) throw new InvalidOperationException($"fail expected 1, got {snap.fail}");
+        if (snap.Total != 3) throw new InvalidOperationException($"total expected 3, got {snap.Total}");
+        if (snap.min != 100) throw new InvalidOperationException($"min expected 100, got {snap.min}");
+        if (snap.max != 5000) throw new InvalidOperationException($"max expected 5000, got {snap.max}");
+    }
+
+    private static void NickPerf_Stats_ComputesElapsed()
+    {
+        var stats = new NickPerfStats();
+        var t0 = new DateTime(2026, 5, 6, 12, 0, 0, DateTimeKind.Utc);
+        stats.Record(NickPerfStepResult.OkResult(), 10, t0, t0.AddSeconds(1));
+        stats.Record(NickPerfStepResult.OkResult(), 10, t0.AddSeconds(2), t0.AddSeconds(3));
+        var snap = stats.Snapshot();
+        // Elapsed = 3s - 0s = 3s.
+        if (Math.Abs(snap.elapsed.TotalSeconds - 3.0) > 0.001)
+            throw new InvalidOperationException($"elapsed expected 3s, got {snap.elapsed.TotalSeconds}");
+        // RPS = 2 / 3.
+        if (Math.Abs(snap.Rps - (2.0 / 3.0)) > 0.001)
+            throw new InvalidOperationException($"RPS expected 0.667, got {snap.Rps}");
+    }
+
+    private static void NickPerf_LoadProfile_TickDelay()
+    {
+        // 21 calls / 60s = 60/21 ≈ 2.857 s per tick.
+        var profile = new NickPerfLoadProfile { Rate = 21, Interval = TimeSpan.FromMinutes(1), Duration = TimeSpan.FromSeconds(30) };
+        var expected = TimeSpan.FromTicks(TimeSpan.FromMinutes(1).Ticks / 21);
+        if (profile.TickDelay != expected)
+            throw new InvalidOperationException($"tick expected {expected}, got {profile.TickDelay}");
+
+        // Edge case: rate 0 → tick = full interval (avoids div-by-zero).
+        var zeroRate = new NickPerfLoadProfile { Rate = 0, Interval = TimeSpan.FromSeconds(5), Duration = TimeSpan.FromSeconds(10) };
+        if (zeroRate.TickDelay != TimeSpan.FromSeconds(5))
+            throw new InvalidOperationException($"rate=0 should fall back to interval, got {zeroRate.TickDelay}");
+    }
+
+    private static void NickPerf_Report_HasExpectedSections()
+    {
+        var snapshot = new NickPerfStatsSnapshot(
+            ok: 100, fail: 5,
+            p50: 50, p75: 100, p95: 200, p99: 500,
+            min: 10, max: 600, mean: 75,
+            elapsed: TimeSpan.FromSeconds(60));
+        var md = NickPerfReport.BuildMarkdown("nickerp-perf", "case-create", snapshot);
+        // Smoke-check that expected sections + values are present.
+        foreach (var marker in new[] {
+            "# NickPerf report",
+            "## Summary",
+            "## Latency (ms)",
+            "Throughput (RPS)",
+            "p99",
+            "case-create",
+            "nickerp-perf",
+            "100", // ok count
+            "500"  // p99 value
+        })
+        {
+            if (!md.Contains(marker))
+                throw new InvalidOperationException($"report missing marker '{marker}'");
+        }
+    }
+
+    private static void NickPerf_Runner_RunsToCompletion()
+    {
+        // Tiny rate, tiny duration — the runner should complete quickly
+        // and record the expected number of ok results.
+        var counter = 0;
+        var scenario = new NickPerfScenario
+        {
+            Name = "selftest-runs-to-completion",
+            LoadProfile = new NickPerfLoadProfile
+            {
+                Rate = 5,
+                Interval = TimeSpan.FromSeconds(1),
+                Duration = TimeSpan.FromMilliseconds(800)
+            },
+            RunStep = _ =>
+            {
+                Interlocked.Increment(ref counter);
+                return Task.FromResult(NickPerfStepResult.OkResult(200));
+            }
+        };
+
+        var folder = Path.Combine(Path.GetTempPath(), $"nickperf-selftest-{Guid.NewGuid():N}");
+        try
+        {
+            var snap = NickPerfRunner.RunAsync(scenario, folder, "selftest").GetAwaiter().GetResult();
+            // 5/sec × 0.8s ≈ 4 ticks. Allow [1..6] for scheduling jitter.
+            if (snap.ok < 1 || snap.ok > 6)
+                throw new InvalidOperationException($"unexpected ok count {snap.ok} (expected 1..6)");
+            if (snap.fail != 0)
+                throw new InvalidOperationException($"expected 0 fail, got {snap.fail}");
+            if (counter < 1)
+                throw new InvalidOperationException("step never ran");
+        }
+        finally
+        {
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    private static void NickPerf_Runner_RecordsFailuresFromExceptions()
+    {
+        // Step that throws should be recorded as fail with the
+        // exception class name in the reason.
+        var scenario = new NickPerfScenario
+        {
+            Name = "selftest-records-fail",
+            LoadProfile = new NickPerfLoadProfile
+            {
+                Rate = 5,
+                Interval = TimeSpan.FromSeconds(1),
+                Duration = TimeSpan.FromMilliseconds(600)
+            },
+            RunStep = _ => throw new InvalidOperationException("boom")
+        };
+
+        var folder = Path.Combine(Path.GetTempPath(), $"nickperf-selftest-{Guid.NewGuid():N}");
+        try
+        {
+            var snap = NickPerfRunner.RunAsync(scenario, folder, "selftest").GetAwaiter().GetResult();
+            if (snap.ok != 0) throw new InvalidOperationException($"expected 0 ok, got {snap.ok}");
+            if (snap.fail < 1) throw new InvalidOperationException($"expected ≥1 fail, got {snap.fail}");
+        }
+        finally
+        {
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    private static void NickPerf_Runner_WritesReportFile()
+    {
+        var scenario = new NickPerfScenario
+        {
+            Name = "selftest-writes-report",
+            LoadProfile = new NickPerfLoadProfile
+            {
+                Rate = 2,
+                Interval = TimeSpan.FromSeconds(1),
+                Duration = TimeSpan.FromMilliseconds(300)
+            },
+            RunStep = _ => Task.FromResult(NickPerfStepResult.OkResult(200))
+        };
+
+        var folder = Path.Combine(Path.GetTempPath(), $"nickperf-selftest-{Guid.NewGuid():N}");
+        try
+        {
+            _ = NickPerfRunner.RunAsync(scenario, folder, "selftest-test").GetAwaiter().GetResult();
+            var reportPath = Path.Combine(folder, "report.md");
+            if (!File.Exists(reportPath))
+                throw new InvalidOperationException($"report.md not written to {reportPath}");
+            var contents = File.ReadAllText(reportPath);
+            if (!contents.Contains("selftest-writes-report"))
+                throw new InvalidOperationException("report doesn't contain scenario name");
+            if (!contents.Contains("selftest-test"))
+                throw new InvalidOperationException("report doesn't contain test name");
+        }
+        finally
+        {
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); } catch { /* ignore */ }
+        }
     }
 
     // ---------------------------------------------------------------- Helpers

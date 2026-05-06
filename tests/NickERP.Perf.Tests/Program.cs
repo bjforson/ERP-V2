@@ -1,10 +1,17 @@
 using Microsoft.Extensions.Configuration;
-using NBomber.CSharp;
 using NickERP.Perf.Tests;
+using NickERP.Perf.Tests.Runner;
 using NickERP.Perf.Tests.Scenarios;
 
 // Sprint 55 — Phase V perf-test harness entry point. Replaces the
 // Sprint 30 stubs with live-running scenarios.
+//
+// Sprint 58 — replaced NBomber 6.1.0 (commercial subscription) with the
+// homegrown NickPerf in-tree runner under Runner/. Behaviour unchanged;
+// scenarios still skip-on-misconfigured, still write per-scenario
+// markdown reports, still expose the same exit-code contract. Adapter
+// types (NickPerfScenario, NickPerfRunner, NickPerfStats, NickPerfReport)
+// are vendor-neutral and have NO non-allowlisted dependencies.
 //
 // Usage:
 //   dotnet run --project tests/NickERP.Perf.Tests -- <scenario> [--profile 1x|5x|10x]
@@ -14,7 +21,7 @@ using NickERP.Perf.Tests.Scenarios;
 //   * case-create         POST /api/inspection/cases (replaces Sprint 30 stub)
 //   * edge-replay         POST /api/edge/replay (replaces Sprint 30 stub)
 //   * edge-replay-backlog 24h backlog reconnect — verifies SEC-EDGE-7 rate limit
-//   * selftest            unit tests for scenario helpers (Sprint 55)
+//   * selftest            unit tests for runner + scenario helpers (Sprint 55 / 58)
 //
 // Skip-on-misconfigured behaviour:
 //   * Each live scenario inspects required config (target URL, auth token,
@@ -75,14 +82,13 @@ static int RunHealthScenario(IConfiguration config, LoadProfile profile)
 {
     var scenario = HealthEndpointScenario.Build(config, profile);
 
-    var stats = NBomberRunner
-        .RegisterScenarios(scenario)
-        .WithTestSuite("nickerp-perf")
-        .WithTestName("health")
-        .WithReportFolder(GetReportFolder("health"))
-        .Run();
+    var snapshot = NickPerfRunner.RunAsync(
+        scenario,
+        GetReportFolder("health"),
+        "health")
+        .GetAwaiter().GetResult();
 
-    return stats.AllFailCount == 0 ? 0 : 1;
+    return snapshot.fail == 0 ? 0 : 1;
 }
 
 static int RunCaseCreateScenario(IConfiguration config, LoadProfile profile)
@@ -94,30 +100,25 @@ static int RunCaseCreateScenario(IConfiguration config, LoadProfile profile)
         return 0;
     }
 
-    var stats = NBomberRunner
-        .RegisterScenarios(scenario)
-        .WithTestSuite("nickerp-perf")
-        .WithTestName("case-create")
-        .WithReportFolder(GetReportFolder("case-create"))
-        .Run();
+    var snapshot = NickPerfRunner.RunAsync(
+        scenario,
+        GetReportFolder("case-create"),
+        "case-create")
+        .GetAwaiter().GetResult();
 
-    if (stats.AllOkCount == 0)
+    if (snapshot.ok == 0)
     {
-        Console.WriteLine($"case-create: FAIL — 0 successful requests (all={stats.AllFailCount} failed). " +
+        Console.WriteLine($"case-create: FAIL — 0 successful requests (all={snapshot.fail} failed). " +
                           "Target unreachable or returning errors. p99 acceptance gate cannot be evaluated.");
         return 1;
     }
-    var p99 = ExtractP99Ms(stats, CaseCreateScenario.ScenarioName);
-    var gateExit = CaseCreateScenario.CheckAcceptanceGate(p99, profile);
-    return gateExit != 0 || stats.AllFailCount > stats.AllOkCount ? 1 : 0;
+    var gateExit = CaseCreateScenario.CheckAcceptanceGate(snapshot.p99, profile);
+    return gateExit != 0 || snapshot.fail > snapshot.ok ? 1 : 0;
 }
 
 static int RunEdgeReplayScenario(IConfiguration config, LoadProfile profile)
 {
-    // Phase B — implementation lands in EdgeReplayScenario.cs.
-    // The dispatcher routes here; the scenario's own ShouldSkip logic
-    // gates at-run.
-    return EdgeReplayScenarioRunner.Run(config, profile, GetReportFolder, ExtractP99Ms);
+    return EdgeReplayScenarioRunner.Run(config, profile, GetReportFolder);
 }
 
 static int RunEdgeReplayBacklogScenario(IConfiguration config)
@@ -134,10 +135,12 @@ static int UnknownScenario(string name)
 
 static int RunSelfTest()
 {
-    // Sprint 55 — light unit tests for the scenario helpers. Doesn't
-    // need NBomber to run; just verifies the building blocks. Exits
-    // non-zero if any assertion fails.
-    Console.WriteLine("selftest: running scenario-helper unit tests...");
+    // Sprint 55 — light unit tests for the scenario helpers. Sprint 58 —
+    // expanded to cover NickPerf runner internals (rate scheduling,
+    // stats percentiles, report formatting). Doesn't need the runner to
+    // run; just verifies the building blocks. Exits non-zero if any
+    // assertion fails.
+    Console.WriteLine("selftest: running scenario-helper + runner unit tests...");
     return NickERP.Perf.Tests.Scenarios.Helpers.HelperUnitTests.RunAll() == 0 ? 0 : 1;
 }
 
@@ -147,20 +150,4 @@ static string GetReportFolder(string scenarioName)
     var path = Path.Combine(AppContext.BaseDirectory, "reports", date, scenarioName);
     Directory.CreateDirectory(path);
     return path;
-}
-
-// Pull the p99 from NBomber's stats. The ScenarioStats type exposes
-// Ok.Latency.Percent99 in milliseconds. When the scenario produced no
-// successful requests we report +inf so the gate fails loudly.
-static double ExtractP99Ms(NBomber.Contracts.Stats.NodeStats stats, string scenarioName)
-{
-    foreach (var s in stats.ScenarioStats)
-    {
-        if (string.Equals(s.ScenarioName, scenarioName, StringComparison.Ordinal))
-        {
-            // Latency is reported in ms.
-            return s.Ok.Latency.Percent99;
-        }
-    }
-    return double.PositiveInfinity;
 }

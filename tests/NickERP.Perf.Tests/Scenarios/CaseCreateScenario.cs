@@ -1,11 +1,8 @@
-using System.Net;
 using System.Net.Http.Headers;
-using System.Text;
 using Microsoft.Extensions.Configuration;
-using NBomber.Contracts;
-using NBomber.CSharp;
-using NBomber.Http.CSharp;
 using NickERP.Perf.Tests.Auth;
+using NickERP.Perf.Tests.Runner;
+using NickERP.Perf.Tests.Runner.Http;
 using NickERP.Perf.Tests.Scenarios.Helpers;
 
 namespace NickERP.Perf.Tests.Scenarios;
@@ -13,7 +10,8 @@ namespace NickERP.Perf.Tests.Scenarios;
 /// <summary>
 /// Sprint 55 — case-create scenario for the inspection module's hot path
 /// (<c>POST /api/inspection/cases</c> per test-plan §2.1 EP-001).
-/// Replaces the Sprint 30 stub.
+/// Sprint 58 — ported from NBomber to the homegrown
+/// <see cref="NickPerfRunner"/>; behaviour unchanged.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -59,11 +57,11 @@ public static class CaseCreateScenario
     public const string RealBearerTokenEnvVar = "NICKERP_PERF_BEARER_TOKEN";
 
     /// <summary>
-    /// Build the NBomber scenario. Returns null if the scenario should
+    /// Build the NickPerf scenario. Returns null if the scenario should
     /// be skipped (missing target or no auth seam configured); the
     /// dispatcher logs + exits 0 in that case.
     /// </summary>
-    public static ScenarioProps? Build(
+    public static NickPerfScenario? Build(
         IConfiguration config,
         LoadProfile profile,
         Action<string>? log = null)
@@ -91,10 +89,10 @@ public static class CaseCreateScenario
             return null;
         }
 
-        // Reuse one HttpClient + one RNG across the scenario. NBomber
-        // dispatches the step concurrently per virtual user; both are
-        // safe for Read (HttpClient is thread-safe; we lock around the
-        // RNG below to keep payload generation deterministic).
+        // Reuse one HttpClient across the scenario. The runner dispatches
+        // steps concurrently per MaxConcurrent; HttpClient is thread-safe
+        // for SendAsync. Lock around the RNG to keep payload generation
+        // deterministic when seeded.
         var http = new HttpClient
         {
             Timeout = TimeSpan.FromMilliseconds(config.GetSection("ScenarioDefaults:TimeoutMs").Get<int?>() ?? 5000)
@@ -114,26 +112,21 @@ public static class CaseCreateScenario
         var duration = TimeSpan.FromSeconds(
             config.GetSection("CaseCreate:DurationSeconds").Get<int?>() ?? 60);
 
-        var scenario = Scenario.Create(ScenarioName, async _ =>
+        return new NickPerfScenario
         {
-            string body;
-            lock (rngLock)
+            Name = ScenarioName,
+            LoadProfile = LoadSimulationFactory.BuildCaseCreate(profile, duration),
+            RunStep = async ct =>
             {
-                body = CaseCreatePayloadBuilder.Build(rng, locationId, analysisServiceCode);
+                string body;
+                lock (rngLock)
+                {
+                    body = CaseCreatePayloadBuilder.Build(rng, locationId, analysisServiceCode);
+                }
+
+                return await NickPerfHttp.PostJsonAsync(http, url, body, ct: ct).ConfigureAwait(false);
             }
-
-            var request = Http.CreateRequest("POST", url)
-                .WithHeader("Accept", "application/json")
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(new StringContent(body, Encoding.UTF8, "application/json"));
-
-            var response = await Http.Send(http, request);
-            return response;
-        })
-        .WithoutWarmUp()
-        .WithLoadSimulations(LoadSimulationFactory.BuildCaseCreate(profile, duration));
-
-        return scenario;
+        };
     }
 
     /// <summary>
@@ -183,12 +176,9 @@ public static class CaseCreateScenario
         if (string.IsNullOrWhiteSpace(subject)) return null;
         var tenantId = long.TryParse(tenantIdRaw, out var t) ? t : 1L;
 
-        // Per-run signing key. Disposed alongside the process (the
-        // handler is held alive by the closure on the returned token,
-        // but its RSA key gets garbage-collected when the process
-        // exits). For a multi-scenario run we want one handler per
-        // process so the per-API JWKS endpoint can validate every
-        // scenario's tokens against the same kid.
+        // Per-run signing key. Disposed alongside the process. Use one
+        // handler per process so the per-API JWKS endpoint can validate
+        // every scenario's tokens against the same kid.
         var handler = MockJwtBearerHandlerSingleton.Instance;
         return handler.ProduceBearerToken(subject, email, tenantId);
     }
@@ -221,7 +211,7 @@ public static class CaseCreateScenario
     }
 
     /// <summary>
-    /// Acceptance-gate check against an NBomber stats result. Returns
+    /// Acceptance-gate check against a NickPerf p99 result. Returns
     /// non-zero if the p99 exceeds <see cref="Pilot1xP99BlockMs"/> or any
     /// other BLOCK criterion fails. Public for testability.
     /// </summary>
