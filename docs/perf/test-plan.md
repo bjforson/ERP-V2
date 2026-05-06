@@ -215,10 +215,109 @@ The summary feeds back into the security audit — `SEC-DB-9 Connection pool tun
 
 ## 11. Open questions (deferred to Phase V kickoff)
 
-- **Auth latency in tests.** CF Access JWT-validate path adds ~10-50ms per request; do we mock this in load tests, or hit real CF? **Decided 2026-05-05 (Sprint 52 / FU-perf-auth-mocking-decision):** mock JWKS validation for rep-volume tests + spot-check with real auth at 1/10 the rate.
-   - **Mock path:** `tests/NickERP.Perf.Tests/Auth/MockJwtBearerHandler.cs` produces signed-but-CF-Access-shaped JWTs against a per-run RSA-2048 key pair. The matching API-side JWKS-mock is a Phase V follow-up; the seam is wired via `MockJwksEndpoint`.
-   - **Real path (spot-check):** when `NICKERP_PERF_BEARER_TOKEN` env var is set, scenarios use that token verbatim against the real CF Access JWKS path. Operator obtains the token via an out-of-band CF Access login.
+- **Auth latency in tests.** CF Access JWT-validate path adds ~10-50ms per request; do we mock this in load tests, or hit real CF? **RESOLVED — Sprint 52 + Sprint 55:** mock JWKS validation for rep-volume tests + spot-check with real auth at 1/10 the rate. Wiring is shipped + live.
+   - **Mock path:** `tests/NickERP.Perf.Tests/Auth/MockJwtBearerHandler.cs` produces signed-but-CF-Access-shaped JWTs against a per-run RSA-2048 key pair. Sprint 55 added `tests/NickERP.Perf.Tests/Auth/MockJwtBearerHandlerSingleton.cs` so both `CaseCreateScenario` and `EdgeReplayScenario` share a single `kid` per process; the matching API-side JWKS-mock is a Phase V kickoff prerequisite (see baseline-2026-05-06.md).
+   - **Real path (spot-check):** when `NICKERP_PERF_BEARER_TOKEN` env var is set, scenarios use that token verbatim against the real CF Access JWKS path. Operator obtains the token via an out-of-band CF Access login. The `CaseCreateScenario.ResolveBearerToken` resolver picks env var first, falls back to mock signer.
    - **Decision rationale:** real JWKS validation in NBomber against pilot RPS bombards CF Access's edge, which (a) breaks the SLA we trust them to maintain and (b) doesn't measure pilot reality (CF Access caches public keys; the second token validates against the cache). Mock-rep-volume + real-spot-check captures both shapes without the cost.
    - **Production path is unchanged:** the API host always validates real CF Access JWTs in production; the mock path only exists for the perf rig.
+   - **See also:** §12 below for the day-1 operator playbook.
 - **Image-volume realism.** Pilot scanners produce ~50-200MB per case; do we run perf with real scan artifacts (slower, more realistic) or synthetic placeholders (faster, less realistic)? Recommend hybrid: synthetic for hot-path RPS measurement; real for image-gallery latency.
 - **Tenant data shape.** Need realistic row counts in `audit.events`, `inspection.cases`, etc. before perf testing. **Decided 2026-05-05 (Sprint 52 / FU-perf-tenant-data-shape):** `tools/perf-seed/` console seeds N tenants × M cases each with the brief's distribution (10% open / 70% closed / 10% verdict-rendered / 10% submitted). All seeded rows carry `IsSynthetic = true` so the pilot probe `gate.analyst.decisioned_real_case` ignores them.
+
+---
+
+## 12. Operator playbook
+
+Sprint 55 made the harness runnable end-to-end. This section is the day-1 reference for operators executing scenarios locally / against staging / against pilot.
+
+### 12.1 Prerequisites
+
+- .NET 10 SDK installed.
+- Built artifact: `dotnet build tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj -c Release`.
+- Target host running and reachable. Default targets:
+  - Portal at `http://localhost:5400` (Razor analyst UI + `/api/inspection/cases` once it lands).
+  - Inspection.Web at `http://localhost:5410` (`/api/edge/replay`).
+
+### 12.2 Run scenarios
+
+Smoke (always works against any portal):
+
+```powershell
+dotnet run --project tests/NickERP.Perf.Tests -c Release -- health
+dotnet run --project tests/NickERP.Perf.Tests -c Release -- health --profile 5x
+```
+
+Case-create:
+
+```powershell
+# Real CF Access spot-check path (preferred for ad-hoc auth-correctness checks):
+$env:NICKERP_PERF_BEARER_TOKEN = "<real-CF-Access-token-from-out-of-band-login>"
+dotnet run --project tests/NickERP.Perf.Tests -c Release -- case-create
+
+# Mock-JWT rep-volume path (preferred for hot-path RPS):
+Remove-Item Env:\NICKERP_PERF_BEARER_TOKEN -ErrorAction SilentlyContinue
+dotnet run --project tests/NickERP.Perf.Tests -c Release -- case-create --profile 5x
+```
+
+Edge-replay (steady) + backlog reconnect:
+
+```powershell
+$env:NICKERP_PERF_EDGE_HMAC_KEY = "<per-edge-key-issued-by-admin-flow>"
+dotnet run --project tests/NickERP.Perf.Tests -c Release -- edge-replay
+dotnet run --project tests/NickERP.Perf.Tests -c Release -- edge-replay-backlog
+```
+
+### 12.3 Run against staging / pilot
+
+Override the target via env var (the `NICKERP_PERF_` prefix is stripped by `IConfiguration` and double-underscore separates nested keys):
+
+```powershell
+$env:NICKERP_PERF_TargetBaseUrl = "https://staging.example.com"
+$env:NICKERP_PERF_Endpoints__InspectionWebBaseUrl = "https://api.staging.example.com"
+dotnet run --project tests/NickERP.Perf.Tests -c Release -- case-create --profile 1x
+```
+
+Per-scenario overrides (granular):
+
+```powershell
+$env:NICKERP_PERF_CaseCreate__TargetBaseUrl = "https://api.staging.example.com"
+$env:NICKERP_PERF_EdgeReplay__TargetBaseUrl = "https://api.staging.example.com"
+$env:NICKERP_PERF_EdgeReplay__EdgeNodeId = "edge-takoradi-01"
+$env:NICKERP_PERF_EdgeReplay__TenantId = "42"
+```
+
+### 12.4 Skip-on-misconfigured behaviour
+
+Each live scenario inspects required config + auth and gracefully exits 0 if missing. CI green-on-noop is the design — no broken pipelines from environments that don't have the perf rig wired:
+
+| Scenario | Skip trigger | Exit code | Log line |
+| --- | --- | --- | --- |
+| `case-create` | no target URL OR no bearer source | 0 | `case-create: skipping — <reason>` |
+| `edge-replay` | no target URL OR `NICKERP_PERF_EDGE_HMAC_KEY` unset | 0 | `edge-replay: skipping — <reason>` |
+| `edge-replay-backlog` | same as `edge-replay` | 0 | `edge-replay-backlog: skipping — <reason>` |
+
+### 12.5 Acceptance gates
+
+Each scenario's `CheckAcceptanceGate` method asserts p99 latency against the §3.1 thresholds. If a scenario completes with `0 OK` requests, the dispatcher fails (the gate cannot evaluate). The exit code maps:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Scenario passed (or skipped on missing config). |
+| 1 | Acceptance gate breached, OR all requests failed, OR unknown scenario name. |
+| 2 | FATAL — uncaught exception. |
+
+CI hooks `dotnet run … --` and uses the exit code as the deploy gate. The HTML/markdown reports under `tests/NickERP.Perf.Tests/bin/<config>/<tfm>/reports/<date>/<scenario>/` capture the detail.
+
+### 12.6 Reading reports
+
+NBomber writes per-scenario report bundles. The relevant artefacts:
+
+- `report.html` — interactive scenario stats with charts.
+- `report.md` — markdown summary.
+- `report.txt` — plain text.
+
+The Phase V auditor copies the relevant runs into `docs/perf/runs/{date}-{site}/` for the audit trail (post-pilot pattern).
+
+### 12.7 First-run baseline
+
+See `docs/perf/baseline-2026-05-06.md` for the Sprint 55 first-baseline against the dev portal — it captures what's deferred to Phase V kickoff (mostly endpoint exposure + host orchestration), and the expected first-real-baseline shape once those prerequisites land.

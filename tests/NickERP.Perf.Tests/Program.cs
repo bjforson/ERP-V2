@@ -14,6 +14,7 @@ using NickERP.Perf.Tests.Scenarios;
 //   * case-create         POST /api/inspection/cases (replaces Sprint 30 stub)
 //   * edge-replay         POST /api/edge/replay (replaces Sprint 30 stub)
 //   * edge-replay-backlog 24h backlog reconnect — verifies SEC-EDGE-7 rate limit
+//   * selftest            unit tests for scenario helpers (Sprint 55)
 //
 // Skip-on-misconfigured behaviour:
 //   * Each live scenario inspects required config (target URL, auth token,
@@ -41,6 +42,7 @@ try
         "case-create" => RunCaseCreateScenario(config, profile),
         "edge-replay" => RunEdgeReplayScenario(config, profile),
         "edge-replay-backlog" => RunEdgeReplayBacklogScenario(config),
+        "selftest" => RunSelfTest(),
         _ => UnknownScenario(scenarioName),
     };
 }
@@ -126,8 +128,17 @@ static int RunEdgeReplayBacklogScenario(IConfiguration config)
 static int UnknownScenario(string name)
 {
     Console.Error.WriteLine(
-        $"Unknown scenario '{name}'. Available: health, case-create, edge-replay, edge-replay-backlog");
+        $"Unknown scenario '{name}'. Available: health, case-create, edge-replay, edge-replay-backlog, selftest");
     return 1;
+}
+
+static int RunSelfTest()
+{
+    // Sprint 55 — light unit tests for the scenario helpers. Doesn't
+    // need NBomber to run; just verifies the building blocks. Exits
+    // non-zero if any assertion fails.
+    Console.WriteLine("selftest: running scenario-helper unit tests...");
+    return NickERP.Perf.Tests.Scenarios.Helpers.HelperUnitTests.RunAll() == 0 ? 0 : 1;
 }
 
 static string GetReportFolder(string scenarioName)
