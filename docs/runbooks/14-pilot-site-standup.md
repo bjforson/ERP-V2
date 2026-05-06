@@ -846,4 +846,612 @@ diagnosis.
 
 ---
 
-(§§8-12 follow in the next phase of this document.)
+## 8. First-pass smoke
+
+Tenant + scanner + edge node are wired. Now drive a synthetic
+case end-to-end so the operator (and the customs operator) can
+**see** the system working before any real customs case touches
+it. The smoke is also the first non-trivial input that the §9
+gates will observe — they will mostly remain "Not yet observed"
+until §11 exposes the system to real traffic, but smoke gives the
+operator a positive signal that the wiring is correct.
+
+### 8.1 The synthetic-scan trigger
+
+For each registered scanner, trigger a synthetic scan. There are
+two paths:
+
+- **At-the-scanner trigger.** The customs operator places a known-
+  empty container under the scanner; the scanner produces a real
+  scan with no anomalies. Best fidelity; depends on physical
+  scanner availability.
+- **Mock-shape trigger.** The v2 dev team (or the operator)
+  triggers the adapter through a small admin endpoint that calls
+  `IScannerAdapter.Capture` with a synthetic payload. Captured
+  cases carry `IsSynthetic = true` so the §9 gates correctly do
+  **not** count them toward the "real case decisioned" gate.
+
+Either trigger must produce, at minimum:
+
+- A `ScanArtifact` row in `inspection.scan_artifacts`.
+- A `nickerp.inspection.scan_recorded` audit row.
+
+Verification:
+
+```bash
+psql -U nscim_app -d nickerp_inspection -c "
+  SELECT \"ScannerInstanceId\", \"ArtifactKind\", \"CreatedAt\"
+  FROM inspection.scan_artifacts
+  WHERE \"TenantId\" = <pilot-tenant-id>
+  ORDER BY \"CreatedAt\" DESC LIMIT 5;"
+```
+
+### 8.2 Edge round-trip verification
+
+For the edge round-trip, confirm the audit trail captured both
+ends — capture at the edge, replay at central:
+
+```bash
+# The edge buffer drained to central — the audit row carries
+# replay_source = "edge" in its payload.
+psql -U nscim_app -d nickerp_platform -c "
+  SELECT \"OccurredAt\", \"EventType\", \"Payload\"->>'replay_source' AS source
+  FROM audit.events
+  WHERE \"TenantId\" = <pilot-tenant-id>
+    AND \"EventType\" = 'inspection.scan.captured'
+  ORDER BY \"OccurredAt\" DESC LIMIT 5;"
+# Expected: at least one row with source = 'edge'.
+```
+
+If the row has `replay_source IS NULL` or the row is missing
+entirely, the edge → central round-trip didn't fire. Walk
+[`06-edge-node-stalled.md`](06-edge-node-stalled.md) before
+proceeding; smoke fails this step until the round-trip works.
+
+### 8.3 Analyst inbox visibility
+
+The customs operator (logged in as the tenant admin from §6.3)
+visits the analyst review queue (`/reviews/queue`) and confirms
+the synthetic scan appears as a case in the inbox. The case
+detail page (`/cases/{id}`) opens cleanly and shows the captured
+artifact.
+
+This step verifies the **end-user surface** works — analysts can
+*find* the cases the system created. v1 retrospectives flag this
+specifically because cases were sometimes correctly captured but
+hidden from analysts due to AnalysisService routing
+mis-configuration.
+
+### 8.4 Audit trail completeness
+
+For each smoke event, walk the `/audit-log` page (or the
+`audit.events` table) and confirm each step in the chain produced
+an audit row:
+
+| Step | Audit event |
+|---|---|
+| Scanner captures | `nickerp.inspection.scan_recorded` |
+| Edge replays | `inspection.scan.captured` (with `replay_source = 'edge'`) |
+| Case created | `nickerp.inspection.case_created` |
+| Analyst opens case | `nickerp.inspection.case_viewed` |
+| Analyst saves a finding | `nickerp.inspection.finding_saved` |
+| Analyst issues verdict | `nickerp.inspection.verdict_set` |
+
+Six audit rows per case. Missing rows mean the audit pipeline has
+a gap — investigate via the `SourceContext` filter in Seq for the
+component whose row is missing.
+
+### 8.5 Synthetic-case verdict
+
+The customs operator decisions the synthetic case (e.g. "no
+anomaly found"). The case row gets `IsSynthetic = true`; the
+verdict-set audit row carries the same flag. Gate 3 (analyst
+decisioned a non-synthetic case) does **not** flip on a synthetic
+case — that's by design.
+
+### 8.6 Exit criteria for §8
+
+Before §9, every line below must be true:
+
+- ☐ Each registered scanner produced at least one synthetic
+  capture, end-to-end through edge → central → analyst → verdict.
+- ☐ Each scanner's `ScanArtifact` row count > 0.
+- ☐ Edge audit chain is complete (six rows per case).
+- ☐ Customs operator confirms the case appears in their analyst
+  inbox.
+- ☐ Customs operator can decision the case.
+
+If any line is open, **stop**. Smoke is a hard gate before §9 —
+the readiness gates are designed for live traffic; running them
+against an unsmoke-able system surfaces the wrong "what's needed"
+guidance.
+
+---
+
+## 9. Pilot-readiness gate execution
+
+§8 confirmed the wiring is correct on synthetic cases. §9 walks
+the operator through the runtime gates, defined in
+`platform/NickERP.Platform.Tenancy/Pilot/PilotReadinessGate.cs`
+and surfaced at `/admin/pilot-readiness`. The dashboard auto-
+refreshes every 30 s; the goal is to drive each gate from "Not
+yet observed" → Pass.
+
+### 9.1 The dashboard
+
+Sign in as the platform admin and visit `/admin/pilot-readiness`.
+The dashboard renders one card per gate, plus three sub-pills
+under the multi-tenant invariant gate (`rls_read_isolation` +
+`system_context_register` + `cross_tenant_export_gate`).
+
+Each card surfaces:
+
+- The gate's friendly name + technical ID.
+- Its current state — `Pass` (green) / `Fail` (red) / `Not yet
+  observed` (amber).
+- A "proof event" link if Pass — clicking opens the audit log
+  filtered to the qualifying event.
+- A "what's needed" note if `Not yet observed` — the operator's
+  prompt for what to drive next.
+
+The dashboard never crashes if an internal probe dies; failures
+surface as `Fail` with the reason in the note.
+
+### 9.2 What each gate measures + how to drive it
+
+#### `gate.scanner.adapter` — Scanner adapter wired
+
+**What it measures:** at least one scanner has produced a
+`nickerp.inspection.scan_recorded` audit event for the tenant.
+The plugin loaded (the adapter ran the scan).
+
+**Driver:** §7 + §8.1 already drove this. After the first
+synthetic scan lands, the gate flips to Pass within 30 s.
+
+**If still Not yet observed after smoke:** the audit event isn't
+firing — check the scanner adapter's log for swallowed exceptions.
+Most likely cause: the plugin loaded but the per-scan write to
+`audit.events` is failing on a missing column / RLS violation.
+
+#### `gate.edge.roundtrip` — Edge round-trip
+
+**What it measures:** an `inspection.scan.captured` audit event
+exists with `Payload->>'replay_source' = 'edge'`. The edge node
+replayed at least one event.
+
+**Driver:** §8.2 already drove this. After smoke, the gate flips
+to Pass.
+
+**If still Not yet observed after smoke:** edge → central
+replay isn't running. Walk
+[`06-edge-node-stalled.md`](06-edge-node-stalled.md).
+
+#### `gate.analyst.decisioned_real_case` — Analyst decisioned a real case
+
+**What it measures:** a `nickerp.inspection.verdict_set` audit
+event for a case where `inspection.cases.IsSynthetic = false`.
+
+**Driver:** **A real case must flow through the system.** This
+gate is the one that defines "the pilot has actually started" —
+synthetic smoke does NOT flip it. The driver is §11 (real-traffic
+cutover): the customs operator decisions a real case from the
+customs pipeline.
+
+**If still Not yet observed during §11:** real cases aren't
+reaching the analyst inbox. Possible causes: feature-flag rollout
+hasn't been advanced; AnalysisService routing has zero analysts;
+the real customs feed isn't producing scans (network / scanner
+hardware fault).
+
+#### `gate.external_system.roundtrip` — External system round-trip
+
+**What it measures:** an `inspection.OutboundSubmission` row
+exists with `Status = 'accepted'` and `LastAttemptAt IS NOT NULL`.
+Some external system (the per-site authority's submission API)
+accepted a submission.
+
+**Driver:** depends on the external system in scope at the pilot
+site. The submission worker dispatches outbound submissions per
+[`05-icums-outbox-backlog.md`](05-icums-outbox-backlog.md). After
+the first real case is decisioned (gate 3), the system attempts
+submission to the external authority; on the first acceptance,
+the gate flips.
+
+**If still Not yet observed during §11:** the outbound dispatcher
+is failing. Check `inspection.outbound_submissions` for rows in
+`Status = 'failed'` and walk `OutboundSubmissionDispatchWorker`'s
+log for the underlying exception.
+
+#### `gate.multi_tenant.invariants` — Multi-tenant invariants
+
+**What it measures:** the **active** probe. Three sub-checks,
+each must Pass for the gate to Pass:
+
+1. `rls_read_isolation` — the probe attempts a cross-tenant read
+   under tenant A's context for tenant B's rows; RLS must reject.
+   If this sub-check fails, **stop** — RLS has regressed and the
+   pilot cannot proceed.
+2. `system_context_register` — the probe scans every
+   `SetSystemContext` caller in code against the
+   `docs/system-context-audit-register.md` list. New unregistered
+   callers fail this sub-check.
+3. `cross_tenant_export_gate` — the probe attempts to download
+   tenant A's export under tenant B's identity; the API must
+   reject.
+
+**Driver:** Pass on first refresh of a healthy system. The probe
+runs every refresh + every 60 s background tick; if any sub-check
+flips Fail, that's a P0 incident.
+
+**If Fail:** the dashboard's note shows which sub-check failed.
+Route the failure:
+
+- `rls_read_isolation:fail` → tenant RLS regression, P0. Re-run
+  the verification from
+  [`02-secret-rotation.md`](02-secret-rotation.md) §5.6 ("restore
+  minimal-privilege state").
+- `system_context_register:fail` → new code lands a
+  `SetSystemContext` caller that isn't registered. P0. The fix is
+  in code (add the register entry), not in ops; escalate to the
+  v2 dev team.
+- `cross_tenant_export_gate:fail` → SEC-TENANT-9 regression. P0.
+
+### 9.3 The §9 → §10 handoff
+
+§9's gates 1, 2, 5 should Pass after smoke. Gates 3 + 4 stay
+"Not yet observed" until §11 introduces real traffic — that's by
+design. Do **not** wait for gates 3 + 4 before §10 — Phase V
+runs against the smoke-validated system, not against live customs
+traffic.
+
+If any gate is Fail at the §9 → §10 handoff, fix it before §10.
+Phase V on a system with a known gate failure is wasted Phase V
+cost.
+
+---
+
+## 10. Phase V execution
+
+The system is wired, smoke passes, and gates 1/2/5 are Pass. Now
+run Phase V — the operator-facing security audit + the perf load
+test — against the pilot-shaped system. Both must pass acceptance
+gates per their checklists before §11 (real-traffic cutover) is
+allowed.
+
+### 10.1 Phase V security audit
+
+The auditor (a v2 dev team member who has not implemented the
+code under review) copies
+[`../security/audit-checklist-2026.md`](../security/audit-checklist-2026.md)
+to a per-pilot file `audit-{site}-{date}.md`, walks every SEC-*
+item, and ticks each as Pass / Fail. Failures get an `AUD-{n}`
+finding ID with severity (P0 BLOCK pilot / P1 fix-before-launch
+/ P2 fix-by-launch+1mo / P3 backlog).
+
+Per the audit checklist's "Phase V exit criteria" section, the
+audit is **complete** when:
+
+- All P0 items pass.
+- All P1 items either pass OR have a documented fix-before-launch
+  ticket.
+- P2 + P3 items have backlog tickets.
+- The `system-context-audit-register.md` is reviewed +
+  countersigned by a second engineer.
+- The pilot site's edge keys are issued + tested (already done in
+  §7.4).
+- Backup + restore drill executed once on the pilot's data shape
+  (see §10.3 below).
+
+When all five lines are checked, Phase V security is complete.
+The auditor's per-pilot file is committed to the pilot
+documentation repository (a `pilots/{site}/audit-{date}.md` path
+or equivalent).
+
+### 10.2 Phase V perf load test
+
+The operator runs the load tests defined in
+[`../perf/test-plan.md`](../perf/test-plan.md) against the pilot
+infrastructure. The harness is `tests/NickERP.Perf.Tests/` (Sprint
+30 + Sprint 55 scaffolding); the runbook lives in the perf plan
+itself.
+
+The tests run at three scales per the plan's "headroom multipliers"
+section:
+
+- **1x** — pilot peak — must pass acceptance gates.
+- **5x** — Tema-shaped projection — should pass with degraded but
+  acceptable latency.
+- **10x** — stress / breaking-point discovery — informative; not
+  a gate.
+
+Acceptance gate per the plan's §3 "baseline targets": at 1x load,
+every endpoint's p99 latency sits under its budgeted ceiling. At
+5x load, p99 sits within the documented degraded-mode tolerance.
+
+If the 1x test fails, **stop**. The pilot will not survive its
+own peak. Resolve the bottleneck (typically: add CPU / RAM at the
+primary, tune Npgsql pool, profile the slow endpoint) and re-run.
+
+### 10.3 Backup + restore drill
+
+Per SEC-DB-4 + SEC-DB-5, the pilot site's data shape needs a
+backup + restore drill. The drill walks
+[`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+§7 (full restore) + §8 (PITR) on a fresh box, restoring a copy of
+the pilot's seeded-but-pre-cutover data. Capture the drill log;
+attach to the pilot documentation.
+
+The drill is **mandatory** before §11. Operator's tendency
+("we'll run the drill after cutover") has historically produced
+"backups exist but no one tested restoring them" outcomes; that
+is exactly the failure mode the SEC-DB-4 P0 prevents.
+
+### 10.4 Phase V exit gate
+
+Before §11, all three of these are true:
+
+- ☐ Phase V security audit signed off (per §10.1 exit criteria).
+- ☐ Phase V perf load test passes 1x at all p99 budgets (per
+  §10.2).
+- ☐ Backup + restore drill completed on pilot's data shape (per
+  §10.3).
+
+A pilot that proceeds to §11 with any of these open is failing
+the gate. The customs operator's sign-off in §11.4 will not be
+defensible without these three items checked.
+
+---
+
+## 11. Real-traffic cutover
+
+Phase V is signed off. Now expose the system to real customs
+traffic, gradually. The cutover is **not a flag flip** — it's a
+multi-day ramp with the operator + analyst in the loop.
+
+### 11.1 Feature-flag gradual ramp
+
+v2's `FeatureFlag` infrastructure (Sprint 35) is the cutover
+control. Per-tenant flag keys live in `tenancy.feature_flags`; the
+admin UI is `/admin/feature-flags`. Recommended ramp keys for the
+pilot tenant:
+
+| Key | Day 1 | Day 3 | Day 7 |
+|---|---|---|---|
+| `pilot.real_traffic.scan_capture_enabled` | true | true | true |
+| `pilot.real_traffic.percent_routed` | 10 | 50 | 100 |
+| `pilot.real_traffic.bypass_synthetic_filter` | false | true | true |
+
+Each flag flip is audited (`nickerp.tenancy.feature_flag_toggled`).
+If a flag flip causes a regression, flipping it back is the
+rollback — no redeploy needed.
+
+The "10% / 50% / 100%" routing is implemented by the customs-side
+intake — the v2 system does not itself sample. The cutover is
+**operator-driven**: the customs IT routes a portion of the
+real-time scan feed to v2 while the rest continues on v1 (or
+manual workflow); v2 receives only the routed portion until the
+pilot is signed off.
+
+### 11.2 Operator + analyst training
+
+Before day 1, the customs operators who will use the system in
+production receive training. Training surfaces (the analyst-facing
+pages they should know):
+
+| Page | Surface | Built in |
+|---|---|---|
+| `/launcher` | Module tile launcher (Sprint 49) | Sprint 29 / Sprint 49 |
+| `/cases/{id}` | Case detail with image gallery + findings + verdict | Sprint 31 / Sprint 34 |
+| `/reviews/queue` | Analyst inbox (priority-ordered) | Sprint 34 |
+| `/reviews/bl/{caseId}` | BL review form | Sprint 34 |
+| `/reviews/ai/{caseId}` | AI triage page | Sprint 34 |
+| `/reviews/audit/{caseId}` | Supervisor audit review | Sprint 34 |
+| `/admin/rules` | Rule admin (per-tenant strict mode) | Sprint 28 / Sprint 48 |
+| `/admin/reports` | Reports dashboard | Sprint 33 |
+| `/notifications` | Notifications inbox | Sprint 35 |
+
+The v2 dev team's training material is the read-only walkthrough
+of each page — what each button does, what state changes happen,
+how to recover from a misclick. The customs operator who's been
+the §6.3 first user is the **trainer** for additional analysts;
+this scales because day-1 training is a single screen-share, not
+a multi-day course.
+
+Training completion gate: each trained analyst signs in and
+demonstrates one full case decisioning end-to-end against a
+synthetic case (re-using the §8 mock trigger). The demonstration
+is captured in the pilot documentation as evidence the analyst
+is ready for live cases.
+
+### 11.3 Seven-day soak window
+
+After day 7's "100% routed" flag flip, the system has all real
+customs traffic for the pilot site. The 7-day soak runs from
+day 7 to day 14:
+
+- Daily check-ins between operator + customs operator + v2 dev
+  team. Standing 15-min slot; cancel if nothing to discuss.
+- Daily snapshot of `/admin/pilot-readiness` — all 5 gates Pass
+  every day. A single Fail in the 14-day window resets the soak
+  to day 1.
+- Seq dashboards reviewed daily for anomalies (failed-auth rate,
+  outbound submission failure rate, edge buffer depth).
+- Backup + restore drill **every weekend** during soak (operator
+  cron — abbreviated drill, not the full quarterly drill).
+
+If a P0 incident fires during soak, the soak resets. If a P1
+fires, the soak continues but the P1 must be resolved within 48 h
+or the soak resets. P2 + P3 do not reset the soak.
+
+### 11.4 Sign-off criteria
+
+After 14 days of all-Pass gates, the pilot is signed off. The
+sign-off involves three signatures:
+
+| Signatory | What they sign | Where |
+|---|---|---|
+| Customs operator (named §2.4 counterpart) | "The system is fit for use at this site." | Paper document; mirrored to `pilot.signoff.customs_signed_at` tenant setting. |
+| Operator (deployment engineer) | "All §10 + §11 criteria met. No P0 / P1 open." | `pilot.signoff.operator_signed_at` tenant setting. |
+| v2 dev team lead | "Code-side support for this pilot is live." | `pilot.signoff.dev_team_signed_at` tenant setting. |
+
+All three settings written within a 24 h window means the pilot
+is **live**, not pilot. Subsequent operations follow the existing
+runbooks (01 deploy / 02 secret rotation / 06 edge-node-stalled /
+etc.); §14's runbook is no longer the active document.
+
+### 11.5 The "what could still go wrong"
+
+Even a clean §11.4 sign-off can fall over post-pilot. Common §11.4
++ 30 days regressions:
+
+- **Backup cadence drifts.** The weekend drill skipped one weekend
+  and then two; alert thresholds in
+  [`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+  §10.1 catch this.
+- **Operator team changes hands.** New on-call hasn't read this
+  runbook. Review the per-area runbooks 01-13 with new team;
+  their familiarity is the recovery posture, not yours.
+- **Customs operator is reassigned.** The §2.4 MOU counterpart
+  leaves the role. Renew the MOU with the new counterpart;
+  update the tenant settings; re-confirm cooperation.
+
+These are not §11.4 sign-off failures — they're post-pilot
+operations. They live under [`01-deploy.md`](01-deploy.md) +
+[`02-secret-rotation.md`](02-secret-rotation.md).
+
+---
+
+## 12. Pilot success / failure handling
+
+### 12.1 What success looks like
+
+The pilot is **successful** when:
+
+- All five gates have been Pass for 14 consecutive days.
+- No P0 or P1 finding is open from the Phase V audit.
+- The customs operator on site has signed off in writing (§11.4
+  sign-off complete).
+- Analyst feedback during the 7-day soak is positive — analysts
+  decision cases at expected throughput, no recurring complaint
+  about a missing capability or a confusing surface.
+
+A successful pilot transitions the tenant from "pilot" to "live":
+
+- The `pilot.signoff.*` settings are set.
+- The `tenancy.feature_flags` "pilot.real_traffic.*" rows can be
+  removed (cutover is complete; no further routing decisions).
+- The §11.3 daily check-ins drop to weekly, then to as-needed.
+- The runbook in active reading rotation switches from §14 to
+  §01-§13.
+
+A successful pilot is the prerequisite for **expansion** —
+extending v2 to additional customs sites. Each new site re-runs
+§3-§11 against its own §3 site selection. Sites can run in
+parallel once the central infrastructure has the capacity (§4
+sizing review).
+
+### 12.2 What failure looks like
+
+The pilot is **failing** when:
+
+- A gate has been Fail at any point in the 14-day window (the
+  soak resets to day 1).
+- A P0 finding from the Phase V audit cannot be closed.
+- The customs operator declines to sign off.
+- Analyst feedback during the soak surfaces a category of bug or
+  missing capability that requires a multi-sprint v2 dev team
+  effort to fix.
+
+Failure is **not a binary** — a soak that resets twice and then
+completes on the third attempt is still a successful pilot, just
+on a longer calendar. Failure-as-end-state means the pilot cannot
+proceed at this site, period.
+
+### 12.3 Rollback procedure
+
+If the pilot is declared a failure (§12.2), the rollback steps:
+
+1. **Flip the cutover flags off.** The §11.1 feature flags go to
+   `false` / `0%`. Real customs traffic stops reaching v2.
+2. **Soft-delete the tenant.** Per §6.2, the tenant lifecycle
+   moves to `SoftDeleted`. Data is retained for `HardPurgeAfter`
+   days (default 90); the customs operator can no longer reach
+   the system.
+3. **Capture a final tenant export.** Per Sprint 25's tenant
+   export tooling, an export job runs against the soft-deleted
+   tenant and produces a single archive. Archive is delivered to
+   the customs authority per the §2.4 MOU's "graceful failure"
+   clause.
+4. **Decommission the edge nodes.** Edge boxes at the pilot site
+   are wiped (per §4.2 they're stateless); edge HMAC keys are
+   revoked via `EdgeNodeApiKeyService.RevokeAsync`.
+5. **Postmortem.** Write a postmortem covering: which gate(s)
+   failed, what the root cause was, what the v2 dev team needs
+   to do before the next pilot attempt, what the operator needs
+   to do differently. The postmortem is the input to §3 site
+   re-selection.
+6. **Hard-purge after retention window.** After
+   `HardPurgeAfter` days, the operator runs
+   `TenantPurgeOrchestrator.PurgeAsync` per §6.2; data is gone.
+
+The rollback is **not a recovery** — once the tenant is
+soft-deleted, the pilot at this site is over. Resuming the same
+tenant is not the right call; if the same site is to be re-piloted
+later, run §3-§11 again under a new tenant against a
+new MOU.
+
+### 12.4 The "neither success nor failure yet" state
+
+A pilot that is past §11.1 day-1 but pre-§11.4 sign-off lives in
+the active-pilot state. The active-pilot state is the longest
+phase by calendar time (the 7-day soak) and is the most
+operationally demanding (daily check-ins, daily gate review,
+weekly drill). Treat it as a sustained P2 — not an emergency, but
+not background either.
+
+Active pilots have the operator's full attention. Other
+deployment / migration / refactor work pauses for the duration of
+§11 unless explicitly approved by the v2 dev team lead.
+
+---
+
+## 13. References
+
+- [`14-pilot-acceptance-checklist.md`](14-pilot-acceptance-checklist.md)
+  — operator-facing checkbox checklist mirroring §8-§11.
+- [`09-postgres-ha-setup.md`](09-postgres-ha-setup.md) — primary
+  + standby pair stand-up; referenced in §2.1, §4.1.
+- [`10-pgbackrest-backup-restore.md`](10-pgbackrest-backup-restore.md)
+  — backup posture; referenced in §2.2, §4.3, §5.4, §10.3.
+- [`11-postgres-version-lock-pg17.md`](11-postgres-version-lock-pg17.md)
+  — PG17 version posture; referenced in §2.1, §4.1.
+- [`12-nickfinance-runbook.md`](12-nickfinance-runbook.md) —
+  NickFinance ops; in scope for the pilot tenant if NickFinance
+  is opted in at §6.
+- [`13-comms-gateway-settings.md`](13-comms-gateway-settings.md)
+  — per-tenant comms settings; referenced in §6.3 (invite email
+  delivery) + §6.4 (MOU mirror).
+- [`15-pilot-acceptance-test.md`](15-pilot-acceptance-test.md) —
+  the developer-side end-to-end test that runs the same five
+  gates against a synthetic tenant.
+- [`01-deploy.md`](01-deploy.md) — deploying a new build; the
+  active runbook post-§11.4.
+- [`02-secret-rotation.md`](02-secret-rotation.md) — secret
+  rotation; the active runbook post-§11.4.
+- [`05-icums-outbox-backlog.md`](05-icums-outbox-backlog.md) —
+  outbound submission backlog; gate 4 driver.
+- [`06-edge-node-stalled.md`](06-edge-node-stalled.md) — edge
+  node stall recovery; §8.2 + gate 2 driver.
+- [`../security/audit-checklist-2026.md`](../security/audit-checklist-2026.md)
+  — Phase V security audit; §10.1.
+- [`../perf/test-plan.md`](../perf/test-plan.md) — Phase V perf
+  load test; §10.2.
+- [`../system-context-audit-register.md`](../system-context-audit-register.md)
+  — register that gate 5 sub-check 2 cross-references against code.
+- `~/.claude/plans/tingly-launching-quasar.md` §13 — pilot site
+  decision matrix; §3 references.
+- `platform/NickERP.Platform.Tenancy/Pilot/PilotReadinessGate.cs`
+  — gate IDs + semantics.
+- `apps/portal/Components/Pages/PilotReadiness.razor` — the
+  dashboard surface; §9.1.
+
