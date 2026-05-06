@@ -1,0 +1,322 @@
+@page "/admin/audit-dashboard"
+@* Sprint 56 / FU-cross-tenant-aggregation — platform-admin Audit
+   Dashboard. Sprint 33's /admin/reports is per-tenant; this is the
+   portal-side global view across every active tenant.
+
+   Three cards:
+   1. All-tenants summary — total events / errors / active tenants in
+      the window.
+   2. Top error tenants — N highest-error-rate tenants with drill-down
+      links to /tenants/{id} (Phase C's audit-activity card).
+   3. Webhook dispatcher health — per-(tenant, adapter) cursor lag.
+      Empty until plugin adapters ship; the empty-state copy says so.
+
+   Auto-refresh on a 60s timer (matches the service's cache TTL so a
+   tick refresh is cheap when nothing has changed). The window selector
+   lets the operator widen the view to 7d / 30d at a per-fan-out cost. *@
+@attribute [Authorize]
+@using NickERP.Portal.Services
+@inject ICrossTenantAuditService Audit
+@inject CrossTenantAuditCache Cache
+@implements IDisposable
+
+<PageTitle>Audit dashboard — NickERP Portal</PageTitle>
+
+<header class="portal-page-header">
+    <div>
+        <h1>Audit dashboard</h1>
+        <p class="portal-page-subtitle">
+            Cross-tenant view of audit-event activity — error rates, webhook health, and per-tenant breakdowns. Auto-refreshes every 60 seconds.
+        </p>
+    </div>
+</header>
+
+<section class="portal-section">
+    <div class="portal-card">
+        <h2 class="portal-card-title">Window</h2>
+        <div class="portal-button-row">
+            @foreach (var w in _windowChoices)
+            {
+                <button type="button"
+                        class="portal-button @(w.Span == _window ? "portal-button-primary" : string.Empty)"
+                        @onclick="() => SelectWindowAsync(w.Span)">@w.Label</button>
+            }
+            <button type="button" class="portal-button" @onclick="RefreshNowAsync">Refresh now</button>
+        </div>
+        <p class="portal-card-subtitle">
+            Showing data for the last @FormatWindow(_window). Last refreshed
+            @(_lastRefreshAt.HasValue ? _lastRefreshAt.Value.ToString("yyyy-MM-dd HH:mm:ss") : "never") UTC.
+        </p>
+    </div>
+</section>
+
+@if (_loadError is not null)
+{
+    <section class="portal-section">
+        <div class="portal-card portal-card-error">
+            <h2 class="portal-card-title">Failed to load</h2>
+            <p>@_loadError</p>
+            <button type="button" class="portal-button" @onclick="RefreshNowAsync">Retry</button>
+        </div>
+    </section>
+}
+else if (_summary is null)
+{
+    <section class="portal-section">
+        <div class="portal-card">
+            <p>Loading…</p>
+        </div>
+    </section>
+}
+else
+{
+    @* Card 1 — all-tenants summary *@
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">All-tenants summary</h2>
+            @if (_summary.Count == 0)
+            {
+                <p class="portal-empty">No active tenants in this deployment.</p>
+            }
+            else
+            {
+                var totalEvents = _summary.Sum(r => r.EventCount);
+                var totalErrors = _summary.Sum(r => r.ErrorCount);
+                var activeTenants = _summary.Count(r => r.EventCount > 0);
+                <div class="portal-stat-grid">
+                    <div class="portal-stat">
+                        <div class="portal-stat-headline">@FormatNumber(totalEvents)</div>
+                        <div class="portal-stat-subtitle">total events</div>
+                    </div>
+                    <div class="portal-stat">
+                        <div class="portal-stat-headline portal-stat-error">@FormatNumber(totalErrors)</div>
+                        <div class="portal-stat-subtitle">error events</div>
+                    </div>
+                    <div class="portal-stat">
+                        <div class="portal-stat-headline">@activeTenants / @_summary.Count</div>
+                        <div class="portal-stat-subtitle">active tenants in window</div>
+                    </div>
+                </div>
+
+                <details>
+                    <summary>Per-tenant breakdown (@_summary.Count tenants)</summary>
+                    <table class="portal-table">
+                        <thead>
+                            <tr>
+                                <th>Tenant</th>
+                                <th>Events</th>
+                                <th>Errors</th>
+                                <th>Last event</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _summary)
+                            {
+                                <tr>
+                                    <td>
+                                        <strong>@row.TenantName</strong>
+                                        <div class="portal-card-subtitle"><code>@row.TenantCode</code></div>
+                                    </td>
+                                    <td>@FormatNumber(row.EventCount)</td>
+                                    <td class="@(row.ErrorCount > 0 ? "portal-stat-error" : string.Empty)">@FormatNumber(row.ErrorCount)</td>
+                                    <td>@(row.LastEventAt.HasValue ? row.LastEventAt.Value.ToString("yyyy-MM-dd HH:mm") : "—")</td>
+                                    <td><a class="portal-button" href="/tenants/@row.TenantId">Drill down</a></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </details>
+            }
+        </div>
+    </section>
+
+    @* Card 2 — top error tenants *@
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Top error tenants</h2>
+            <p class="portal-card-subtitle">
+                Tenants with the highest <code>*.error</code> rate in the window.
+                Tenants with zero events are excluded so an idle deployment doesn't
+                crowd out a real outlier.
+            </p>
+            @if (_topErrors is null || _topErrors.Count == 0)
+            {
+                <p class="portal-empty">No tenants with error events in this window.</p>
+            }
+            else
+            {
+                <table class="portal-table">
+                    <thead>
+                        <tr>
+                            <th>Tenant</th>
+                            <th>Errors</th>
+                            <th>Total events</th>
+                            <th>Error rate</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _topErrors)
+                        {
+                            <tr>
+                                <td>
+                                    <strong>@row.TenantName</strong>
+                                    <div class="portal-card-subtitle"><code>@row.TenantCode</code></div>
+                                </td>
+                                <td class="portal-stat-error">@FormatNumber(row.ErrorCount)</td>
+                                <td>@FormatNumber(row.EventCount)</td>
+                                <td>@row.ErrorRate.ToString("P1", System.Globalization.CultureInfo.InvariantCulture)</td>
+                                <td><a class="portal-button" href="/tenants/@row.TenantId">Drill down</a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+
+    @* Card 3 — webhook dispatcher health *@
+    <section class="portal-section">
+        <div class="portal-card">
+            <h2 class="portal-card-title">Webhook dispatcher health</h2>
+            <p class="portal-card-subtitle">
+                Per-(tenant, adapter) cursor lag — the wall-clock gap between the
+                cursor's last update and the latest matching audit event.
+                A growing lag suggests the dispatcher is stuck or the downstream is
+                rejecting events.
+            </p>
+            @if (_webhookHealth is null || _webhookHealth.Count == 0)
+            {
+                <p class="portal-empty">No webhook adapters configured in this deployment.</p>
+            }
+            else
+            {
+                <table class="portal-table">
+                    <thead>
+                        <tr>
+                            <th>Tenant</th>
+                            <th>Adapter</th>
+                            <th>Last cursor update</th>
+                            <th>Lag</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _webhookHealth)
+                        {
+                            <tr>
+                                <td><code>@row.TenantCode</code></td>
+                                <td><code>@row.AdapterName</code></td>
+                                <td>@row.LastCursorUpdate.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td>@FormatLag(row.LagSeconds)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private TimeSpan _window = TimeSpan.FromHours(24);
+    private DateTimeOffset? _lastRefreshAt;
+    private string? _loadError;
+
+    private IReadOnlyList<CrossTenantAuditSummaryRow>? _summary;
+    private IReadOnlyList<CrossTenantAuditTopErrorRow>? _topErrors;
+    private IReadOnlyList<CrossTenantWebhookHealthRow>? _webhookHealth;
+
+    private System.Threading.Timer? _refreshTimer;
+
+    private readonly (TimeSpan Span, string Label)[] _windowChoices = new[]
+    {
+        (TimeSpan.FromHours(24), "24h"),
+        (TimeSpan.FromDays(7), "7d"),
+        (TimeSpan.FromDays(30), "30d"),
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        // 60s auto-refresh — matches the service's cache TTL so a tick that
+        // fires within a minute of the last refresh is essentially free.
+        _refreshTimer = new System.Threading.Timer(
+            async _ => await InvokeAsync(async () =>
+            {
+                try
+                {
+                    await LoadAsync();
+                    StateHasChanged();
+                }
+                catch
+                {
+                    // Swallow to keep the timer alive on a transient blip;
+                    // the next tick will retry.
+                }
+            }),
+            state: null,
+            dueTime: TimeSpan.FromSeconds(60),
+            period: TimeSpan.FromSeconds(60));
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+        _refreshTimer = null;
+    }
+
+    private async Task SelectWindowAsync(TimeSpan span)
+    {
+        _window = span;
+        await LoadAsync();
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        // The service's cache is the canonical knob; clearing it forces a
+        // fresh fan-out on the next call.
+        Cache.Clear();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            // Pull all three cards. Service-side caching dedupes the fan-out
+            // so calling them back-to-back is one fan-out, three projections.
+            var summaryTask = Audit.GetCrossTenantSummaryAsync(_window);
+            var topErrorsTask = Audit.GetCrossTenantTopErrorsAsync(_window, take: 5);
+            var webhookTask = Audit.GetCrossTenantWebhookHealthAsync();
+            await Task.WhenAll(summaryTask, topErrorsTask, webhookTask);
+            _summary = await summaryTask;
+            _topErrors = await topErrorsTask;
+            _webhookHealth = await webhookTask;
+            _lastRefreshAt = DateTimeOffset.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"{ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    private static string FormatNumber(int value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string FormatWindow(TimeSpan span)
+    {
+        if (span.TotalHours <= 24) return $"{(int)span.TotalHours}h";
+        return $"{(int)span.TotalDays}d";
+    }
+
+    private static string FormatLag(double? seconds)
+    {
+        if (!seconds.HasValue) return "—";
+        var s = seconds.Value;
+        if (s < 60) return $"{s:F0}s";
+        if (s < 3600) return $"{s / 60:F1}m";
+        if (s < 86400) return $"{s / 3600:F1}h";
+        return $"{s / 86400:F1}d";
+    }
+}
