@@ -10,8 +10,9 @@ namespace NickERP.Perf.Tests.Auth;
 /// <para>
 /// The handler holds an RSA-2048 key pair created at first access; the
 /// <c>kid</c> stays stable for the process lifetime. Disposal is via
-/// process exit — there's no <c>Dispose</c> ladder because NBomber owns
-/// the run lifecycle and the harness exits when the run completes.
+/// process exit — there's no <c>Dispose</c> ladder because the perf
+/// runner owns the run lifecycle and the harness exits when the run
+/// completes.
 /// </para>
 /// </remarks>
 public static class MockJwtBearerHandlerSingleton
