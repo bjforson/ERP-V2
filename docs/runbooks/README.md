@@ -24,7 +24,12 @@ Are you responding to an alert / user report / log line?
 │   ├── Configuring pgbackrest backups ............ 10-pgbackrest-backup-restore.md
 │   ├── Quarterly restore drill ................... 10-pgbackrest-backup-restore.md §8
 │   ├── Upgrading an older PG to PG17 ............. 11-postgres-version-lock-pg17.md
-│   └── Operating NickFinance (G2 pathfinder) ..... 12-nickfinance-runbook.md
+│   ├── Operating NickFinance (G2 pathfinder) ..... 12-nickfinance-runbook.md
+│   └── Standing up ERP V2 at a brand-new pilot site
+│       (hardware → network → tenant → smoke →
+│        gates → Phase V → cutover → sign-off) ..... 14-pilot-site-standup.md
+│       (operator checklist) ....................... 14-pilot-acceptance-checklist.md
+│       (developer-side end-to-end test) ........... 15-pilot-acceptance-test.md
 │
 └── Yes — what's the failure shape?
     ├── /healthz/ready is Unhealthy
@@ -88,6 +93,9 @@ Are you responding to an alert / user report / log line?
 | [11](11-postgres-version-lock-pg17.md) | PG17 version lock + upgrade-from-older procedure | n/a — operator-initiated | P1 (failed upgrade rollback) |
 | [12](12-nickfinance-runbook.md) | NickFinance (G2 pathfinder) operations — deploy / health / migrations / backup / FX-rate publish | n/a — operator-initiated; or `postgres-nickfinance` Unhealthy | P2 (`postgres-nickfinance` Unhealthy) / P1 (data loss → runbook 10 §7) |
 | [13](13-comms-gateway-settings.md) | Comms-gateway settings reference — vendor-neutral `comms.email.*` key catalogue, audit trail, rotation guidance (Sprint 35) | n/a — operator-initiated when configuring tenant comms | P3 (config drift) |
+| [14](14-pilot-site-standup.md) | Pilot site stand-up — end-to-end operator playbook from "we want to pilot at site X" through 14-day green-window sign-off (Sprint 54) | n/a — operator-initiated when standing a new pilot site up | P1 (sign-off failure → §12.3 rollback) |
+| [14-checklist](14-pilot-acceptance-checklist.md) | Pilot acceptance checklist — copy-and-tick companion to runbook 14, ~106 items mapping every §8-§11 verification to a single ticked box (Sprint 54) | n/a — operator-driven during pilot stand-up | n/a |
+| [15](15-pilot-acceptance-test.md) | Pilot acceptance test — developer-side end-to-end test that runs the same five gates against a synthetic tenant (Sprint 53) | n/a — developer-initiated as a sanity check before pilot stand-up | n/a |
 
 > Slots 07 + 08 are post-incident / analytical runbooks (sprint-13
 > live-deploy backlog and 2026-05-04 OCR baseline) — they sit

@@ -19,6 +19,10 @@
 > **Sister docs:** [`01-deploy.md`](01-deploy.md) for the
 > stop/start mechanics; [`docs/MIGRATIONS.md`](../MIGRATIONS.md) for
 > the EF env-var quirk that bites password rotations specifically.
+>
+> **See also:** [`14-pilot-site-standup.md`](14-pilot-site-standup.md)
+> §7.4 — for fresh pilot stand-up, the per-edge HMAC key issuance
+> follows the §6 pattern below, scoped to the pilot tenant.
 
 ---
 

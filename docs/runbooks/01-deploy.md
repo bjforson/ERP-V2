@@ -26,6 +26,10 @@
 > credential rotations,
 > [`docs/MIGRATIONS.md`](../MIGRATIONS.md) for the EF migration env-var
 > quirk that bites every deploy with schema changes.
+>
+> **See also:** [`14-pilot-site-standup.md`](14-pilot-site-standup.md) —
+> if this is the first deploy of a fresh pilot, runbook 14 is the
+> parent procedure (this runbook is one step inside its §11).
 
 ---
 
