@@ -7,6 +7,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NickERP.Platform.Audit;
 using NickERP.Platform.Audit.Events;
+using NickERP.Platform.Tenancy.Database.Storage;
+using NickERP.Platform.Tenancy.Database.Workers;
 using NickERP.Platform.Tenancy.Entities;
 using Npgsql;
 
@@ -17,6 +19,10 @@ namespace NickERP.Platform.Tenancy.Database.Services;
 /// <c>FU-tenant-lifecycle</c> followup with platform-admin-generated
 /// scoped exports of a tenant's data. Each request is audit-trailed
 /// through Pending / Running / Completed / Failed / Expired / Revoked.
+/// Sprint 51 / Phase B added the LISTEN/NOTIFY pickup channel
+/// (<see cref="TenantExportRunner.NotifyChannel"/>) so the runner
+/// dispatches new requests within a second instead of waiting for the
+/// 30 s poll.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -111,6 +117,23 @@ public sealed record TenantExportDownload(
     string Sha256Hex);
 
 /// <summary>
+/// Sprint 51 / Phase E — pickable storage backend for tenant export
+/// bundles. Filesystem preserves the pre-Phase-E layout; S3 is the
+/// new option.
+/// </summary>
+public enum TenantExportStorageBackend
+{
+    /// <summary>Default. Bundles written to local filesystem under
+    /// <see cref="TenantExportOptions.OutputPath"/>.</summary>
+    Filesystem = 0,
+
+    /// <summary>S3-compatible blob storage. Configured via
+    /// <see cref="TenantExportOptions.S3"/>. Works with AWS S3, Minio,
+    /// Backblaze B2, Wasabi.</summary>
+    S3 = 10
+}
+
+/// <summary>
 /// Configuration for <see cref="TenantExportService"/> +
 /// <see cref="TenantExportRunner"/>. Bound from
 /// <c>Tenancy:Export</c>.
@@ -121,6 +144,17 @@ public sealed class TenantExportOptions
     /// <c>var/tenant-exports</c>; per-tenant subdirectory created
     /// on demand.</summary>
     public string OutputPath { get; set; } = "var/tenant-exports";
+
+    /// <summary>Sprint 51 / Phase E — which storage backend the
+    /// runner persists bundles into. Default
+    /// <see cref="TenantExportStorageBackend.Filesystem"/> preserves
+    /// the pre-Phase-E behaviour.</summary>
+    public TenantExportStorageBackend StorageBackend { get; set; } = TenantExportStorageBackend.Filesystem;
+
+    /// <summary>Sprint 51 / Phase E — S3 configuration when
+    /// <see cref="StorageBackend"/> is <see cref="TenantExportStorageBackend.S3"/>.
+    /// Bound from <c>Tenancy:Export:Storage:S3</c>.</summary>
+    public Storage.S3StorageOptions? S3 { get; set; }
 
     /// <summary>How long completed exports stay downloadable. Default 7
     /// days. After this the sweeper deletes the file and flips status
@@ -175,19 +209,22 @@ public sealed class TenantExportService : ITenantExportService
     private readonly TenantExportOptions _options;
     private readonly TimeProvider _clock;
     private readonly ILogger<TenantExportService> _logger;
+    private readonly ITenantExportStorage? _storage;
 
     public TenantExportService(
         TenancyDbContext db,
         IEventPublisher publisher,
         TenantExportOptions options,
         ILogger<TenantExportService> logger,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        ITenantExportStorage? storage = null)
     {
         _db = db;
         _publisher = publisher;
         _options = options;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
+        _storage = storage;
     }
 
     /// <inheritdoc />
@@ -233,6 +270,15 @@ public sealed class TenantExportService : ITenantExportService
         };
         _db.TenantExportRequests.Add(entity);
         await _db.SaveChangesAsync(ct);
+
+        // Sprint 51 / Phase B — emit a Postgres NOTIFY so the runner
+        // can dispatch within a second instead of waiting on the next
+        // 30 s poll. NOTIFY is buffered until tx commit; here we're
+        // outside an explicit tx (SaveChanges committed), so the
+        // notification fires immediately. Best-effort: the 30 s poll
+        // remains as the fallback if the channel is missed (listener
+        // restart, network blip, in-memory provider in tests).
+        await TryNotifyRequestedAsync(entity.Id, ct);
 
         await EmitAsync(tenant, "nickerp.tenancy.tenant_export_requested",
             JsonSerializer.SerializeToElement(new
@@ -290,11 +336,11 @@ public sealed class TenantExportService : ITenantExportService
                 exportId, row.ExpiresAt);
             return null;
         }
-        if (string.IsNullOrWhiteSpace(row.ArtifactPath) || !File.Exists(row.ArtifactPath))
+        if (string.IsNullOrWhiteSpace(row.ArtifactPath))
         {
             _logger.LogWarning(
-                "TenantExport download blocked — export {ExportId} marked Completed but artifact missing at {Path}.",
-                exportId, row.ArtifactPath);
+                "TenantExport download blocked — export {ExportId} marked Completed but ArtifactPath is empty.",
+                exportId);
             return null;
         }
         if (requestingUserId == Guid.Empty)
@@ -307,15 +353,37 @@ public sealed class TenantExportService : ITenantExportService
             return null;
         }
 
-        // Open the file before bumping the counter so a missing file
-        // doesn't leave a phantom download.
-        var stream = new FileStream(
-            row.ArtifactPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 4096,
-            useAsync: true);
+        // Open the artifact before bumping the counter so a missing
+        // artifact doesn't leave a phantom download. Sprint 51 / Phase
+        // E — route through ITenantExportStorage when configured;
+        // legacy callers without storage registered fall back to
+        // direct File IO so existing tests stay green.
+        Stream? stream;
+        if (_storage is not null)
+        {
+            stream = await _storage.OpenReadAsync(row.ArtifactPath, ct);
+        }
+        else if (File.Exists(row.ArtifactPath))
+        {
+            stream = new FileStream(
+                row.ArtifactPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 4096,
+                useAsync: true);
+        }
+        else
+        {
+            stream = null;
+        }
+        if (stream is null)
+        {
+            _logger.LogWarning(
+                "TenantExport download blocked — export {ExportId} marked Completed but artifact missing at {Path}.",
+                exportId, row.ArtifactPath);
+            return null;
+        }
 
         row.DownloadCount += 1;
         row.LastDownloadedAt = now;
@@ -334,11 +402,25 @@ public sealed class TenantExportService : ITenantExportService
             requestingUserId, ct);
 
         var fileName = $"tenant-{row.TenantId}-export-{row.Id:N}.zip";
+        // stream.Length isn't always available (HTTP streams from S3
+        // can throw NotSupportedException). Prefer the row's recorded
+        // size; fall back to stream.Length only when the stream
+        // supports it.
+        long resolvedSize = 0;
+        if (row.ArtifactSizeBytes.HasValue)
+        {
+            resolvedSize = row.ArtifactSizeBytes.Value;
+        }
+        else if (stream.CanSeek)
+        {
+            try { resolvedSize = stream.Length; }
+            catch (NotSupportedException) { resolvedSize = 0; }
+        }
         return new TenantExportDownload(
             Stream: stream,
             ContentType: "application/zip",
             FileName: fileName,
-            SizeBytes: row.ArtifactSizeBytes ?? stream.Length,
+            SizeBytes: resolvedSize,
             Sha256Hex: sha);
     }
 
@@ -368,14 +450,23 @@ public sealed class TenantExportService : ITenantExportService
         row.RevokedByUserId = revokingUserId;
         await _db.SaveChangesAsync(ct);
 
-        // Best-effort artifact cleanup. A failed delete leaves the file
-        // on disk and the row marked Revoked; the sweeper will pick it
-        // up. Don't fail the call on filesystem errors.
-        if (!string.IsNullOrWhiteSpace(row.ArtifactPath) && File.Exists(row.ArtifactPath))
+        // Best-effort artifact cleanup. A failed delete leaves the
+        // artifact behind and the row marked Revoked; the sweeper will
+        // pick it up. Don't fail the call on filesystem / S3 errors.
+        // Sprint 51 / Phase E — route through ITenantExportStorage
+        // when configured.
+        if (!string.IsNullOrWhiteSpace(row.ArtifactPath))
         {
             try
             {
-                File.Delete(row.ArtifactPath);
+                if (_storage is not null)
+                {
+                    await _storage.DeleteAsync(row.ArtifactPath, ct);
+                }
+                else if (File.Exists(row.ArtifactPath))
+                {
+                    File.Delete(row.ArtifactPath);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -406,6 +497,43 @@ public sealed class TenantExportService : ITenantExportService
             .OrderByDescending(r => r.RequestedAt)
             .Take(50) // hard cap so the admin UI doesn't accidentally pull a year of history
             .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Sprint 51 / Phase B — best-effort NOTIFY emit on
+    /// <see cref="TenantExportRunner.NotifyChannel"/>. Skipped silently
+    /// when the underlying connection is not Postgres (in-memory
+    /// provider in tests). The 30 s poll on the runner remains as
+    /// the fallback so a missed notification does not strand a
+    /// Pending row.
+    /// </summary>
+    private async Task TryNotifyRequestedAsync(Guid exportId, CancellationToken ct)
+    {
+        try
+        {
+            // Detect the in-memory provider; SQL execution against it
+            // throws. The provider name check is the cheapest way.
+            if (!_db.Database.IsNpgsql())
+            {
+                return;
+            }
+            // Channel name + payload are bounded ASCII. The payload is
+            // the export id only — listeners look the row up themselves
+            // so payload size stays under Postgres's 8 KB NOTIFY cap.
+            var channel = TenantExportRunner.NotifyChannel;
+            var payload = exportId.ToString("N");
+            // NOTIFY identifiers + payloads must be inline-quoted; EF's
+            // ExecuteSqlRawAsync without parameters is fine because both
+            // values are constructed by us, not user input.
+            var sql = $"NOTIFY {channel}, '{payload}';";
+            await _db.Database.ExecuteSqlRawAsync(sql, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex,
+                "TenantExport NOTIFY emit failed for export {ExportId}; falling back to poll-driven pickup.",
+                exportId);
+        }
     }
 
     private async Task EmitAsync(Tenant tenant, string eventType, JsonElement payload, Guid? actorUserId, CancellationToken ct)

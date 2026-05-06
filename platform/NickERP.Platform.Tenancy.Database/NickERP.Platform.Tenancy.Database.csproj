@@ -34,4 +34,11 @@
     <ProjectReference Include="..\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Sprint 51 / Phase B — let the platform tests reach
+         TenantExportRunner.SignalWakeup so the LISTEN-driven dispatch
+         path can be exercised without a live NOTIFY round-trip. -->
+    <InternalsVisibleTo Include="NickERP.Platform.Tests" />
+  </ItemGroup>
+
 </Project>
