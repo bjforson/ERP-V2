@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NickERP.Inspection.Database;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NickERP.Inspection.Database.Migrations
 {
     [DbContext(typeof(InspectionDbContext))]
-    partial class InspectionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260505234450_Add_ScannerCursorSyncState")]
+    partial class Add_ScannerCursorSyncState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1653,58 +1656,6 @@ namespace NickERP.Inspection.Database.Migrations
                         .HasDatabaseName("ix_threshold_history_tenant_scanner_time");
 
                     b.ToTable("threshold_profile_history", "inspection");
-                });
-
-            modelBuilder.Entity("NickERP.Inspection.Core.Entities.ValidationRuleSnapshot", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("CaseId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("EvaluatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-                    b.Property<string>("Message")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("Outcome")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
-
-                    b.Property<string>("PropertiesJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("jsonb")
-                        .HasDefaultValueSql("'{}'::jsonb");
-
-                    b.Property<string>("RuleId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<int>("Severity")
-                        .HasColumnType("integer");
-
-                    b.Property<long>("TenantId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "CaseId", "EvaluatedAt")
-                        .IsDescending(false, false, true)
-                        .HasDatabaseName("ix_validation_snap_tenant_case_at");
-
-                    b.HasIndex("TenantId", "RuleId", "EvaluatedAt")
-                        .IsDescending(false, false, true)
-                        .HasDatabaseName("ix_validation_snap_tenant_rule_at");
-
-                    b.ToTable("validation_rule_snapshots", "inspection");
                 });
 
             modelBuilder.Entity("NickERP.Inspection.Core.Entities.Verdict", b =>

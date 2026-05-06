@@ -7,6 +7,7 @@
     <Project Path="modules/inspection/plugins/NickERP.Inspection.Inference.Mock/NickERP.Inspection.Inference.Mock.csproj" />
     <Project Path="modules/inspection/plugins/NickERP.Inspection.Inference.OCR.ContainerNumber/NickERP.Inspection.Inference.OCR.ContainerNumber.csproj" />
     <Project Path="modules/inspection/plugins/NickERP.Inspection.Inference.OnnxRuntime/NickERP.Inspection.Inference.OnnxRuntime.csproj" />
+    <Project Path="modules/inspection/plugins/NickERP.Inspection.Scanners.Ase/NickERP.Inspection.Scanners.Ase.csproj" />
     <Project Path="modules/inspection/plugins/NickERP.Inspection.Scanners.FS6000/NickERP.Inspection.Scanners.FS6000.csproj" />
   </Folder>
   <Folder Name="/modules/inspection/src/">
@@ -56,6 +57,7 @@
     <Project Path="tests/NickERP.Inspection.Authorities.CustomsGh.Tests/NickERP.Inspection.Authorities.CustomsGh.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.E2E.Tests/NickERP.Inspection.E2E.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests/NickERP.Inspection.ExternalSystems.IcumsGh.Tests.csproj" />
+    <Project Path="tests/NickERP.Inspection.Scanners.Ase.Tests/NickERP.Inspection.Scanners.Ase.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Scanners.FS6000.Tests/NickERP.Inspection.Scanners.FS6000.Tests.csproj" />
     <Project Path="tests/NickERP.Inspection.Web.Tests/NickERP.Inspection.Web.Tests.csproj" />
     <Project Path="tests/NickERP.NickFinance.Core.Tests/NickERP.NickFinance.Core.Tests.csproj" />

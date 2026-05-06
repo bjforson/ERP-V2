@@ -1,0 +1,33 @@
+{
+  "module": "inspection",
+  "typeCode": "ase",
+  "displayName": "ASE (vendor)",
+  "version": "0.1.0",
+  "description": "ASE cargo X-ray scanner adapter — cursor-sync source. The upstream is a remote SQL Server table the vendor populates with new scan rows; the adapter implements both IScannerAdapter (for sweep + canonical bundle) AND IScannerCursorSyncAdapter (for AseSyncWorker-driven batch pulls). Sprint 50 ships the contract shape; vendor-specific protocol wiring lands when an ASE site is provisioned.",
+  "contracts": [
+    "NickERP.Inspection.Scanners.Abstractions.IScannerAdapter",
+    "NickERP.Inspection.Scanners.Abstractions.IScannerCursorSyncAdapter"
+  ],
+  "minHostContractVersion": "1.1",
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": [],
+    "properties": {
+      "ConnectionString": {
+        "type": "string",
+        "description": "Vendor SQL Server connection string. Empty in Sprint 50 stub mode — the adapter no-ops cleanly when unset."
+      },
+      "ScanQuery": {
+        "type": "string",
+        "description": "Adapter-specific SQL the upstream cursor cycle issues. Reserved for the real adapter wiring; ignored in stub mode."
+      },
+      "PollOverlapMinutes": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 5,
+        "description": "Cursor-window overlap on every pull, in minutes — guards against late-arriving rows on the source. Reserved for the real adapter wiring."
+      }
+    }
+  }
+}

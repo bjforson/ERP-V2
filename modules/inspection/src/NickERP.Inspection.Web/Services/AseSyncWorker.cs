@@ -13,6 +13,7 @@ using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
 using NickERP.Platform.Tenancy.Entities;
+using System.Text.Json;
 
 namespace NickERP.Inspection.Web.Services;
 
@@ -35,13 +36,17 @@ namespace NickERP.Inspection.Web.Services;
 /// </para>
 ///
 /// <para>
-/// <b>Cursor state.</b> Held in-memory in
-/// <see cref="_cursorByInstance"/>. On host restart, the cursor resets
-/// to <see cref="string.Empty"/> and the adapter re-emits every record;
-/// the host's <c>Scan.IdempotencyKey</c> uniqueness
-/// (<c>ux_scans_tenant_idempotency</c>) silently dedupes. Per Sprint 24
-/// architectural decision: no new tracking tables for cursor state —
-/// idempotency through existing unique indexes only.
+/// <b>Cursor state.</b> Sprint 50 / FU-cursor-state-persistence —
+/// durable per <c>(TenantId, ScannerDeviceTypeId, AdapterName)</c> on
+/// <see cref="ScannerCursorSyncState"/> (replaces the Sprint 24
+/// in-memory dict). Survives host restart + supports multi-host
+/// pilots: a fresh host doesn't re-pull a backlog the previous host
+/// already drained, and two hosts converge on the same monotonic
+/// cursor via optimistic concurrency on
+/// <see cref="ScannerCursorSyncState.ConcurrencyToken"/>. The
+/// in-memory <see cref="_cursorByInstance"/> dict survives as a
+/// per-cycle cache so the worker doesn't re-issue a SELECT for every
+/// drain iteration on the same device.
 /// </para>
 ///
 /// <para>
@@ -259,6 +264,7 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
         var tenant = sp.GetRequiredService<ITenantContext>();
         var plugins = sp.GetRequiredService<IPluginRegistry>();
         var db = sp.GetRequiredService<InspectionDbContext>();
+        var imageStore = sp.GetRequiredService<NickERP.Inspection.Imaging.IImageStore>();
         tenant.SetTenant(device.TenantId);
 
         IScannerAdapter generic;
@@ -278,7 +284,14 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
             TenantId: device.TenantId,
             ConfigJson: device.ConfigJson);
 
-        var startCursor = _cursorByInstance.GetValueOrDefault(device.InstanceId, string.Empty);
+        // Sprint 50 / FU-cursor-state-persistence — read the cursor
+        // from inspection.scanner_cursor_sync_states (per TenantId +
+        // ScannerDeviceTypeId + AdapterName). The in-memory dict is a
+        // per-cycle cache so the inner drain loop doesn't re-SELECT
+        // every iteration; we still write through to the durable row
+        // on each advance.
+        var (startCursor, cursorState) = await ReadCursorAsync(db, device, ct);
+        _cursorByInstance[device.InstanceId] = startCursor;
         var pulledThisDevice = 0;
         var currentCursor = startCursor;
 
@@ -309,13 +322,15 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
                 // Even an empty batch may advance the cursor (the source
                 // is past the last successful pull point). Persist the
                 // adapter's NextCursor regardless.
+                cursorState = await AdvanceCursorAsync(db, cursorState, device, batch.NextCursor, ct);
                 _cursorByInstance[device.InstanceId] = batch.NextCursor;
                 break;
             }
 
-            await PersistRecordsAsync(db, device, batch.Records, ct);
+            await PersistRecordsAsync(db, imageStore, generic, device, batch.Records, ct);
             pulledThisDevice += batch.Records.Count;
             currentCursor = batch.NextCursor;
+            cursorState = await AdvanceCursorAsync(db, cursorState, device, currentCursor, ct);
             _cursorByInstance[device.InstanceId] = currentCursor;
 
             AseSyncInstruments.RecordsPulledTotal.Add(batch.Records.Count,
@@ -328,41 +343,367 @@ public sealed class AseSyncWorker : BackgroundService, IBackgroundServiceProbe
     }
 
     /// <summary>
-    /// Persist a batch of <see cref="CursorSyncRecord"/> as
-    /// <see cref="Scan"/> rows. The cursor adapter is responsible for
-    /// emitting an idempotency key per record; the host writes that
-    /// onto <see cref="Scan.IdempotencyKey"/> and lets the unique
-    /// index <c>ux_scans_tenant_idempotency</c> dedupe across replays.
+    /// Sprint 50 / FU-cursor-state-persistence — read the durable cursor
+    /// row (or <see cref="string.Empty"/> when no row exists yet).
+    /// Returns both the cursor value AND the tracked entity so the
+    /// caller can update via the same instance (saves one SELECT per
+    /// advance + keeps EF's optimistic-concurrency check in scope).
+    /// </summary>
+    private static async Task<(string Cursor, ScannerCursorSyncState? Entity)> ReadCursorAsync(
+        InspectionDbContext db,
+        DeviceDescriptor device,
+        CancellationToken ct)
+    {
+        var existing = await db.ScannerCursorSyncStates
+            .FirstOrDefaultAsync(c =>
+                c.ScannerDeviceTypeId == device.TypeCode
+                && c.AdapterName == device.TypeCode,
+                ct);
+        if (existing is null)
+        {
+            return (string.Empty, null);
+        }
+        return (existing.LastCursorValue, existing);
+    }
+
+    /// <summary>
+    /// Advance (or create) the cursor row under optimistic concurrency.
+    /// Returns the tracked entity so the caller can advance multiple
+    /// times in the same scope without re-reading.
     ///
     /// <para>
-    /// <b>Skeleton implementation.</b> v2 currently lacks an
-    /// "InspectionCase auto-create" path equivalent to v1's container-
-    /// keyed flow; for now the worker writes <see cref="Scan"/> rows
-    /// without a parent case (a follow-up sprint wires the case-keying
-    /// rules). Skeleton is acceptable: ASE adapter doesn't ship today,
-    /// so the persistence shape can settle as the adapter contract
-    /// firms up. Worker logs + counters are load-bearing.
+    /// On <see cref="DbUpdateConcurrencyException"/> we silently
+    /// reload + retry once. Two hosts racing on the same cursor will
+    /// converge — the loser's record-write isn't lost because the
+    /// underlying records are dedupedup independently via
+    /// <c>Scan.IdempotencyKey</c>; only the cursor pointer rolls
+    /// forward.
+    /// </para>
+    /// </summary>
+    private async Task<ScannerCursorSyncState> AdvanceCursorAsync(
+        InspectionDbContext db,
+        ScannerCursorSyncState? entity,
+        DeviceDescriptor device,
+        string newCursor,
+        CancellationToken ct)
+    {
+        if (entity is null)
+        {
+            // First-ever advance for this (tenant, scanner-type, adapter).
+            var fresh = new ScannerCursorSyncState
+            {
+                Id = Guid.NewGuid(),
+                ScannerDeviceTypeId = device.TypeCode,
+                AdapterName = device.TypeCode,
+                LastCursorValue = newCursor,
+                LastAdvancedAt = DateTimeOffset.UtcNow,
+                ConcurrencyToken = 1,
+                TenantId = device.TenantId
+            };
+            db.ScannerCursorSyncStates.Add(fresh);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return fresh;
+            }
+            catch (DbUpdateException ex) when (IsCursorUniqueViolation(ex))
+            {
+                // Another host won the race to insert the first row.
+                // Detach the loser, re-read the winner, and update.
+                _logger.LogDebug(ex,
+                    "AseSyncWorker lost cursor-insert race for tenant={TenantId} type={TypeCode}; reloading winner.",
+                    device.TenantId, device.TypeCode);
+                db.Entry(fresh).State = EntityState.Detached;
+                var winner = await db.ScannerCursorSyncStates
+                    .FirstAsync(c =>
+                        c.ScannerDeviceTypeId == device.TypeCode
+                        && c.AdapterName == device.TypeCode,
+                        ct);
+                return await AdvanceCursorAsync(db, winner, device, newCursor, ct);
+            }
+        }
+
+        // Update the existing row + bump the concurrency token.
+        entity.LastCursorValue = newCursor;
+        entity.LastAdvancedAt = DateTimeOffset.UtcNow;
+        entity.ConcurrencyToken += 1;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return entity;
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // Another host advanced the row between our read + write.
+            // Reload + re-apply our cursor; the loser silently retries.
+            // Records were already persisted above with their own
+            // idempotency keys, so the cursor is the only thing that
+            // needs reconciliation.
+            _logger.LogDebug(ex,
+                "AseSyncWorker cursor advance lost concurrency race for tenant={TenantId} type={TypeCode}; reloading.",
+                device.TenantId, device.TypeCode);
+
+            // Detach + reload from the DB; the entry now has the
+            // winning ConcurrencyToken so a second SaveChanges
+            // succeeds (provided no third host writes in between).
+            await db.Entry(entity).ReloadAsync(ct);
+            entity.LastCursorValue = newCursor;
+            entity.LastAdvancedAt = DateTimeOffset.UtcNow;
+            entity.ConcurrencyToken += 1;
+            await db.SaveChangesAsync(ct);
+            return entity;
+        }
+    }
+
+    /// <summary>
+    /// Detect the unique-index violation produced when two hosts
+    /// concurrently INSERT the first cursor row for the same
+    /// (TenantId, TypeCode, Adapter). Inline so the worker doesn't
+    /// take a hard reference on a shared helper.
+    /// </summary>
+    private static bool IsCursorUniqueViolation(DbUpdateException ex)
+        => ex.InnerException?.GetType().Name.Contains("PostgresException", StringComparison.Ordinal) == true
+           && ex.InnerException.Message.Contains("ux_cursor_sync_state_tenant_type_adapter", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Persist a batch of <see cref="CursorSyncRecord"/> as
+    /// <see cref="Scan"/> + <see cref="ScanArtifact"/> rows. Each record
+    /// goes through three steps:
+    /// <list type="number">
+    ///   <item><description>Adapter <c>ParseScanAsync</c> — vendor bytes
+    ///   → canonical <see cref="NickERP.Inspection.Edge.Abstractions.ScanPackage"/>
+    ///   bundle. Stays in-process; the host doesn't seal in this path
+    ///   (the package is for ingestion, not edge-replay).</description></item>
+    ///   <item><description>Case keying — reuse an open
+    ///   <see cref="InspectionCase"/> with the same
+    ///   <c>(LocationId, SubjectIdentifier=record.SourceReference)</c>
+    ///   opened in the last 24h, or open a fresh one. Same shape as
+    ///   FS6000's IngestRawArtifactAsync path, so the case-reuse
+    ///   semantics across vendors stay aligned.</description></item>
+    ///   <item><description>Idempotency — Scan rows carry the
+    ///   adapter's <see cref="CursorSyncRecord.IdempotencyKey"/>; the
+    ///   unique index <c>ux_scans_tenant_idempotency</c> on
+    ///   (TenantId, IdempotencyKey) dedupes replays at the DB layer.
+    ///   We pre-check before insert so the common case avoids the
+    ///   exception-throw round-trip.</description></item>
+    /// </list>
+    ///
+    /// <para>
+    /// <b>Per-record SaveChanges.</b> Each record is its own transaction
+    /// — a poison record in the middle of a batch doesn't take down the
+    /// whole cursor advance. The Scan + ScanArtifact pair commits
+    /// together (foreign key from artifact.ScanId).
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Storage path.</b> The cursor record's bytes go through
+    /// <see cref="IImageStore.SaveSourceAsync"/> the same way FS6000's
+    /// triplets do — so the pre-render worker, image-route handler, and
+    /// retention enforcer all reach back to the bytes through the same
+    /// content-addressable path.
     /// </para>
     /// </summary>
     private async Task PersistRecordsAsync(
         InspectionDbContext db,
+        NickERP.Inspection.Imaging.IImageStore imageStore,
+        IScannerAdapter adapter,
         DeviceDescriptor device,
         IReadOnlyList<CursorSyncRecord> records,
         CancellationToken ct)
     {
-        // Skeleton: cursor adapter emits records, but the case-keying
-        // rules require domain inputs we don't yet model in v2 (see
-        // class XML comment). Counter still bumps so admin pages can
-        // see the worker is alive. A later sprint completes this
-        // method by either (a) creating a case per record or (b)
-        // keying records to existing cases via a vendor-shaped lookup.
-        // Both paths land cleanly here without changing the worker's
-        // discovery + cursor + telemetry shape.
-        await Task.CompletedTask;
-        _logger.LogDebug(
-            "AseSyncWorker persisted {Count} record(s) (skeleton no-op) tenant={TenantId} instance={InstanceId}.",
-            records.Count, device.TenantId, device.InstanceId);
+        // ScannerCapabilities for the canonical ParseScanAsync path —
+        // pulled directly from the adapter; the worker doesn't override.
+        var capabilities = adapter.Capabilities;
+
+        foreach (var record in records)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                await PersistOneRecordAsync(db, adapter, imageStore, capabilities, device, record, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                AseSyncInstruments.PersistFailedTotal.Add(1,
+                    new KeyValuePair<string, object?>("type_code", device.TypeCode));
+                _logger.LogWarning(ex,
+                    "AseSyncWorker persist failed for tenant={TenantId} instance={InstanceId} source-ref={SourceReference}; continuing batch.",
+                    device.TenantId, device.InstanceId, record.SourceReference);
+            }
+        }
     }
+
+    /// <summary>
+    /// Persist one cursor record. Idempotent: a duplicate
+    /// <see cref="CursorSyncRecord.IdempotencyKey"/> short-circuits via
+    /// the pre-check + the unique-index race fallback.
+    /// </summary>
+    private async Task PersistOneRecordAsync(
+        InspectionDbContext db,
+        IScannerAdapter adapter,
+        NickERP.Inspection.Imaging.IImageStore imageStore,
+        ScannerCapabilities capabilities,
+        DeviceDescriptor device,
+        CursorSyncRecord record,
+        CancellationToken ct)
+    {
+        // 1. Pre-check idempotency — common-path fast skip.
+        var existingScan = await db.Scans
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.IdempotencyKey == record.IdempotencyKey, ct);
+        if (existingScan is not null)
+        {
+            AseSyncInstruments.DedupedTotal.Add(1,
+                new KeyValuePair<string, object?>("type_code", device.TypeCode));
+            return;
+        }
+
+        // 2. Run the adapter's canonical ParseScanAsync — the package +
+        //    artifact projection.
+        var parsed = await adapter.ParseScanAsync(record.Bytes, capabilities, ct);
+        var primary = parsed.Artifacts.FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                $"Adapter '{device.TypeCode}' returned a ParsedScan with no Artifacts; cannot persist.");
+
+        // 3. Resolve / open the parent case keyed on
+        //    (LocationId, SubjectIdentifier=record.SourceReference).
+        //    Mirrors the FS6000 IngestRawArtifactAsync 24h-reuse window.
+        var since = DateTimeOffset.UtcNow.AddHours(-24);
+        var subjectIdentifier = string.IsNullOrEmpty(record.SourceReference)
+            ? record.IdempotencyKey
+            : record.SourceReference;
+        var existingCase = await db.Cases
+            .Where(c => c.LocationId == device.LocationId
+                        && c.SubjectIdentifier == subjectIdentifier
+                        && c.OpenedAt > since
+                        && c.State != InspectionWorkflowState.Closed
+                        && c.State != InspectionWorkflowState.Cancelled)
+            .OrderByDescending(c => c.OpenedAt)
+            .FirstOrDefaultAsync(ct);
+
+        InspectionCase parentCase;
+        if (existingCase is not null)
+        {
+            parentCase = existingCase;
+        }
+        else
+        {
+            // The worker has no authenticated principal — case opens
+            // unattended. Same shape as FS6000's worker path; the case
+            // lands with OpenedByUserId=null, the audit emit below
+            // captures the system actor.
+            var now = DateTimeOffset.UtcNow;
+            parentCase = new InspectionCase
+            {
+                Id = Guid.NewGuid(),
+                LocationId = device.LocationId,
+                SubjectType = CaseSubjectType.Container, // ASE upstream is container-shaped; future per-instance config can override.
+                SubjectIdentifier = subjectIdentifier,
+                SubjectPayloadJson = "{}",
+                State = InspectionWorkflowState.Open,
+                OpenedAt = now,
+                StateEnteredAt = now,
+                CorrelationId = System.Diagnostics.Activity.Current?.RootId,
+                TenantId = device.TenantId
+            };
+            db.Cases.Add(parentCase);
+        }
+
+        // 4. Persist Scan + ScanArtifact. Save the bytes through the
+        //    image store so the pre-render worker / image-route handler
+        //    can reach back via the content hash.
+        var capturedAt = record.CapturedAt;
+        var bytes = primary.Bytes;
+        var contentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        var ext = MimeToExtension(primary.MimeType);
+        var storageUri = await imageStore.SaveSourceAsync(contentHash, ext, bytes, ct);
+
+        var scan = new Scan
+        {
+            Id = Guid.NewGuid(),
+            CaseId = parentCase.Id,
+            ScannerDeviceInstanceId = device.InstanceId,
+            Mode = "ingested",
+            CapturedAt = capturedAt,
+            OperatorUserId = null,
+            IdempotencyKey = record.IdempotencyKey,
+            CorrelationId = parentCase.CorrelationId
+                ?? System.Diagnostics.Activity.Current?.RootId,
+            TenantId = device.TenantId
+        };
+        db.Scans.Add(scan);
+
+        var artifact = new ScanArtifact
+        {
+            Id = Guid.NewGuid(),
+            ScanId = scan.Id,
+            ArtifactKind = "Primary",
+            StorageUri = storageUri,
+            MimeType = primary.MimeType,
+            WidthPx = primary.WidthPx,
+            HeightPx = primary.HeightPx,
+            Channels = primary.Channels,
+            ContentHash = contentHash,
+            MetadataJson = JsonSerializer.Serialize(primary.Metadata),
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = device.TenantId
+        };
+        db.ScanArtifacts.Add(artifact);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            AseSyncInstruments.RecordsPersistedTotal.Add(1,
+                new KeyValuePair<string, object?>("type_code", device.TypeCode));
+        }
+        catch (DbUpdateException ex) when (IsScanIdempotencyKeyViolation(ex))
+        {
+            // Lost the race against another worker/host that beat us
+            // to the same idempotency key. Treat as a clean dedupe —
+            // the winner's row is canonical.
+            _logger.LogDebug(ex,
+                "AseSyncWorker lost idempotency-key race for tenant={TenantId} key={Key}; treating as dedupe.",
+                device.TenantId, record.IdempotencyKey);
+            AseSyncInstruments.DedupedTotal.Add(1,
+                new KeyValuePair<string, object?>("type_code", device.TypeCode));
+            // Detach so the next iteration's SaveChanges doesn't retry
+            // the now-rejected row.
+            db.Entry(scan).State = EntityState.Detached;
+            db.Entry(artifact).State = EntityState.Detached;
+            if (existingCase is null)
+            {
+                db.Entry(parentCase).State = EntityState.Detached;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Detects the unique-index violation produced when two concurrent
+    /// worker hosts try to persist the same cursor record. Mirror of the
+    /// shape <c>CaseWorkflowService.IsScanIdempotencyKeyViolation</c>
+    /// uses — kept inline so the worker doesn't take a hard reference
+    /// on CaseWorkflowService for this single helper.
+    /// </summary>
+    private static bool IsScanIdempotencyKeyViolation(DbUpdateException ex)
+        => ex.InnerException?.GetType().Name.Contains("PostgresException", StringComparison.Ordinal) == true
+           && ex.InnerException.Message.Contains("ux_scans_tenant_idempotency", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Mirror of <c>CaseWorkflowService.MimeToExtension</c>. Inline copy so
+    /// the worker doesn't take a hard reference on CaseWorkflowService for
+    /// this single helper.
+    /// </summary>
+    private static string MimeToExtension(string? mime) => mime?.ToLowerInvariant() switch
+    {
+        "image/png" => ".png",
+        "image/jpeg" or "image/jpg" => ".jpg",
+        "image/tiff" => ".tiff",
+        "image/webp" => ".webp",
+        "image/bmp" => ".bmp",
+        _ => ".bin"
+    };
 
     /// <summary>Lightweight projection over <see cref="ScannerDeviceInstance"/>.</summary>
     private sealed record DeviceDescriptor(
@@ -396,4 +737,38 @@ internal static class AseSyncInstruments
             "nickerp.inspection.scanner.cursor_sync_pull_ms",
             unit: "ms",
             description: "AseSyncWorker per-pull wall-clock latency.");
+
+    /// <summary>
+    /// Sprint 50 / FU-ase-sync-persistence — Scan + ScanArtifact rows
+    /// successfully persisted from cursor pulls. One bump per record.
+    /// Tag: <c>type_code</c>.
+    /// </summary>
+    public static readonly System.Diagnostics.Metrics.Counter<long> RecordsPersistedTotal =
+        NickErpActivity.Meter.CreateCounter<long>(
+            "nickerp.inspection.scanner.cursor_sync_records_persisted_total",
+            unit: "records",
+            description: "AseSyncWorker count of cursor-sync records persisted as Scan + ScanArtifact rows.");
+
+    /// <summary>
+    /// Sprint 50 / FU-ase-sync-persistence — cursor records skipped
+    /// because the IdempotencyKey already exists (pre-check OR unique-
+    /// index race fallback). Tag: <c>type_code</c>.
+    /// </summary>
+    public static readonly System.Diagnostics.Metrics.Counter<long> DedupedTotal =
+        NickErpActivity.Meter.CreateCounter<long>(
+            "nickerp.inspection.scanner.cursor_sync_records_deduped_total",
+            unit: "records",
+            description: "AseSyncWorker count of cursor-sync records skipped via IdempotencyKey dedupe.");
+
+    /// <summary>
+    /// Sprint 50 / FU-ase-sync-persistence — per-record persistence
+    /// failures (parse exception, image-store failure, generic DB
+    /// error). The cursor still advances on the parent batch unless the
+    /// adapter throws on PullAsync. Tag: <c>type_code</c>.
+    /// </summary>
+    public static readonly System.Diagnostics.Metrics.Counter<long> PersistFailedTotal =
+        NickErpActivity.Meter.CreateCounter<long>(
+            "nickerp.inspection.scanner.cursor_sync_persist_failed_total",
+            unit: "records",
+            description: "AseSyncWorker count of records that threw during Scan persistence.");
 }

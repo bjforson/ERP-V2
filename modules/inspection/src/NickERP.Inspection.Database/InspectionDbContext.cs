@@ -86,6 +86,14 @@ public sealed class InspectionDbContext : DbContext
     /// </summary>
     public DbSet<WebhookCursor> WebhookCursors => Set<WebhookCursor>();
 
+    /// <summary>
+    /// Sprint 50 / FU-cursor-state-persistence — per-tenant per-(scanner
+    /// type, adapter) cursor durable state for the AseSyncWorker (and
+    /// any future cursor-sync worker). Replaces the in-memory dict
+    /// AseSyncWorker shipped with at Sprint 24.
+    /// </summary>
+    public DbSet<ScannerCursorSyncState> ScannerCursorSyncStates => Set<ScannerCursorSyncState>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -1016,6 +1024,35 @@ public sealed class InspectionDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.AdapterName })
                 .IsUnique()
                 .HasDatabaseName("ux_webhook_cursors_tenant_adapter");
+        });
+
+        // ----- ScannerCursorSyncState (Sprint 50 / FU-cursor-state-persistence) ----------
+        // One row per (TenantId, ScannerDeviceTypeId, AdapterName). Optimistic
+        // concurrency on ConcurrencyToken — multi-host advances converge via
+        // SaveChanges retry, not a lock.
+        modelBuilder.Entity<ScannerCursorSyncState>(e =>
+        {
+            e.ToTable("scanner_cursor_sync_states");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.ScannerDeviceTypeId).IsRequired().HasMaxLength(64);
+            e.Property(x => x.AdapterName).IsRequired().HasMaxLength(64);
+            e.Property(x => x.LastCursorValue).IsRequired().HasMaxLength(256);
+            e.Property(x => x.LastAdvancedAt).IsRequired();
+            // EF Core treats a uint xmin shadow as the row-version, but we
+            // own the bump explicitly so the test path on EF in-memory
+            // stays predictable. ConcurrencyCheck (not RowVersion) keeps
+            // the increment under our control while still failing
+            // SaveChanges on a stale value.
+            e.Property(x => x.ConcurrencyToken).IsConcurrencyToken();
+            e.Property(x => x.TenantId).IsRequired();
+
+            // One cursor per (Tenant, ScannerDeviceTypeId, AdapterName).
+            e.HasIndex(x => new { x.TenantId, x.ScannerDeviceTypeId, x.AdapterName })
+                .IsUnique()
+                .HasDatabaseName("ux_cursor_sync_state_tenant_type_adapter");
+            e.HasIndex(x => x.TenantId)
+                .HasDatabaseName("ix_cursor_sync_state_tenant");
         });
     }
 }

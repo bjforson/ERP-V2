@@ -7,6 +7,7 @@ using NickERP.Inspection.Application.Workers;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Inspection.ExternalSystems.Abstractions;
+using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Inspection.Web.Services;
 using NickERP.Platform.Plugins;
@@ -60,6 +61,11 @@ public sealed class Sprint24WorkersTests : IDisposable
         services.AddSingleton(_cursorAdapter);
         services.AddSingleton(_esAdapter);
         services.AddSingleton<IPluginRegistry>(sp => new MultiPluginRegistry(_scannerAdapter, _cursorAdapter, _esAdapter));
+
+        // Sprint 50 / Phase B — AseSyncWorker now persists Scan +
+        // ScanArtifact rows through IImageStore. Register a noop store
+        // so the in-memory DbContext path stays self-contained.
+        services.AddSingleton<IImageStore>(new NoopImageStore());
 
         // Worker options — every worker is enabled so the SweepOnce /
         // PullOnce / etc methods don't no-op.
@@ -232,6 +238,317 @@ public sealed class Sprint24WorkersTests : IDisposable
     }
 
     // -----------------------------------------------------------------
+    // Sprint 50 / Phase B — AseSyncWorker persistence
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task AseSync_PersistsScanAndArtifact_OnFirstSeeingRecord()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        var key = "idem-persist-1";
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(
+                    DeviceId: _scannerInstanceId,
+                    SourceReference: "MSCU-CURSOR-1",
+                    CapturedAt: DateTimeOffset.UtcNow,
+                    Format: "image/png",
+                    Bytes: new byte[] { 0x41, 0x42, 0x43, 0x44 },
+                    IdempotencyKey: key)
+            },
+            NextCursor: "after-1",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        var pulled = await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        Assert.Equal(1, pulled);
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var scan = await db.Scans.AsNoTracking().FirstAsync(s => s.IdempotencyKey == key);
+        Assert.Equal(_scannerInstanceId, scan.ScannerDeviceInstanceId);
+        Assert.Equal(_tenantId, scan.TenantId);
+
+        var artifact = await db.ScanArtifacts.AsNoTracking().FirstAsync(a => a.ScanId == scan.Id);
+        Assert.Equal("Primary", artifact.ArtifactKind);
+        Assert.Equal(_tenantId, artifact.TenantId);
+        Assert.False(string.IsNullOrEmpty(artifact.ContentHash));
+        Assert.False(string.IsNullOrEmpty(artifact.StorageUri));
+
+        // Parent case auto-opens with the cursor record's SourceReference
+        // as the SubjectIdentifier (mirrors FS6000 IngestRawArtifactAsync).
+        var parent = await db.Cases.AsNoTracking().FirstAsync(c => c.Id == scan.CaseId);
+        Assert.Equal("MSCU-CURSOR-1", parent.SubjectIdentifier);
+        Assert.Equal(_locationId, parent.LocationId);
+        Assert.Equal(InspectionWorkflowState.Open, parent.State);
+    }
+
+    [Fact]
+    public async Task AseSync_DedupesOnDuplicateIdempotencyKey()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        var key = "idem-dedupe";
+        var record = new CursorSyncRecord(
+            DeviceId: _scannerInstanceId,
+            SourceReference: "MSCU-DEDUPE",
+            CapturedAt: DateTimeOffset.UtcNow,
+            Format: "image/png",
+            Bytes: new byte[] { 0x01, 0x02, 0x03 },
+            IdempotencyKey: key);
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[] { record },
+            NextCursor: "c1",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        // Second cycle — same record, identical IdempotencyKey. Worker
+        // pre-checks + skips persistence; only one Scan row exists.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[] { record },
+            NextCursor: "c2",
+            HasMore: false);
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var scans = await db.Scans.AsNoTracking()
+            .Where(s => s.IdempotencyKey == key)
+            .ToListAsync();
+        Assert.Single(scans);
+
+        // Artifact is also single — no orphan rows from the dedupe cycle.
+        var artifacts = await db.ScanArtifacts.AsNoTracking()
+            .Where(a => a.ScanId == scans[0].Id)
+            .ToListAsync();
+        Assert.Single(artifacts);
+    }
+
+    [Fact]
+    public async Task AseSync_ReusesOpenCase_ForSameSubjectInWindow()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        // First record opens a fresh case keyed on SourceReference.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-REUSE", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0xAA }, "idem-reuse-1")
+            },
+            NextCursor: "c1", HasMore: false);
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        // Second record, same subject, different idempotency key — should
+        // attach to the SAME case, not open a new one.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-REUSE", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0xBB }, "idem-reuse-2")
+            },
+            NextCursor: "c2", HasMore: false);
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var cases = await db.Cases.AsNoTracking()
+            .Where(c => c.SubjectIdentifier == "MSCU-REUSE")
+            .ToListAsync();
+        Assert.Single(cases);
+
+        var scans = await db.Scans.AsNoTracking()
+            .Where(s => s.CaseId == cases[0].Id)
+            .ToListAsync();
+        Assert.Equal(2, scans.Count);
+    }
+
+    [Fact]
+    public async Task AseSync_AdvancesCursor_AfterPersistence()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-ADVANCE", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0xC0, 0xDE }, "idem-advance-1")
+            },
+            NextCursor: "advanced-cursor",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        // Second cycle — adapter should see the new cursor we returned.
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "advanced-cursor",
+            HasMore: false);
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        Assert.Equal("advanced-cursor", _cursorAdapter.LastCursorSeen);
+    }
+
+    // -----------------------------------------------------------------
+    // Sprint 50 / Phase C — ScannerCursorSyncState persistence
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task AseSync_PersistsCursorRow_OnFirstAdvance()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "first-cursor",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var rows = await db.ScannerCursorSyncStates.AsNoTracking().ToListAsync();
+        var row = Assert.Single(rows);
+        Assert.Equal(_tenantId, row.TenantId);
+        Assert.Equal("test-cursor-scanner", row.ScannerDeviceTypeId);
+        Assert.Equal("test-cursor-scanner", row.AdapterName);
+        Assert.Equal("first-cursor", row.LastCursorValue);
+        Assert.True(row.LastAdvancedAt > DateTimeOffset.MinValue);
+    }
+
+    [Fact]
+    public async Task AseSync_CursorSurvivesWorkerRestart()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        // Cycle 1 — adapter advances cursor to "after-restart-1".
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "after-restart-1",
+            HasMore: false);
+        var first = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(first, "PullOnceAsync");
+
+        // Simulate worker restart — fresh AseSyncWorker instance,
+        // empty in-memory dict. Cursor must be re-loaded from
+        // persistent state so the adapter sees the same value.
+        var fresh = new AseSyncWorker(
+            _sp,
+            _sp.GetRequiredService<IOptions<AseSyncOptions>>(),
+            NullLogger<AseSyncWorker>.Instance);
+
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "after-restart-1",
+            HasMore: false);
+        await InvokeAsync<int>(fresh, "PullOnceAsync");
+
+        Assert.Equal("after-restart-1", _cursorAdapter.LastCursorSeen);
+    }
+
+    [Fact]
+    public async Task AseSync_AdvancesCursorRow_AcrossMultipleCycles()
+    {
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+
+        // Three sequential cycles, each advancing the cursor.
+        var cursors = new[] { "c1", "c2", "c3" };
+        foreach (var c in cursors)
+        {
+            _cursorAdapter.NextBatch = new CursorSyncBatch(
+                Records: System.Array.Empty<CursorSyncRecord>(),
+                NextCursor: c,
+                HasMore: false);
+            await InvokeAsync<int>(worker, "PullOnceAsync");
+        }
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var row = await db.ScannerCursorSyncStates.AsNoTracking().SingleAsync();
+        Assert.Equal("c3", row.LastCursorValue);
+        // Every advance bumps the concurrency token; we expect at least
+        // one bump per cycle (the in-memory provider may bump more if
+        // the worker advances on both empty + non-empty paths).
+        Assert.True(row.ConcurrencyToken >= cursors.Length,
+            $"Expected concurrency token >= {cursors.Length} after {cursors.Length} advances; got {row.ConcurrencyToken}.");
+    }
+
+    [Fact]
+    public async Task AseSync_AdvancesCursor_OnEmptyBatch()
+    {
+        // The adapter may signal "no records this cycle" but still
+        // hand back a non-empty NextCursor (the source has moved past
+        // this point). The worker must persist that cursor so a future
+        // restart doesn't rewind to the previous value.
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: System.Array.Empty<CursorSyncRecord>(),
+            NextCursor: "moved-forward-empty",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var row = await db.ScannerCursorSyncStates.AsNoTracking().SingleAsync();
+        Assert.Equal("moved-forward-empty", row.LastCursorValue);
+    }
+
+    [Fact]
+    public async Task AseSync_PartialBatchFailure_DoesNotKillBatch()
+    {
+        // One record's bytes will cause the adapter to throw on
+        // ParseScanAsync; subsequent records still persist. The worker
+        // logs the failure + the cycle returns the count of records the
+        // ADAPTER returned (not the count successfully persisted), so
+        // pulled stays at the batch size.
+        await SeedTenantAsync();
+        await SeedCursorScannerDeviceAsync();
+
+        _cursorAdapter.PoisonRefs.Add("MSCU-POISON");
+        _cursorAdapter.NextBatch = new CursorSyncBatch(
+            Records: new[]
+            {
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-OK", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0x01 }, "idem-ok"),
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-POISON", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0x02 }, "idem-poison"),
+                new CursorSyncRecord(_scannerInstanceId, "MSCU-OK-2", DateTimeOffset.UtcNow,
+                    "image/png", new byte[] { 0x03 }, "idem-ok-2")
+            },
+            NextCursor: "c-after-batch",
+            HasMore: false);
+
+        var worker = _sp.GetRequiredService<AseSyncWorker>();
+        await InvokeAsync<int>(worker, "PullOnceAsync");
+
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var keys = await db.Scans.AsNoTracking()
+            .Select(s => s.IdempotencyKey)
+            .ToListAsync();
+        // Two non-poison records persist; the poison record is logged + skipped.
+        Assert.Contains("idem-ok", keys);
+        Assert.Contains("idem-ok-2", keys);
+        Assert.DoesNotContain("idem-poison", keys);
+    }
+
+    // -----------------------------------------------------------------
     // AuthorityDocumentBackfillWorker
     // -----------------------------------------------------------------
 
@@ -381,6 +698,186 @@ public sealed class Sprint24WorkersTests : IDisposable
             Assert.Equal("ContainerData", doc.DocumentType);
             Assert.Equal(fileName, doc.ReferenceNumber);
             Assert.Contains("_inbox_content_hash", doc.PayloadJson);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Sprint 50 / Phase D — AuthorityDocumentInboxWorker per-tenant routing
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task AuthorityDocInbox_MultiTenant_RoutesByTenantCodeSubdir()
+    {
+        // Two tenants, each with their own subdir under the drop root.
+        // Files inside <tenant-code>/ContainerData route to that tenant.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-multi-" + Guid.NewGuid());
+        var tenantA = new { Id = 100L, Code = "tenant-a", SubjectId = "MSCU0050001" };
+        var tenantB = new { Id = 101L, Code = "tenant-b", SubjectId = "MSCU0050002" };
+
+        var dirA = Path.Combine(dropFolder, tenantA.Code, "ContainerData");
+        var dirB = Path.Combine(dropFolder, tenantB.Code, "ContainerData");
+        Directory.CreateDirectory(dirA);
+        Directory.CreateDirectory(dirB);
+        var fileA = Path.Combine(dirA, "doc-A.json");
+        var fileB = Path.Combine(dirB, "doc-B.json");
+        await File.WriteAllTextAsync(fileA, $"{{\"container_number\":\"{tenantA.SubjectId}\"}}");
+        await File.WriteAllTextAsync(fileB, $"{{\"container_number\":\"{tenantB.SubjectId}\"}}");
+
+        try
+        {
+            await SeedTenantAsync();
+            await SeedAdditionalTenantAsync(tenantA.Id, tenantA.Code);
+            await SeedAdditionalTenantAsync(tenantB.Id, tenantB.Code);
+
+            // Per-tenant scaffolding (ExternalSystem + Case + Location).
+            await SeedTenantScopedFixtureAsync(tenantA.Id, tenantA.SubjectId);
+            await SeedTenantScopedFixtureAsync(tenantB.Id, tenantB.SubjectId);
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(2, ingested);
+
+            using var scope = _sp.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+            var tenant = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+
+            tenant.SetTenant(tenantA.Id);
+            var docsA = await db.AuthorityDocuments.AsNoTracking()
+                .Where(d => d.TenantId == tenantA.Id)
+                .ToListAsync();
+            Assert.Single(docsA);
+            Assert.Equal("doc-A.json", docsA[0].ReferenceNumber);
+
+            tenant.SetTenant(tenantB.Id);
+            var docsB = await db.AuthorityDocuments.AsNoTracking()
+                .Where(d => d.TenantId == tenantB.Id)
+                .ToListAsync();
+            Assert.Single(docsB);
+            Assert.Equal("doc-B.json", docsB[0].ReferenceNumber);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task AuthorityDocInbox_MultiTenant_UnknownTenantSubdirSkipped()
+    {
+        // A subdir name that doesn't match any active tenant code: log
+        // a warning + skip. Files in another (recognised) tenant subdir
+        // still get ingested.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-unknown-" + Guid.NewGuid());
+        var tenantA = new { Id = 200L, Code = "real-tenant", SubjectId = "MSCU0050100" };
+
+        var validDir = Path.Combine(dropFolder, tenantA.Code, "ContainerData");
+        var unknownDir = Path.Combine(dropFolder, "no-such-tenant", "ContainerData");
+        Directory.CreateDirectory(validDir);
+        Directory.CreateDirectory(unknownDir);
+        await File.WriteAllTextAsync(Path.Combine(validDir, "ok.json"),
+            $"{{\"container_number\":\"{tenantA.SubjectId}\"}}");
+        await File.WriteAllTextAsync(Path.Combine(unknownDir, "ignored.json"),
+            "{\"container_number\":\"MSCU-IGNORED\"}");
+
+        try
+        {
+            await SeedTenantAsync();
+            await SeedAdditionalTenantAsync(tenantA.Id, tenantA.Code);
+            await SeedTenantScopedFixtureAsync(tenantA.Id, tenantA.SubjectId);
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(1, ingested);
+
+            using var scope = _sp.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+            var docs = await db.AuthorityDocuments.AsNoTracking().ToListAsync();
+            Assert.Single(docs);
+            Assert.Equal(tenantA.Id, docs[0].TenantId);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task AuthorityDocInbox_LegacySingleTenantPreserved_WhenNoTenantSubdirs()
+    {
+        // No tenant-shaped subdirs at the drop root → fall back to the
+        // Sprint 24 single-tenant path. Sprint 24 tests asserted this
+        // shape; rerun the assertion to make sure the multi-tenant
+        // detection doesn't break legacy deploys.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-legacy-" + Guid.NewGuid());
+        var sub = Path.Combine(dropFolder, "ContainerData");
+        Directory.CreateDirectory(sub);
+        await File.WriteAllTextAsync(Path.Combine(sub, "legacy.json"),
+            "{\"container_number\":\"MSCU-LEGACY-1\"}");
+
+        try
+        {
+            await SeedTenantAsync(); // single-tenant (Id=1, Code="t1") only
+            await SeedExternalSystemAsync();
+            await SeedCaseAsync(_locationId, "MSCU-LEGACY-1");
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(1, ingested);
+
+            using var scope = _sp.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+            var doc = await db.AuthorityDocuments.AsNoTracking().FirstAsync();
+            Assert.Equal(_tenantId, doc.TenantId);
+        }
+        finally
+        {
+            try { Directory.Delete(dropFolder, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task AuthorityDocInbox_MultiTenant_NoMatchingCase_SkipsFile()
+    {
+        // Subdir matches a tenant but no case exists for the container —
+        // worker logs unmatched + drops file. Mirrors the single-tenant
+        // unmatched path.
+        var dropFolder = Path.Combine(Path.GetTempPath(), "s50-unmatched-" + Guid.NewGuid());
+        var tenantA = new { Id = 300L, Code = "tenant-um" };
+
+        var dir = Path.Combine(dropFolder, tenantA.Code, "ContainerData");
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Combine(dir, "orphan.json"),
+            "{\"container_number\":\"MSCU-NEVER-EXISTS\"}");
+
+        try
+        {
+            await SeedTenantAsync();
+            await SeedAdditionalTenantAsync(tenantA.Id, tenantA.Code);
+            // Note: no case seeded for MSCU-NEVER-EXISTS.
+
+            var optsMonitor = _sp.GetRequiredService<IOptions<IcumsFileScannerOptions>>();
+            optsMonitor.Value.DropFolder = dropFolder;
+            optsMonitor.Value.ExpectedSubfolders = new[] { "ContainerData" };
+
+            var worker = _sp.GetRequiredService<AuthorityDocumentInboxWorker>();
+            var ingested = await InvokeAsync<int>(worker, "ScanOnceAsync");
+            Assert.Equal(0, ingested);
         }
         finally
         {
@@ -728,6 +1225,83 @@ public sealed class Sprint24WorkersTests : IDisposable
     // Helpers
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// Sprint 50 / Phase D — seed a second / third tenant for the
+    /// multi-tenant inbox tests. Doesn't seed a Location / fixtures —
+    /// the caller adds those via <see cref="SeedTenantScopedFixtureAsync"/>.
+    /// </summary>
+    private async Task SeedAdditionalTenantAsync(long tenantId, string code)
+    {
+        using var scope = _sp.CreateScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        if (await tenancy.Tenants.AnyAsync(t => t.Id == tenantId)) return;
+        tenancy.Tenants.Add(new Tenant
+        {
+            Id = tenantId,
+            Code = code,
+            Name = $"Test {code}",
+            State = TenantState.Active,
+            BillingPlan = "internal",
+            TimeZone = "UTC",
+            Locale = "en",
+            Currency = "USD",
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await tenancy.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Sprint 50 / Phase D — seed location + ExternalSystemInstance +
+    /// matching case for a non-default tenant so the per-tenant inbox
+    /// path can resolve everything it needs.
+    /// </summary>
+    private async Task SeedTenantScopedFixtureAsync(long tenantId, string subjectIdentifier)
+    {
+        using var scope = _sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var tenant = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+        tenant.SetTenant(tenantId);
+
+        var locationId = Guid.NewGuid();
+        db.Locations.Add(new Location
+        {
+            Id = locationId,
+            Code = $"loc-{tenantId}",
+            Name = $"Loc {tenantId}",
+            TimeZone = "UTC",
+            IsActive = true,
+            TenantId = tenantId
+        });
+
+        db.ExternalSystemInstances.Add(new ExternalSystemInstance
+        {
+            Id = Guid.NewGuid(),
+            TypeCode = "test-authority",
+            DisplayName = "Test Authority",
+            Description = "Test stub",
+            Scope = ExternalSystemBindingScope.Shared,
+            ConfigJson = "{}",
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = tenantId
+        });
+
+        db.Cases.Add(new InspectionCase
+        {
+            Id = Guid.NewGuid(),
+            LocationId = locationId,
+            SubjectType = CaseSubjectType.Container,
+            SubjectIdentifier = subjectIdentifier,
+            SubjectPayloadJson = "{}",
+            State = InspectionWorkflowState.Open,
+            OpenedAt = DateTimeOffset.UtcNow,
+            StateEnteredAt = DateTimeOffset.UtcNow,
+            TenantId = tenantId
+        });
+
+        await db.SaveChangesAsync();
+    }
+
     private async Task SeedTenantAsync()
     {
         using var scope = _sp.CreateScope();
@@ -958,6 +1532,21 @@ internal sealed class RecordingCursorAdapter : IScannerCursorSyncAdapter
     public string? LastCursorSeen { get; private set; }
     public int PullInvocationCount { get; private set; }
 
+    /// <summary>
+    /// Sprint 50 / Phase B — when ParseScanAsync runs against a record
+    /// whose source-reference appears here, throw to simulate adapter
+    /// failure. Lets the worker's per-record try/catch be exercised.
+    /// </summary>
+    public HashSet<string> PoisonRefs { get; } = new();
+
+    /// <summary>
+    /// Most-recent SourceReference passed to ParseScanAsync — recorded
+    /// on the matching record's bytes. (We can't introspect the record
+    /// directly, so the worker passes the bytes; the test seeds a
+    /// SourceReference→bytes map here.)
+    /// </summary>
+    public Dictionary<byte[], string> RefByBytes { get; } = new(new ByteArrayComparer());
+
     public Task<NickERP.Inspection.Scanners.Abstractions.ConnectionTestResult> TestAsync(
         ScannerDeviceConfig config, CancellationToken ct = default) =>
         Task.FromResult(new NickERP.Inspection.Scanners.Abstractions.ConnectionTestResult(true, "ok"));
@@ -973,12 +1562,77 @@ internal sealed class RecordingCursorAdapter : IScannerCursorSyncAdapter
         Task.FromResult(new ParsedArtifact(raw.DeviceId, raw.CapturedAt, 0, 0, 0, raw.Format, raw.Bytes,
             new Dictionary<string, string>()));
 
+    public Task<NickERP.Inspection.Scanners.Abstractions.ParsedScan> ParseScanAsync(
+        byte[] rawScanData,
+        ScannerCapabilities capabilities,
+        CancellationToken ct = default)
+    {
+        // Poison-ref hook: any record whose SourceReference is in
+        // PoisonRefs (registered by Pull below) throws here so the
+        // worker's per-record try/catch fires.
+        var matchingRef = NextBatch?.Records
+            ?.FirstOrDefault(r => r.Bytes.SequenceEqual(rawScanData))?.SourceReference;
+        if (matchingRef is not null && PoisonRefs.Contains(matchingRef))
+        {
+            throw new InvalidOperationException($"simulated parse failure for {matchingRef}");
+        }
+
+        var image = new NickERP.Inspection.Edge.Abstractions.ImageFile(
+            FileName: "test.bin",
+            Sha256Hex: NickERP.Inspection.Edge.Abstractions.ScanPackageManifest.Sha256Hex(rawScanData),
+            View: "primary",
+            SizeBytes: rawScanData.LongLength,
+            Data: rawScanData);
+        var pkg = new NickERP.Inspection.Edge.Abstractions.ScanPackage(
+            ScanId: Guid.NewGuid().ToString(),
+            SiteId: string.Empty,
+            ScannerId: "test-cursor-scanner",
+            GatewayId: string.Empty,
+            ScanType: "primary",
+            OccurredAt: DateTimeOffset.UtcNow,
+            OperatorId: string.Empty,
+            ContainerNumber: string.Empty,
+            VehiclePlate: string.Empty,
+            DeclarationNumber: string.Empty,
+            ManifestNumber: string.Empty,
+            ImageFiles: new[] { image },
+            ManifestSha256: System.Array.Empty<byte>(),
+            ManifestSignature: System.Array.Empty<byte>());
+        var artifact = new ParsedArtifact(
+            DeviceId: Guid.Empty,
+            CapturedAt: pkg.OccurredAt,
+            WidthPx: 0,
+            HeightPx: 0,
+            Channels: 1,
+            MimeType: "image/png",
+            Bytes: rawScanData,
+            Metadata: new Dictionary<string, string>());
+        return Task.FromResult(new NickERP.Inspection.Scanners.Abstractions.ParsedScan(
+            new[] { artifact }, pkg));
+    }
+
     public Task<CursorSyncBatch> PullAsync(
         ScannerDeviceConfig config, string cursor, int batchLimit, CancellationToken ct)
     {
         PullInvocationCount++;
         LastCursorSeen = cursor;
         return Task.FromResult(NextBatch);
+    }
+}
+
+internal sealed class ByteArrayComparer : IEqualityComparer<byte[]>
+{
+    public bool Equals(byte[]? x, byte[]? y) =>
+        ReferenceEquals(x, y) || (x is not null && y is not null && x.SequenceEqual(y));
+
+    public int GetHashCode(byte[] obj)
+    {
+        unchecked
+        {
+            int hash = 17;
+            foreach (var b in obj) hash = hash * 31 + b;
+            return hash;
+        }
     }
 }
 
@@ -1011,6 +1665,22 @@ internal sealed class RecordingExternalSystemAdapter : IExternalSystemAdapter
         if (ShouldThrowOnSubmit) throw new InvalidOperationException("simulated authority crash");
         return Task.FromResult(NextSubmissionResult);
     }
+}
+
+/// <summary>
+/// Sprint 50 / Phase B — noop IImageStore for the in-memory worker tests
+/// so AseSyncWorker.PersistRecordsAsync can resolve a store without
+/// touching disk. Mirrors NoopImageStore in CaseDetailTabsTests.
+/// </summary>
+internal sealed class NoopImageStore : IImageStore
+{
+    public Task<string> SaveSourceAsync(string contentHash, string fileExtension, ReadOnlyMemory<byte> bytes, CancellationToken ct = default) =>
+        Task.FromResult("noop://" + contentHash);
+    public Task<byte[]> ReadSourceAsync(string contentHash, string fileExtension, CancellationToken ct = default) =>
+        Task.FromResult(System.Array.Empty<byte>());
+    public Task<string> SaveRenderAsync(Guid scanArtifactId, string kind, ReadOnlyMemory<byte> bytes, CancellationToken ct = default) =>
+        Task.FromResult("noop://" + scanArtifactId);
+    public Stream? OpenRenderRead(Guid scanArtifactId, string kind) => null;
 }
 
 /// <summary>
