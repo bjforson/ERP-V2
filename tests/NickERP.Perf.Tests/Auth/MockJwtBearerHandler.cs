@@ -7,7 +7,7 @@ namespace NickERP.Perf.Tests.Auth;
 
 /// <summary>
 /// Sprint 52 / FU-perf-auth-mocking-decision (Sprint 30) — outbound
-/// JWT signer for the NBomber HTTP client. Produces signed-but-
+/// JWT signer for the perf-test HTTP client. Produces signed-but-
 /// real-CF-Access-equivalent JWTs against a known-public-key pair
 /// generated at process start.
 /// </summary>
@@ -17,8 +17,8 @@ namespace NickERP.Perf.Tests.Auth;
 /// open question. Sprint 52 commits to: <b>mock JWKS validation for
 /// rep-volume tests + spot-check with real auth</b>. This class is the
 /// mock-side primitive; the spot-check path uses a real CF Access JWT
-/// produced out-of-band by an operator login, fed into NBomber via
-/// <c>NICKERP_PERF_BEARER_TOKEN</c> env var.
+/// produced out-of-band by an operator login, fed into the perf-test
+/// HTTP path via <c>NICKERP_PERF_BEARER_TOKEN</c> env var.
 /// </para>
 /// <para>
 /// Why not pre-bake the signing key on disk: rotating per process run
@@ -32,11 +32,12 @@ namespace NickERP.Perf.Tests.Auth;
 /// </para>
 /// <para>
 /// This class is intentionally <b>not</b> a real
-/// <c>DelegatingHandler</c> — NBomber's HTTP client is configured
-/// per-scenario via <c>HttpClient.DefaultRequestHeaders</c>; the
-/// scenario calls <see cref="ProduceBearerToken"/> once, sets the
-/// header, and reuses for the run. The "Handler" naming aligns with
-/// the brief; the behaviour is "produce + cache one token per run."
+/// <c>DelegatingHandler</c> — the perf scenarios configure their
+/// <see cref="HttpClient"/> per-scenario via
+/// <c>DefaultRequestHeaders</c>; the scenario calls
+/// <see cref="ProduceBearerToken"/> once, sets the header, and reuses
+/// for the run. The "Handler" naming aligns with the brief; the
+/// behaviour is "produce + cache one token per run."
 /// </para>
 /// </remarks>
 public sealed class MockJwtBearerHandler : IDisposable

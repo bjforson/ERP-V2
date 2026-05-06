@@ -11,7 +11,7 @@
       'dotnet test' discovers ZERO tests here by design; perf scenarios run only
       when explicitly invoked via 'dotnet run' with a scenario name.
 
-      Suite total stays at 447 of 447 passing tests; this project contributes 0.
+      Suite total stays at 1099 of 1099 passing tests; this project contributes 0.
     -->
     <IsPackable>false</IsPackable>
     <IsTestProject>false</IsTestProject>
@@ -20,15 +20,23 @@
 
   <ItemGroup>
     <!--
-      NBomber is the load-test framework chosen per docs/perf/test-plan.md.
-      MIT-licensed, .NET-native, scenarios in C#.
+      Sprint 58 — replaced NBomber 6.1.0 (commercial subscription per
+      SEC-DEP-3) + NBomber.Http 6.0.0 with a homegrown in-tree runner at
+      Runner/. NBomber.Contracts (Apache-2.0) was also dropped; the few
+      types we used (Scenario / LoadSimulation / NodeStats) had small
+      enough surfaces that owning them cleanly was worth it.
 
-      We pin to a known-good version. Bumps go through the dependency hygiene
-      checklist (SEC-DEP-1) like any other NuGet.
+      The replacement primitives live at:
+        Runner/NickPerfScenario.cs   — typed scenario shape
+        Runner/NickPerfRunner.cs     — rate-based scheduler
+        Runner/NickPerfStats.cs      — p50/p95/p99 percentiles
+        Runner/NickPerfReport.cs     — markdown report
+        Runner/Http/NickPerfHttp.cs  — direct HttpClient helpers
+
+      License posture: the project now has NO non-allowlisted dependencies.
     -->
-    <PackageReference Include="NBomber" Version="6.1.0" />
-    <PackageReference Include="NBomber.Http" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
     <!--

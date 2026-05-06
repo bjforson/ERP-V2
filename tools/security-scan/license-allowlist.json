@@ -25,7 +25,22 @@
         "6.1.0 is a P0 finding — the package's bundled LICENSE is the NBomber",
         "Commercial Subscription Agreement, NOT MIT (csproj comment was wrong).",
         "Documented under SEC-DEP-3 in audit-checklist-2026.md; see also",
-        "license-allowlist-rationale.md for full triage notes."
+        "license-allowlist-rationale.md for full triage notes.",
+        "",
+        "Sprint 58 update (2026-05-06): the Sprint 57 NBomber P0 is RESOLVED by",
+        "removing NBomber + NBomber.Http + NBomber.Contracts from the perf-test",
+        "project and replacing the runtime with a homegrown in-tree runner at",
+        "tests/NickERP.Perf.Tests/Runner/. Four of the 5 Sprint-57 overrides",
+        "(FuncyDown, HdrHistogram, OneOf, FSharp.UMX) are now moot because they",
+        "were NBomber transitives swept out by the NBomber removal. The override",
+        "entries are kept in this file for audit-trail continuity and to defend",
+        "against re-introduction via a different transitive path. The NBomber",
+        "+ NBomber.Contracts entries below are kept for the same reason — they",
+        "now describe historical state (status: 'p0-finding-not-allowlisted'",
+        "for nbomber means the operator-decision is on file; the corrective",
+        "action was 'remove the package', not 'allowlist the proprietary",
+        "license'). Post-Sprint-58 audit shows 0 non-allowlisted, 1 unresolved",
+        "(xunit.abstractions, already triaged)."
     ],
     "version": "2026-05-06",
     "allowed": [

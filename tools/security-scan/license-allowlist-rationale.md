@@ -1,6 +1,6 @@
 # License allowlist — triage rationale
 
-**Last reviewed:** 2026-05-06 (Sprint 57)
+**Last reviewed:** 2026-05-06 (Sprint 58 — NBomber removal)
 **Companion:** `tools/security-scan/license-allowlist.json` (version 2026-05-06)
 **Tool:** `tools/security-scan/run-license-audit.ps1`
 **Audit-checklist link:** SEC-DEP-3 in `docs/security/audit-checklist-2026.md`
@@ -10,6 +10,15 @@ This file documents the per-package research that produced the
 9 candidate triage findings raised by Sprint 52's first license audit
 run (report at `tools/security-scan/reports/2026-05-06-license-audit.md`
 in its pre-Sprint-57 form).
+
+**Sprint 58 status:** the §2 NBomber P0 finding was resolved by
+removing NBomber + NBomber.Http + NBomber.Contracts from
+`tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj` and replacing the
+runtime with a homegrown in-tree runner (`tests/NickERP.Perf.Tests/Runner/`).
+That cascade also dropped §3-§6 (FuncyDown, HdrHistogram, OneOf,
+FSharp.UMX) automatically — they were all NBomber transitives. The
+post-Sprint-58 audit (`reports/2026-05-06-license-audit.md`) shows
+**0 non-allowlisted, 1 unresolved** (only `xunit.abstractions`, see §7).
 
 The format is one section per finding. The "Resolution" line is the
 allowlist decision; the "Evidence" link is the upstream LICENSE source
@@ -35,22 +44,53 @@ license harmony simplifies redistribution alongside Postgres binaries.
 
 ---
 
-## 2. NBomber (file-bundled LICENSE) — **P0 FINDING, NOT ALLOWLISTED**
+## 2. NBomber (file-bundled LICENSE) — **RESOLVED in Sprint 58 (NBomber removed)**
+
+**Status (Sprint 58, 2026-05-06):** RESOLVED by removing NBomber from the
+project. The historical Sprint 57 P0 rationale is preserved below for
+the audit trail; the resolution path chosen was option **(c)** — hand-
+roll an in-tree runner — extended one step further to also drop
+`NBomber.Contracts` (the Apache-2.0 sibling), since the surface we
+actually used was small enough to own cleanly. The replacement primitives
+live at `tests/NickERP.Perf.Tests/Runner/`:
+
+- `NickPerfScenario.cs` — typed scenario shape (`Name` + `RunStep` + `LoadProfile`)
+- `NickPerfRunner.cs` — `PeriodicTimer` + `SemaphoreSlim` rate scheduler
+- `NickPerfStats.cs` — latency buffer + nearest-rank p50/p95/p99 percentiles
+- `NickPerfReport.cs` — markdown report writer (one file per scenario)
+- `Http/NickPerfHttp.cs` — direct `HttpClient` helpers
+
+Behaviour parity with the Sprint 55 NBomber-shaped scenarios is
+preserved (same per-profile RPS, same skip-on-misconfigured semantics,
+same acceptance-gate thresholds). See `docs/perf/test-plan.md` §6
+("Test tooling decision — NickPerf in-tree runner") and
+`docs/perf/baseline-2026-05-06.md` for the Sprint 58 re-baseline.
+
+The post-Sprint-58 license audit (`tools/security-scan/reports/2026-05-06-license-audit.md`)
+shows zero non-allowlisted licenses; the only remaining unresolved
+finding is `xunit.abstractions 2.0.3` (already triaged in §7 — covered
+by the override map). SEC-DEP-3 P0 is closed.
+
+---
+
+### Historical Sprint 57 rationale (preserved for audit trail)
 
 | | |
 |---|---|
 | **Package** | `NBomber` 6.1.0 |
 | **Reported license** | `LICENSE` (canonical from file-sniff) / `LICENSE` (raw) — status `ok` (script's sniff returned the raw filename because none of the SPDX-pattern matchers fired) |
 | **Why flagged** | The audit script's `Resolve-LicenseFromNuspec` saw `<license type="file">LICENSE</license>`, opened the file, and ran the SPDX-pattern sniff — none of the patterns matched (the file is a custom commercial agreement, not a standard SPDX license). |
-| **Resolution** | **P0 — NOT ALLOWLISTED.** Added to `package_license_overrides` with `status: p0-finding-not-allowlisted`. Tracked under SEC-DEP-3 in `audit-checklist-2026.md`. |
-| **Rationale** | NBomber 6.1.0 ships the **NBOMBER LICENSE AGREEMENT Version 2.0** (effective 2024-05-01), not MIT. The agreement explicitly says: *"Subject to the terms and conditions of this Agreement and the applicable order form, NBomber grants to Customer a limited, non-exclusive, non-sublicensable, non-transferable, revocable license during the term of the Subscription Period to use the Software for which Customer has purchased a Commercial Subscription."* It also prohibits redistribution, sub-licensing, and use for the benefit of a third party (i.e. ASP / SaaS contexts). The csproj comment in `tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj` (line ~26) calls it "MIT-licensed" — that comment is **incorrect** and predates the NBomber 6.x re-licensing. |
-| **Operational impact** | NBomber is currently used in `tests/NickERP.Perf.Tests/` for the Phase V perf-test harness (HealthEndpoint scenario live; CaseCreate + Edge-replay scenarios stubbed). It is a **test-time dependency only**, not shipped with the production binaries. However, the agreement language ("solely in connection with the Customer's internal operations") suggests that even test-time use without a paid subscription is non-compliant. |
-| **Recommended replacement options** (for operator decision) | **(a)** Purchase NBomber commercial subscription — covers the perf harness as written, no code changes; cost $TBD per https://nbomber.com/pricing. **(b)** Replace with `dotnet-bombardier` / `k6` HTTP runner — open-source (Apache-2.0 / AGPL-3.0 respectively; k6 needs a separate license review). **(c)** Hand-roll an NBomber.Contracts-only harness — the Contracts package is Apache-2.0; the runtime APIs we use (`Scenario.Create` + `Step.Run` + `NBomberRunner.RegisterScenarios`) are all in the proprietary runtime. **(d)** Drop the perf harness from CI and use ad-hoc `dotnet run` invocations during Phase V execution only — does not change the legal posture but limits exposure. |
-| **Recommendation** | Operator decides between (a), (b), or (c). Default if no decision: pause NBomber-based perf work until a license is obtained or a replacement lands. The Phase V test plan (`docs/perf/test-plan.md`) is unaffected — it specifies the scenarios, not the runner. |
-| **Evidence** | `C:\Users\Administrator\.nuget\packages\nbomber\6.1.0\LICENSE` (full text on disk); https://github.com/PragmaticFlow/NBomber/blob/develop/LICENSE (upstream). |
+| **Resolution (Sprint 57)** | **P0 — NOT ALLOWLISTED.** Added to `package_license_overrides` with `status: p0-finding-not-allowlisted`. Tracked under SEC-DEP-3 in `audit-checklist-2026.md`. |
+| **Resolution (Sprint 58)** | **REMOVED.** Package dropped from `tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj`. Replacement runner lives at `tests/NickERP.Perf.Tests/Runner/`. |
+| **Rationale** | NBomber 6.1.0 shipped the **NBOMBER LICENSE AGREEMENT Version 2.0** (effective 2024-05-01), not MIT. The agreement explicitly said: *"Subject to the terms and conditions of this Agreement and the applicable order form, NBomber grants to Customer a limited, non-exclusive, non-sublicensable, non-transferable, revocable license during the term of the Subscription Period to use the Software for which Customer has purchased a Commercial Subscription."* It also prohibited redistribution, sub-licensing, and use for the benefit of a third party (i.e. ASP / SaaS contexts). The csproj comment in `tests/NickERP.Perf.Tests/NickERP.Perf.Tests.csproj` that called it "MIT-licensed" was **incorrect** and predated the NBomber 6.x re-licensing. |
+| **Operational impact (Sprint 57)** | NBomber was used in `tests/NickERP.Perf.Tests/` for the Phase V perf-test harness. It was a test-time dependency only, not shipped with the production binaries. However, the agreement language ("solely in connection with the Customer's internal operations") suggested even test-time use without a paid subscription was non-compliant. |
+| **Replacement options considered (Sprint 57)** | **(a)** Purchase NBomber commercial subscription — covers the perf harness as written, no code changes. **(b)** Replace with `dotnet-bombardier` / `k6` HTTP runner — open-source (Apache-2.0 / AGPL-3.0 respectively; k6 needs a separate license review). **(c)** Hand-roll an in-tree runner — small surface area, full ownership, zero ongoing dependency risk. **(d)** Drop the perf harness from CI. |
+| **Path chosen (Sprint 58)** | **(c) extended** — hand-rolled an in-tree runner that drops not only NBomber + NBomber.Http but also NBomber.Contracts. The Contracts package was Apache-2.0 (allowlisted), but we used so little of its surface that owning the types cleanly was simpler than maintaining the bump-and-allowlist dance for one transitive package. |
+| **Evidence** | `C:\Users\Administrator\.nuget\packages\nbomber\6.1.0\LICENSE` (full text on disk; nuget cache); https://github.com/PragmaticFlow/NBomber/blob/develop/LICENSE (upstream). |
 | **Added sprint** | 57 |
+| **Resolved sprint** | 58 |
 
-`nbomber.contracts` (also 6.1.0) is a **separate** package under Apache-2.0; that one is added to `package_license_overrides` with the standard rationale and is not part of the P0 finding.
+`nbomber.contracts` (also 6.1.0) was a **separate** package under Apache-2.0; it had its own override entry. Sprint 58 dropped that too — the override is now historical.
 
 ---
 
@@ -131,17 +171,19 @@ A future enhancement to `run-license-audit.ps1` could broaden the URL-pattern ma
 
 ## Summary table
 
-| # | Package | Resolution | License |
-|---|---|---|---|
-| 1 | Npgsql + Npgsql.EntityFrameworkCore.PostgreSQL | Allowlist | PostgreSQL (newly allowed) |
-| 2 | NBomber | **P0 — NOT allowlisted** | PROPRIETARY (commercial subscription) |
-| 3 | FuncyDown | Override | MIT |
-| 4 | HdrHistogram | Override | BSD-2-Clause |
-| 5 | OneOf | Override | MIT |
-| 6 | FSharp.UMX | Override | MIT |
-| 7 | xunit.abstractions | Override | Apache-2.0 |
+| # | Package | Sprint 57 resolution | Sprint 58 status | Final license |
+|---|---|---|---|---|
+| 1 | Npgsql + Npgsql.EntityFrameworkCore.PostgreSQL | Allowlist | unchanged | PostgreSQL |
+| 2 | NBomber | P0 — NOT allowlisted | **REMOVED (package dropped)** | n/a |
+| 3 | FuncyDown | Override | **REMOVED (NBomber transitive)** | n/a |
+| 4 | HdrHistogram | Override | **REMOVED (NBomber transitive)** | n/a |
+| 5 | OneOf | Override | **REMOVED (NBomber transitive)** | n/a |
+| 6 | FSharp.UMX | Override | **REMOVED (NBomber transitive)** | n/a |
+| 7 | xunit.abstractions | Override | unchanged | Apache-2.0 |
 
-**Net result of Sprint 57's triage:** 7 of 9 candidate findings cleared (1 by allowlist expansion, 6 by per-package overrides); 1 escalated to P0 (NBomber commercial subscription) for operator decision. NBomber.Contracts (the 8th + 9th findings — same package on two version axes) clears as Apache-2.0 once the override applies.
+**Net result of Sprint 57's triage:** 7 of 9 candidate findings cleared (1 by allowlist expansion, 6 by per-package overrides); 1 escalated to P0 (NBomber commercial subscription) for operator decision.
+
+**Net result of Sprint 58's NBomber removal:** the P0 cleared by package-removal, and 4 of the 6 Sprint-57 overrides became moot at the same time (FuncyDown / HdrHistogram / OneOf / FSharp.UMX were all transitives of NBomber; once NBomber + NBomber.Http + NBomber.Contracts left the project they were swept out automatically). The override entries are kept in `license-allowlist.json` for now in case any of those packages re-appear via a different transitive path; they're harmless when no consumer references them. Total package count dropped from 235 → 206 in the audit re-run.
 
 ---
 
@@ -168,4 +210,6 @@ When the script is extended to consult `package_license_overrides`, the consumer
 Per SEC-DEP-3 ("Expect: Report shows zero non-allowlisted licenses; no GPL / AGPL / unknown-license deps"):
 
 - **Acceptance for Sprint 57's re-run:** the PostgreSQL findings (3 entries) clear automatically. The NBomber entry remains as a documented P0 finding (this is correct — it's a real legal compliance gap, not a tooling miss). The 5 url-only / no-license-metadata findings remain in the report until the script learns to consult `package_license_overrides`; they are documented above and recorded in the override map, so an auditor can reconcile them in seconds.
-- **What "clean report" looks like post-Sprint-57:** non-allowlisted count drops from 4 to 1 (NBomber alone). Unknown / missing license metadata count stays at 5 pending the script enhancement, with each entry covered by an override here.
+- **What "clean report" looked like post-Sprint-57:** non-allowlisted count dropped from 4 to 1 (NBomber alone). Unknown / missing license metadata count stayed at 5 pending the script enhancement, with each entry covered by an override here.
+- **Acceptance for Sprint 58's re-run:** the NBomber P0 clears by package removal. The 4 NBomber transitives (FuncyDown, HdrHistogram, OneOf, FSharp.UMX) clear automatically. Only `xunit.abstractions` 2.0.3 remains as an unresolved-but-triaged-via-override finding.
+- **What "clean report" looks like post-Sprint-58:** **0 non-allowlisted licenses, 1 url-only finding (`xunit.abstractions`).** The `xunit.abstractions` override stays until the audit script's `Resolve-LicenseFromNuspec` is extended to consult the override map (out of scope for Sprint 58 — script is Sprint 52 territory). SEC-DEP-3 P0 is closed.
