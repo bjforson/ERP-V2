@@ -35,6 +35,7 @@ namespace NickERP.Inspection.E2E.Tests;
 /// </para>
 /// </summary>
 [Trait("Category", "PilotAcceptance")]
+[Collection("PilotAcceptance")]
 public sealed class PilotAcceptanceTests
 {
     [Fact]
