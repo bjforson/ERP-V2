@@ -2243,3 +2243,68 @@ Two-step framework (hard gates + weighted scoring). Tentative front-runners: **K
 - Final pilot-site pick (needs your input on operator cooperation, contractual constraints, strategic considerations)
 
 Everything else — sprint dispatch, v1 parity sprint breakdown, ML arc sequencing, pilot-site decision framework — is now in plan-file §10-§13.
+
+### 22.7 Saturation milestone (2026-05-06)
+
+**Pre-pilot scope shipped at 41/27-41 sprint-equivalents (100-152% — past upper estimate).** All seven workstreams from §22.2 / plan-file §10 closed or operator-blocked. 1099/1099 tests passing across 11 projects.
+
+#### What landed since 2026-05-02
+
+| Track | Key sprints | Net delivery |
+|---|---|---|
+| AnalysisService VP6 (track α) | Sprint 14 (5 phases) | Storage + bootstrap + admin + claim + tests; N:N location↔service; immutable "All Locations" default; first-claim-wins under shared visibility |
+| Tenant lifecycle (track β) | Sprints 18 + 21 + 25 | Pt 1 state + soft-delete + hard-purge → Pt 2 email service + first-user invite → Pt 3 scoped export with revocation + download endpoint |
+| HA + ops runbooks (track β) | Sprint 27 + 52 | Runbooks 09 (HA + manual failover) + 10 (pgbackrest) + 11 (PG17); Windows-host postures (SSH-Linux / WSL2 / native v1) added Sprint 52 |
+| Three-module nav (track γ) | Sprint 15 + 29 | NickHR clone + `IModuleRegistry` + `/launcher` + `SharedHeader/Footer` + per-tenant `tenant_module_settings` |
+| Inspection v1 parity (track ε — long pole) | Sprints 20 + 22 + 24 + 28 + 31 + 33 + 34 + 35 | All 8 batches B1-B8 closed; 11 review pages; 17+ admin pages; full case viewer; manifest validation; retention classes; legal hold; queue tier escalation |
+| Phase V prep (track ζ) | Sprints 30 + 39 + 52 | Audit checklist (~89 SEC-* items) + perf test plan + NBomber harness + secret detector + audit-correlation stamper + license audit + trufflehog |
+| Pilot acceptance correctness probe | Sprint 43 | 5 system-correctness gates including `MultiTenantInvariantProbe` (RLS read isolation + system-context register integrity + cross-tenant export refusal) |
+| Production scaling foundation | Sprint 52 | `audit.events` partitioned with 18 monthly partitions; perf-seed tool with realistic data shapes; mock JWT bearer handler for perf rep-volume |
+
+Plus the late-saturation polish run (Sprints 36-50): outbound dispatch retry; percent-based completeness requirements; SLA state refresher worker; cross-record scan detection + splitting; validation strict-mode + rule snapshots; CustomsGh completeness rules; UI + nav polish (launcher at `/`, SLA sparkline, reviews CSS); ASE adapter scaffold; cursor state persistence; per-tenant inbox routing; workers admin page.
+
+#### What changed vs the original plan-mode walk
+
+**Surprise findings:**
+
+- **OCR §6.1 dropped from pilot scope** (2026-05-04). Sprint 19 phases 1+2 measured v1's Tesseract OCR at 0% exact-match on 1917 prod rows — but operational probe revealed v1 OCR is a verification check, not the linkage source. Linkage runs off `fs6000scans.containernumber` set at scan time. Verification has been silently broken for years without affecting operations. §6.1 (Florence-2 + plate-ROI) moved to post-pilot as a quality enhancement. Captured in `_resolvedThisSession[ocr-baseline-0pct-followups]`.
+- **Sprint 57 license audit triage surfaced NBomber as a P0 finding.** NBomber 6.1.0 ships under proprietary commercial subscription terms, NOT MIT. csproj comment was incorrect. Resolution path is operator-decision (purchase / replace / drop perf harness). Documented under SEC-DEP-3 in `docs/security/audit-checklist-2026.md` + `tools/security-scan/license-allowlist-rationale.md` §2.
+- **Sprint 57 audit register sweep surfaced a `ScannerThresholdResolver` gap.** The Sprint 12 resolver calls `SetSystemContext()` but `tenant_isolation_scanner_threshold_profiles` policy lacks the `'-1'` opt-in clause. Effect: resolver always returns v1-defaults on cache miss because the SELECT under system context fails the policy USING test. Functional impact is dev-only (no operator-tuned profiles staged); operator-decision required for resolution path. Captured in `docs/system-context-audit-register.md` "Pending opt-in" section.
+
+**Expanded scope:**
+
+- Pilot acceptance correctness probe (Sprint 43) was not in original plan §10 — added as a runtime-verification artifact that the rolling-master pattern's invariants actually hold in deploy. The `MultiTenantInvariantProbe` enforces register-vs-source drift detection, which Sprint 57's manual sweep complements at sprint boundaries.
+- Production scaling foundation (Sprint 52) was a late-add — partitioning `audit.events` for 18 monthly partitions ahead of pilot data-volume expectations; perf-seed tool generates realistic data shapes for Phase V.
+- Late-sprint polish (36-50) covers details the original plan-walk didn't enumerate but pilot needs: validation strict-mode + rule snapshots; export tooling with LISTEN/NOTIFY + multi-host SKIP LOCKED + S3 storage; queue tier escalation; threshold-change audit; UI polish.
+
+**Deferred scope (beyond what 22.5 said):**
+
+- §6.1 OCR (per the surprise above)
+- v1-clone fold-into-v2-native (NickFinance fold-into-G2 + NickHR v2-native refactor) — confirmed post-pilot, ~12-22 sprints
+- Cross-process LISTEN/NOTIFY event bus extension (export-pickup pattern can carry over later)
+- Plugin cryptographic signing (per audit/customer demand)
+
+#### What's now operator work
+
+Pilot deployment is purely operator-side:
+
+1. Apply 32 staged migrations to live (`nickerp_platform` + `nickerp_nickfinance`); inspection DB is 5 ahead. See runbook `07-sprint-13-live-deploy.md`.
+2. Provision standby Postgres box / VM. See runbook 09 §3.
+3. Install pgbackrest 2.50+. See runbook 10 §5.
+4. Wire pgbackrest cadence (Sunday 02:00 full + 6-hourly incrementals + WAL archiving) + schedule first quarterly restore drill. See runbook 10 §6 + §8.
+5. Wire HA + backup alerts (replication lag > 60s, slot disk-fill, standby-disconnected, backup-lag, archive-failure, repo-disk). See runbooks 09 §10 + 10 §10.
+6. Pick pilot site per plan-file §13 decision matrix (tentative front-runners Kotoka Cargo / Takoradi).
+7. Execute Phase V proper — `docs/security/audit-checklist-2026.md` (~89 SEC-* items) + `docs/perf/test-plan.md`. Resolve all P0 + P1 findings before launch. **Open: SEC-DEP-3 NBomber license decision (Sprint 57 triage).**
+8. Cutover per runbook 14 (pilot cutover; Sprint 54 deliverable).
+
+Once the pilot proves stable, parity-driven expansion to second site follows. Post-pilot scope arc starts when bandwidth allows: §6.1 OCR pilot → §6.2 anomaly → §6.3 manifest×X-ray → §6.4 active learning → §6.6 TIP → §6.8 beam-hardening → §6.9 threat library → §6.10 HS density. Plus the v1-clone fold work on NickFinance (first) then NickHR.
+
+#### Why the master plan transitions here
+
+§22.1-§22.6 captured the 2026-05-02 plan-walk that **set up** the pre-pilot scope. §22.7 is the **end-state** of that scope. Sprints 14-52 executed against it; the rolling-master pattern delivered. Future sprints (53+) are either:
+
+- **Pilot-time deploy support** — assist operator with cutover questions, fix-forward post-deploy issues, monitor pilot-site rollout.
+- **Phase V execution support** — surface findings, reproduce issues, draft fix-forwards.
+- **Post-pilot scope kickoff** — when pilot proves stable, dispatch the first post-pilot sprint (likely §6.1 OCR pilot or NickFinance v1-clone fold-into-G2).
+
+`docs/runbooks/14-pilot-cutover.md` (Sprint 54) is the operator-facing deliverable that closes the loop. The plan-file at `~/.claude/plans/tingly-launching-quasar.md` stays as historical reference for the plan-walk rationale; this PLAN.md §22.7 is the durable saturation record.
