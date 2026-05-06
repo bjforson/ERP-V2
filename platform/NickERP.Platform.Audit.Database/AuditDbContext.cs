@@ -93,7 +93,23 @@ public class AuditDbContext : DbContext
         modelBuilder.Entity<DomainEventRow>(e =>
         {
             e.ToTable("events");
-            e.HasKey(x => x.EventId);
+            // Sprint 52 / FU-audit-events-partitioning — Postgres native
+            // partitioning (PARTITION BY RANGE on OccurredAt) requires the
+            // partition column to be part of every UNIQUE / PRIMARY KEY
+            // constraint on the parent table. The composite key
+            // (EventId, OccurredAt) satisfies that rule while preserving
+            // EventId's role as the logical row identifier — every read
+            // path filters by a (TenantId, …, OccurredAt) tuple, so the
+            // composite shape is queried-as-naturally as the prior
+            // single-column key.
+            //
+            // Side effect: the audit.notifications FK on EventId was
+            // dropped in the partitioning migration. Postgres cannot
+            // FK-reference a single column of a composite PK on a
+            // partitioned parent. Audit is append-only so the cascade
+            // semantics never fired in practice; the projector treats
+            // the EventId as a soft reference now.
+            e.HasKey(x => new { x.EventId, x.OccurredAt });
             e.Property(x => x.EventId).HasDefaultValueSql("gen_random_uuid()");
             // G1 #4 — TenantId is nullable. Most events carry a concrete
             // tenant; suite-wide system events (FX rates, global config)
@@ -111,7 +127,13 @@ public class AuditDbContext : DbContext
             e.Property(x => x.PrevEventHash).HasMaxLength(64);
 
             // Idempotency dedup — same key inside the same tenant is a single event.
-            e.HasIndex(x => new { x.TenantId, x.IdempotencyKey })
+            // Sprint 52 / FU-audit-events-partitioning — adds OccurredAt to satisfy
+            // Postgres' "every UNIQUE constraint must include the partition key"
+            // rule. The (TenantId, IdempotencyKey) prefix is still the lookup
+            // shape used by DbEventPublisher.PublishAsync — Postgres can serve
+            // the prefix probe from the 3-column index without needing a
+            // secondary 2-column index.
+            e.HasIndex(x => new { x.TenantId, x.IdempotencyKey, x.OccurredAt })
                 .IsUnique()
                 .HasDatabaseName("ux_audit_events_tenant_idempotency");
 
@@ -156,13 +178,17 @@ public class AuditDbContext : DbContext
             e.Property(x => x.CreatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
             e.Property(x => x.ReadAt);
 
-            // FK to audit.events.EventId. Cascade delete is intentional: if
-            // an audit row is removed (administrative purge — never in
-            // normal operation), drop the notifications too.
-            e.HasOne<DomainEventRow>()
-                .WithMany()
-                .HasForeignKey(x => x.EventId)
-                .OnDelete(DeleteBehavior.Cascade);
+            // Sprint 52 / FU-audit-events-partitioning — the FK to
+            // audit.events.EventId was dropped when audit.events became a
+            // partitioned table (Postgres cannot FK-reference a single
+            // column of a composite PK on a partitioned parent; the
+            // partition key OccurredAt must participate in any FK target).
+            // EventId remains a soft reference here. Audit is append-only
+            // so the prior cascade-delete behaviour never fired in
+            // practice; the projector treats EventId as a logical handle
+            // and tolerates an unmatched value if ever encountered (which
+            // it should not, since notifications are projected from
+            // events that have already landed).
 
             // Idempotency: re-projecting the same event for the same user
             // is a no-op. The projector relies on this unique index to

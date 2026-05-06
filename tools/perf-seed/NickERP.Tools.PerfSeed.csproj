@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NickERP.Tools.PerfSeed</RootNamespace>
+    <AssemblyName>NickERP.Tools.PerfSeed</AssemblyName>
+    <Description>
+      Sprint 52 / FU-perf-tenant-data-shape — one-shot seed tool for Phase V
+      perf testing. Reads --scale=N + --tenants=N from argv; populates the
+      pilot DBs with realistically-shaped tenants / cases / scans / findings
+      / reviews so the perf scenarios in tests/NickERP.Perf.Tests/ measure
+      something close to pilot reality. NOT a unit test; lives in the
+      solution for traceability but contributes 0 tests to the floor.
+    </Description>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\modules\inspection\src\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Tenancy.Database\NickERP.Platform.Tenancy.Database.csproj" />
+  </ItemGroup>
+
+</Project>
