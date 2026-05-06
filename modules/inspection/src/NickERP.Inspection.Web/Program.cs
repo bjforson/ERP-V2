@@ -100,6 +100,13 @@ builder.Services.AddExternalSystemAdmin();
 // (TryAddScoped under the hood).
 builder.Services.AddIcumsSubmissionQueueAdmin();
 
+// Sprint 50 / FU-b3-admin-pages — admin service backing the
+// /admin/workers Razor page. Reflects over every registered
+// IBackgroundServiceProbe to surface a per-worker liveness +
+// telemetry summary, and exposes a force-tick affordance for the
+// curated worker set.
+builder.Services.AddSingleton<NickERP.Inspection.Web.Services.WorkersAdminService>();
+
 // Sprint 22 / B2.2 — ICUMS download queue admin service for the
 // /admin/icums/download-queue Razor page. Reads AuthorityDocument +
 // OutcomePullCursor; supports admin re-link of a case override.

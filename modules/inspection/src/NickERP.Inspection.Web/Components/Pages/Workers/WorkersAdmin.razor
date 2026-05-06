@@ -1,0 +1,161 @@
+@page "/admin/workers"
+@* Sprint 50 / FU-b3-admin-pages — admin page listing every registered
+   IBackgroundServiceProbe with per-row liveness + telemetry summary +
+   force-tick affordance for the curated worker set.
+
+   Authorization mirrors AnalysisServicesAdmin / Thresholds — Inspection.Admin
+   role is the most-restrictive existing admin role; a dedicated
+   inspection.workers_admin role is a follow-up.
+
+   Read-only + force-tick only. The page does NOT expose enable/disable —
+   that's controlled by Inspection:Workers:<Name>:Enabled config; flipping
+   at runtime would surprise ops. Force-tick is "kick the loop one extra
+   time without waiting for the next poll" + safe to repeat.
+*@
+@attribute [Authorize(Roles = "Inspection.Admin")]
+@using NickERP.Inspection.Web.Services
+@inject WorkersAdminService Workers
+@inject ILogger<WorkersAdmin> Logger
+
+<PageTitle>Workers — Inspection v2</PageTitle>
+
+<header class="inspection-page-header">
+    <div>
+        <h1>Workers</h1>
+        <p class="inspection-page-subtitle">Per-host status of every background worker. Configure enable/disable via the <code>Inspection:Workers:&lt;Name&gt;:Enabled</code> deploy-time flag; force-tick re-runs the loop body one extra time without waiting for the poll interval.</p>
+    </div>
+</header>
+
+<section class="inspection-section">
+    @if (_rows is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (_rows.Count == 0)
+    {
+        <p class="inspection-empty">No workers registered in this host.</p>
+    }
+    else
+    {
+        <table class="inspection-table">
+            <thead>
+                <tr>
+                    <th>Worker</th>
+                    <th>Enabled</th>
+                    <th>Health</th>
+                    <th>Last tick</th>
+                    <th>Last success</th>
+                    <th>Ticks</th>
+                    <th>Errors</th>
+                    <th>Last error</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td>
+                            <strong>@r.Name</strong>
+                            <div class="inspection-row-subline">@r.Description</div>
+                            @if (!string.IsNullOrEmpty(r.Note))
+                            {
+                                <div class="inspection-row-subline" title="@r.Note">(@r.Note)</div>
+                            }
+                        </td>
+                        <td>@RenderEnabled(r.Enabled)</td>
+                        <td>@RenderHealth(r.Health)</td>
+                        <td>@RenderTime(r.LastTickAt)</td>
+                        <td>@RenderTime(r.LastSuccessAt)</td>
+                        <td>@r.TickCount</td>
+                        <td>@r.ErrorCount</td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(r.LastError))
+                            {
+                                <span title="@($"At {r.LastErrorAt:o}")">@Truncate(r.LastError, 80)</span>
+                            }
+                            else
+                            {
+                                <span class="inspection-row-subline">—</span>
+                            }
+                        </td>
+                        <td>
+                            @if (r.ForceTickAvailable)
+                            {
+                                <button type="button"
+                                        class="inspection-button"
+                                        disabled="@(_busyWorker == r.Name)"
+                                        @onclick="() => ForceTickAsync(r.Name)">
+                                    @(_busyWorker == r.Name ? "Running…" : "Force tick")
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="inspection-row-subline">—</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <p class="inspection-form-message">@_message</p>
+    }
+</section>
+
+@code {
+    private IReadOnlyList<WorkerRowDto>? _rows;
+    private string _message = string.Empty;
+    private string? _busyWorker;
+
+    protected override void OnInitialized()
+    {
+        Reload();
+    }
+
+    private void Reload()
+    {
+        _rows = Workers.GetWorkerSnapshot();
+    }
+
+    private async Task ForceTickAsync(string name)
+    {
+        _message = string.Empty;
+        _busyWorker = name;
+        try
+        {
+            var count = await Workers.ForceTickAsync(name, CancellationToken.None);
+            _message = count >= 0
+                ? $"Force-ticked {name}: {count} record(s) processed."
+                : $"Force-tick is not wired for {name} (streaming worker).";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "WorkersAdmin force-tick failed for {Worker}.", name);
+            _message = $"Force-tick {name} failed: {ex.Message}";
+        }
+        finally
+        {
+            _busyWorker = null;
+            Reload();
+        }
+    }
+
+    private static string RenderEnabled(bool? enabled) => enabled switch
+    {
+        true => "Yes",
+        false => "No",
+        _ => "—"
+    };
+
+    private static string RenderHealth(string? health) => health ?? "—";
+
+    private static string RenderTime(DateTimeOffset? t) =>
+        t is null ? "—" : t.Value.ToString("yyyy-MM-dd HH:mm:ss zzz");
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..(max - 1)] + "…";
+}
