@@ -21,10 +21,14 @@ public static class HealthEndpointScenario
     public static ScenarioProps Build(IConfiguration config, LoadProfile profile)
     {
         var baseUrl = config["TargetBaseUrl"] ?? "http://localhost:5400";
-        var path = config["HealthzPath"] ?? "/healthz";
+        var path = config["HealthzPath"] ?? "/healthz/live";
         var url = baseUrl.TrimEnd('/') + path;
 
-        using var http = new HttpClient();
+        // Sprint 55 — long-lived per-scenario HttpClient. Don't use a
+        // 'using' here: the scenario closure runs AFTER Build returns,
+        // and a disposed client throws ObjectDisposedException at every
+        // request site.
+        var http = new HttpClient();
 
         var scenario = Scenario.Create("health", async ctx =>
         {
