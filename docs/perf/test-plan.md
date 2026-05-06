@@ -139,26 +139,49 @@ Tests must simulate:
 
 ---
 
-## 6. Test tooling decision — NBomber
+## 6. Test tooling decision — NickPerf in-tree runner
 
-We use **NBomber** (https://nbomber.com — github.com/PragmaticFlow/NBomber) for these reasons:
+**Sprint 58 update (2026-05-06):** the harness was originally built on NBomber 6.1.0; Sprint 57's license audit revealed NBomber's bundled LICENSE is the **NBOMBER LICENSE AGREEMENT v2.0** (commercial subscription, paid Activation Key required), not MIT. SEC-DEP-3 was the only P0 license finding in `docs/security/audit-checklist-2026.md`. Rather than purchase a subscription or vendor-shop a permissive alternative we hand-rolled a small in-tree runner — the surface NBomber gave us was small enough that owning it was the cleaner answer.
 
-| Property | NBomber | k6 | JMeter | Locust |
+**The replacement primitives live at `tests/NickERP.Perf.Tests/Runner/`:**
+
+| File | Replaces | Surface |
+|---|---|---|
+| `Runner/NickPerfScenario.cs` | NBomber `ScenarioProps` | `Name` + `RunStep` async delegate + `LoadProfile` (rate / interval / duration) + `MaxConcurrent` cap |
+| `Runner/NickPerfRunner.cs` | `NBomberRunner.RegisterScenarios(...).Run()` | `PeriodicTimer` rate scheduler + `SemaphoreSlim` concurrency cap; per-step latency captured via `Stopwatch` |
+| `Runner/NickPerfStats.cs` | `NodeStats` / `ScenarioStats` / `LatencyCount` / HdrHistogram | Latency buffer + nearest-rank p50/p75/p95/p99 + ok/fail counts + RPS |
+| `Runner/NickPerfReport.cs` | NBomber HTML / MD / TXT bundle | Single per-scenario `report.md` matching the NBomber-shape table |
+| `Runner/Http/NickPerfHttp.cs` | NBomber.Http `Http.CreateRequest` / `Http.Send` | Direct `HttpClient` helpers (`GetAsync` / `PostJsonAsync` / `SendAsync`) |
+
+**Why in-tree, not third-party:**
+
+| Property | NickPerf (in-tree) | NBomber 6.1.0 | k6 | JMeter |
 |---|---|---|---|---|
-| .NET-native | ✓ — scenarios in C# | ✗ JS | ✗ Java | ✗ Python |
-| CI integration | ✓ NuGet-based | partial | partial | partial |
-| HTML / json reports | ✓ built-in | ✓ | ✓ | ✓ |
-| Open-source license | MIT | AGPLv3 | Apache-2 | MIT |
-| Maturity | mature, active | mature | very mature | mature |
-| Mixed-protocol support | HTTP + custom | HTTP-focused | HTTP / TCP / JDBC / etc. | HTTP-focused |
-| Familiarity to v2 team | ✓ same .NET stack | ✗ JS context-switch | ✗ Java context-switch | ✗ Python |
+| License | n/a — first-party code | **PROPRIETARY (commercial subscription)** | AGPL-3.0 (post-2024) | Apache-2.0 |
+| .NET-native | ✓ same .NET stack | ✓ same .NET stack | ✗ JS | ✗ Java |
+| CI integration | ✓ exit code from `dotnet run` | ✓ NuGet-based | partial | partial |
+| Reports | markdown only (audit trail) | HTML + MD + TXT | HTML + JSON | HTML + JSON |
+| Maturity | small (Sprint 58) | mature | mature | very mature |
+| Mixed-protocol support | HTTP only (extensible) | HTTP + custom | HTTP-focused | HTTP / TCP / JDBC / etc. |
+| Lines of code we own | ~400 | 0 (vendored) | 0 | 0 |
+| Surface we use | ~100% | ~5% | ~5% | ~5% |
 
-**Trade-off accepted:** JMeter has the deepest reporting + the largest community. NBomber wins on team-context (zero language switch) + license (MIT vs AGPLv3 for k6) + maturity-to-relevance ratio.
+**Trade-offs accepted:**
+- We give up NBomber's HTML report. The audit trail uses markdown anyway.
+- We give up NBomber's custom data feeds + cluster mode + WebSocket scenarios. We don't use those.
+- We give up some maturity. The runner is small enough (`PeriodicTimer` + `SemaphoreSlim` + `List<double>` + `Array.Sort`) that the maturity gap is manageable; the selftest in `dotnet run -- selftest` covers the percentile math + scheduler + report formatting.
+
+**Behaviour parity with NBomber (per Sprint 58 verification):**
+- Same per-profile RPS targets per §3.1.
+- Same skip-on-misconfigured semantics (empty target, missing HMAC key, missing JWT subject).
+- Same per-scenario acceptance-gate thresholds.
+- `MockJwtBearerHandler`, `ContainerNumberGenerator`, payload builders unchanged.
 
 **Out-of-scope for Phase V (revisit post-pilot):**
 - JMeter for full protocol coverage (DB-direct stress, JMS, etc.)
 - Chaos engineering (gremlin, chaos-mesh)
 - Multi-region perf testing
+- Live HTML/streaming reports (markdown is enough for the audit trail)
 
 ---
 
@@ -228,7 +251,7 @@ The summary feeds back into the security audit — `SEC-DB-9 Connection pool tun
 
 ## 12. Operator playbook
 
-Sprint 55 made the harness runnable end-to-end. This section is the day-1 reference for operators executing scenarios locally / against staging / against pilot.
+Sprint 55 made the harness runnable end-to-end. Sprint 58 replaced the NBomber runtime with the in-tree NickPerf runner (per §6); the entry-point command + flags + skip-on-misconfigured behaviour stay identical so existing playbooks just keep working.
 
 ### 12.1 Prerequisites
 
@@ -310,11 +333,11 @@ CI hooks `dotnet run … --` and uses the exit code as the deploy gate. The HTML
 
 ### 12.6 Reading reports
 
-NBomber writes per-scenario report bundles. The relevant artefacts:
+NickPerf writes a single markdown report per scenario:
 
-- `report.html` — interactive scenario stats with charts.
-- `report.md` — markdown summary.
-- `report.txt` — plain text.
+- `report.md` — table-per-scenario (Total / OK / Fail / RPS / latency p50/p75/p95/p99 / min / mean / max).
+
+(Sprint 55's NBomber bundle had `report.html` + `report.txt` in addition; those were never consumed downstream. Markdown only is the post-Sprint-58 shape.)
 
 The Phase V auditor copies the relevant runs into `docs/perf/runs/{date}-{site}/` for the audit trail (post-pilot pattern).
 
