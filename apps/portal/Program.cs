@@ -229,6 +229,19 @@ builder.Services.AddScoped<NickERP.Platform.Tenancy.Features.IFeatureFlagService
 builder.Services.AddScoped<NickERP.Platform.Tenancy.Features.ITenantSettingsService,
     NickERP.Platform.Tenancy.Database.Services.TenantSettingsService>();
 
+// ---------------------------------------------------------------------------
+// Sprint 56 / FU-cross-tenant-aggregation — platform-admin Audit
+// Dashboard service. Reads audit.events across every active tenant via
+// per-tenant fan-out (no SetSystemContext) and feeds /admin/audit-dashboard
+// + the per-tenant Audit activity card on /tenants/{id}. The 60 s in-memory
+// cache keeps per-tick load bounded as tenant count grows.
+// ---------------------------------------------------------------------------
+builder.Services.Configure<NickERP.Portal.Services.CrossTenantAuditOptions>(
+    builder.Configuration.GetSection(NickERP.Portal.Services.CrossTenantAuditOptions.SectionName));
+builder.Services.AddSingleton<NickERP.Portal.Services.CrossTenantAuditCache>();
+builder.Services.AddSingleton<NickERP.Portal.Services.ICrossTenantAuditService,
+    NickERP.Portal.Services.CrossTenantAuditService>();
+
 // Blazor Server (interactive server-side rendering).
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
