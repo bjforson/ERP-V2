@@ -16,6 +16,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <!-- Sprint 14 / B-queues — InspectionWorkItem subclasses
+         WorkItem<InspectionWorkflowState> from the platform queueing
+         substrate. Reference is here (not in Application) so the
+         entity is part of Core's domain shape and can be referenced
+         by the DbContext in Database without dragging Application in. -->
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Queueing\NickERP.Platform.Queueing.csproj" />
   </ItemGroup>
 
 </Project>

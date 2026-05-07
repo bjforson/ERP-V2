@@ -24,6 +24,12 @@
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Audit.Database\NickERP.Platform.Audit.Database.csproj" />
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Web.Shared\NickERP.Platform.Web.Shared.csproj" />
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
+    <!-- Sprint 14 / B-queues — Program.cs calls AddNickErpQueueing() +
+         AddPostgresQueue<SplitDetectionPayload>() + AddQueueConsumer<...>().
+         Transitive via Application would suffice for the consumer alone,
+         but the DI extensions live on the platform assembly so the host
+         needs an explicit reference. -->
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Queueing\NickERP.Platform.Queueing.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Imaging\NickERP.Inspection.Imaging.csproj" />

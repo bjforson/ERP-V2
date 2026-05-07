@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NickERP.Inspection.Core.Entities;
+using NickERP.Platform.Queueing.Entities;
 
 namespace NickERP.Inspection.Database;
 
@@ -93,6 +94,24 @@ public sealed class InspectionDbContext : DbContext
     /// AseSyncWorker shipped with at Sprint 24.
     /// </summary>
     public DbSet<ScannerCursorSyncState> ScannerCursorSyncStates => Set<ScannerCursorSyncState>();
+
+    /// <summary>
+    /// Sprint 14 / B-queues — concrete inspection work items flowing
+    /// through the platform queueing substrate's state machine. Sole
+    /// writer is <c>InspectionStateMachine</c> (in
+    /// NickERP.Inspection.Application); pages and workers read but
+    /// never assign <see cref="WorkItem{TState}.CurrentState"/>.
+    /// </summary>
+    public DbSet<InspectionWorkItem> WorkItems => Set<InspectionWorkItem>();
+
+    /// <summary>
+    /// Sprint 14 / B-queues — append-only audit row written by the
+    /// platform's <c>WorkItemStateMachine</c> on every successful
+    /// transition. One row per transition; never updated or deleted.
+    /// Tenant-owned via <see cref="WorkItemTransition.TenantId"/>; same
+    /// fail-closed RLS pattern as the other inspection tables.
+    /// </summary>
+    public DbSet<WorkItemTransition> WorkItemTransitions => Set<WorkItemTransition>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1053,6 +1072,77 @@ public sealed class InspectionDbContext : DbContext
                 .HasDatabaseName("ux_cursor_sync_state_tenant_type_adapter");
             e.HasIndex(x => x.TenantId)
                 .HasDatabaseName("ix_cursor_sync_state_tenant");
+        });
+
+        // ----- InspectionWorkItem (Sprint 14 / B-queues) ----------------------------
+        // Concrete WorkItem<InspectionWorkflowState> for the inspection
+        // module. Sole writer is InspectionStateMachine in
+        // NickERP.Inspection.Application; the platform queueing base
+        // owns the transition transaction + audit row + version bump.
+        // CurrentState is stored as int via HasConversion<int>() (stable
+        // wire format mirroring the rest of the schema's enum columns).
+        // Version is the optimistic-concurrency token; SaveChanges
+        // throws DbUpdateConcurrencyException on lost-update so concurrent
+        // transitions on the same row see Conflict (not silent overwrite).
+        modelBuilder.Entity<InspectionWorkItem>(e =>
+        {
+            e.ToTable("work_items");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Workflow).IsRequired().HasMaxLength(64);
+            e.Property(x => x.CurrentState).HasConversion<int>().IsRequired();
+            e.Property(x => x.Version).IsConcurrencyToken().IsRequired().HasDefaultValue(0);
+            e.Property(x => x.IdempotencyAnchor).IsRequired().HasMaxLength(128);
+            e.Property(x => x.CaseId).IsRequired();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Tenant lookup hot path — the consumer host claims rows
+            // already tenant-scoped via RLS; this index keeps any
+            // explicit "list work items for this tenant" page fast.
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_work_items_tenant");
+
+            // Per-case lookup — "show me the inspection work item for
+            // this case" is the canonical correlation query when the
+            // legacy CaseWorkflowService path needs to consult the
+            // state machine's view.
+            e.HasIndex(x => new { x.TenantId, x.CaseId }).HasDatabaseName("ix_work_items_tenant_case");
+        });
+
+        // ----- WorkItemTransition (Sprint 14 / B-queues) ----------------------------
+        // Append-only audit row. One row per successful transition; the
+        // table never sees UPDATE/DELETE under normal operation. Schema
+        // is uniform across modules (each module owns its own physical
+        // table); the CLR shape is shared from NickERP.Platform.Queueing
+        // so reporting code can union across modules. State + trigger are
+        // stored as enum-name strings (not ints) so the audit log stays
+        // human-readable across enum-value additions.
+        modelBuilder.Entity<WorkItemTransition>(e =>
+        {
+            e.ToTable("work_item_transitions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.WorkItemId).IsRequired();
+            e.Property(x => x.FromState).IsRequired().HasMaxLength(40);
+            e.Property(x => x.ToState).IsRequired().HasMaxLength(40);
+            e.Property(x => x.Trigger).IsRequired().HasMaxLength(64);
+            e.Property(x => x.Actor).IsRequired().HasMaxLength(128);
+            e.Property(x => x.Reason).IsRequired().HasMaxLength(512);
+            e.Property(x => x.CorrelationId).HasMaxLength(128);
+            e.Property(x => x.OccurredAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
+            e.Property(x => x.TenantId).IsRequired();
+
+            // Tenant lookup for any cross-cutting reporting query.
+            e.HasIndex(x => x.TenantId).HasDatabaseName("ix_work_item_transitions_tenant");
+
+            // Per-work-item history (case-detail timeline): "give me
+            // every transition for this work item, newest first" — the
+            // composite (TenantId, WorkItemId, OccurredAt DESC) covers
+            // it on every load.
+            e.HasIndex(x => new { x.TenantId, x.WorkItemId, x.OccurredAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("ix_work_item_transitions_tenant_workitem_time");
         });
     }
 }

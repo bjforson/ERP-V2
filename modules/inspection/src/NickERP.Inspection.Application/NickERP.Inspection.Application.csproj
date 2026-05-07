@@ -35,6 +35,10 @@
     <!-- Sprint 22 / B2.1 — IcumsSubmissionQueueAdminService emits
          DomainEvents via IEventPublisher when admins requeue submissions. -->
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <!-- Sprint 14 / B-queues — SplitDetectionConsumer implements
+         IQueueConsumer<SplitDetectionPayload> from the platform queueing
+         abstractions. -->
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Queueing\NickERP.Platform.Queueing.csproj" />
   </ItemGroup>
 
 </Project>

@@ -33,6 +33,10 @@ using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Database;
 // Sprint 29 — three-module co-deploy chrome.
 using NickERP.Platform.Web.Shared.Modules;
+// Sprint 14 / B-queues — queueing platform DI + payload + consumer.
+using NickERP.Platform.Queueing;
+using NickERP.Inspection.Application.Workflows;
+using NickERP.Inspection.Application.StateMachines;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -147,6 +151,50 @@ builder.Services.AddDbContext<InspectionDbContext>((sp, opts) =>
         sp.GetRequiredService<TenantOwnedEntityInterceptor>(),
         sp.GetRequiredService<AnalysisServiceLocationAutoJoinInterceptor>());
 });
+
+// --- Sprint 14 / B-queues — queueing platform ---
+// PostgresQueue<T> uses raw SQL via NpgsqlDataSource (claim path needs
+// FOR UPDATE SKIP LOCKED, ON CONFLICT, CTE patterns EF abstracts away),
+// and the platform's PgNotifyListener / OutboxRelay /
+// QueueMetricsRefresher hosted services resolve NpgsqlDataSource
+// directly. Inspection.Web doesn't otherwise register one — the existing
+// AddDbContext above wires its own internal NpgsqlConnection pool — so
+// build + register a singleton NpgsqlDataSource here pointing at the same
+// "Inspection" connection string. The split-detection queue table
+// (created by 20260506130000_Add_QueueSplitDetection) lives in the
+// inspection schema, so that's the right DB to hand to the platform.
+//
+// Constructed via NpgsqlDataSourceBuilder (rather than the
+// AddNpgsqlDataSource service-collection extension that ships in newer
+// Npgsql.DependencyInjection bundles) to avoid taking on an additional
+// package reference from the host project — the existing
+// Npgsql.EntityFrameworkCore.PostgreSQL transitive already supplies
+// everything we need.
+builder.Services.AddSingleton<Npgsql.NpgsqlDataSource>(_ =>
+{
+    var conn = inspectionConn ?? throw new InvalidOperationException(
+        "ConnectionStrings:Inspection is required for the queueing platform's NpgsqlDataSource.");
+    return new Npgsql.NpgsqlDataSourceBuilder(conn).Build();
+});
+
+builder.Services.AddNickErpQueueing();
+builder.Services.AddPostgresQueue<SplitDetectionPayload>(opts =>
+{
+    opts.Schema = "inspection";
+    opts.Name = "split_detection";
+});
+builder.Services.AddQueueConsumer<SplitDetectionConsumer, SplitDetectionPayload>();
+
+// Sprint 14 / B-queues — concrete InspectionStateMachine. Sole writer for
+// InspectionWorkItem.CurrentState (the platform base enforces this via
+// the internal setter on WorkItem<TState>); fires the split-detection
+// enqueue from inside the transition transaction on Open → Validated.
+// Scoped because it captures IQueue<SplitDetectionPayload> indirectly via
+// constructor injection — though the queue itself is a singleton, the
+// machine is conceptually a per-request collaborator alongside the
+// caller's InspectionDbContext.
+builder.Services.AddScoped<InspectionStateMachine>();
+// --- end Sprint 14 / B-queues ---
 
 // ---------------------------------------------------------------------------
 // Sprint 9 / FU-icums-signing — ASP.NET Core data protection. Used to
