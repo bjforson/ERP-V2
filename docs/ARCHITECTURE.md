@@ -791,7 +791,160 @@ single batch.
 
 ---
 
-## 15. Related documents
+## 15. Queueing platform (Sprint 14 / B-queues)
+
+**Status (2026-05-07):** scaffold landed in
+`platform/NickERP.Platform.Queueing/` and
+`platform/NickERP.Platform.Queueing.Database/`. Per-module queue
+tables are added by the owning module's `*.Database` project as
+each consumer comes online; the inspection module's
+`Add_QueueSplitDetection` migration is the reference template.
+
+### 15.1 Why
+
+v1 has no queueing primitive. "Queues" are status-predicate scans
+over shared tables (e.g. `AnalysisGroups WHERE Status = 'Pending'`),
+written by 37 distinct producers, with no observability beyond
+ad-hoc SELECT counts. The lack of a sole-writer state machine is
+why v1 had three concurrent paths writing `AnalysisGroup.Status` —
+34 of which bypassed the validator. v2's design goal: durable
+work queues with sole-writer enforcement at compile time, per-stage
+isolation between producers and consumers, and a scale headroom
+that doesn't require new infrastructure for the next two orders of
+magnitude.
+
+### 15.2 Substrate choice — Postgres-as-broker
+
+The substrate is Postgres, not a dedicated broker. Claims use
+`SELECT … FOR UPDATE SKIP LOCKED` against a partial index on
+`(available_at) WHERE claimed_by IS NULL` — so multiple workers
+contend without coordinating, and the unclaimed-and-ready hot path
+never reads a claimed row. Wakeups ride on `LISTEN/NOTIFY` for
+sub-second latency; polling stays as a fallback for the (rare)
+case a NOTIFY is missed across a connection drop. Cross-system
+writes use the outbox pattern — the state change and the outbox
+row commit in the same transaction, and the relay drains the
+outbox to the external system asynchronously. Either both happen
+or neither does.
+
+The alternative was Hangfire / RabbitMQ / Kafka. None earns its
+infrastructure cost at the volume v2 needs to handle. GitLab's
+job-queue runs the same Postgres pattern past 10M rows/day on
+commodity hardware; that's the public precedent we lean on. If
+volume genuinely outgrows it, the `IPostgresQueue<T>` interface in
+`Abstractions/IQueue.cs` is the swap-in seam — adapter-style, no
+domain change required.
+
+### 15.3 Domain model
+
+Five types form the contract:
+
+- `WorkItem<TState>` — abstract base for any unit of work. Holds
+  `CurrentState` with an **`internal` setter**, so only the state
+  machine (in the same assembly) can write it. Compile-time
+  enforcement of sole-writer discipline. See
+  `platform/NickERP.Platform.Queueing/Entities/WorkItem.cs`.
+- `WorkItemTransition` — append-only audit row per transition.
+  Carries the trigger, from-state, to-state, actor, correlation,
+  and timestamps. Modules write these via the state machine; never
+  by hand.
+- `QueueRow` — uniform row shape for every per-module queue table.
+  Same columns across `inspection.queue_split_detection`,
+  `inspection.queue_audit_review`, etc. — different table names,
+  different consumers, identical claim mechanics. See
+  `platform/NickERP.Platform.Queueing/Entities/QueueRow.cs`.
+- `QueueOutboxRow` + `QueueDeadLetterRow` — the two cross-module
+  tables, hosted in the platform-owned `queueing` schema. All
+  per-queue dead-letter promotions land in a single
+  `queueing.dead_letter` table tagged with `source_queue` so the
+  ops view doesn't fragment by consumer.
+
+### 15.4 State machine
+
+The state machine layer is `Stateless`-driven, transition-table
+configured, with hierarchical states and per-trigger guards. Each
+transition is atomic: state change, audit row insert, and any
+spawned queue rows commit in the same Npgsql transaction.
+`WorkItemStateMachine<TState,TTrigger>.OnTransitionedAsync` is the
+hook subclasses override to enqueue downstream work — for example,
+the inspection module's transition out of `Detecting` enqueues a
+row on `queue_audit_review`. The
+`InspectionStateMachine.cs` module-side file demonstrates this
+when present.
+
+### 15.5 Reliability
+
+Claims carry a lease (`claimed_by` + `claimed_until`); a worker
+that crashes mid-process leaves an expired lease which
+`QueueJanitor` resets so a different worker reclaims the row.
+`AttemptCount` increments on every claim, and after a configurable
+maximum (default 5) the row is moved to the dead-letter queue with
+the last error captured. Producers dedupe via
+`IdempotencyKey.From(...)` — the same audit-module helper the rest
+of the platform uses — and the queue table's UNIQUE constraint on
+`idempotency_key` collapses duplicate INSERTs into a no-op. NOTIFY
+is best-effort; the consumer host treats it as a wakeup hint, not
+the source of truth, so a missed event surfaces on the next poll
+tick.
+
+### 15.6 Observability
+
+A `queueing.queue_metrics` materialised view aggregates depth,
+oldest-message age, in-flight count, and dead-letter depth across
+every queue. `QueueMetricsRefresher` refreshes it every 5 seconds
+via `REFRESH MATERIALIZED VIEW CONCURRENTLY` (the unique index on
+`queue_name` makes that path possible). The platform exposes
+`/api/_module/queues` — the same shape v1's manifest endpoint
+follows — so dashboards and a future ops UI consume one canonical
+contract: per-queue `depth`, `oldest_age_seconds`, `in_flight`,
+`dlq_depth`, `refreshed_at`.
+
+### 15.7 Tenancy & RLS
+
+Every queue table — including the platform-wide outbox and DLQ —
+ships with `tenant_id BIGINT NOT NULL DEFAULT
+COALESCE(current_setting('app.tenant_id', true), '0')::bigint`,
+`FORCE ROW LEVEL SECURITY`, and a `tenant_isolation_*` policy that
+matches the rest of the platform. A worker that forgets a WHERE
+clause — or a bug in the queue layer — cannot leak cross-tenant
+rows; the policy filters them out at the row level. On claim, the
+consumer host pushes the claimed row's tenant id onto
+`ITenantContext` for the duration of dispatch via
+`ITenantContextActivator`, so any downstream EF or HTTP call
+inherits the right tenant scope without an explicit handoff.
+
+### 15.8 Scale story
+
+The working-load assumption is 1M items/day across all modules
+combined, which at 5 stages per item is 60 ops/sec sustained —
+trivial for a single Postgres instance with the partial-index
+claim pattern. The bottleneck moves to consumer concurrency, and
+since `SKIP LOCKED` requires zero coordination, horizontal scaling
+of consumers is linear. The drop-in upgrade to RabbitMQ or Kafka
+is reserved for the day Postgres genuinely runs out — the GitLab
+precedent puts that point near 10M ops/day.
+
+### 15.9 Reference example — inspection module
+
+The inspection module is the first consumer:
+
+- `modules/inspection/src/NickERP.Inspection.Application/Workflows/`
+  holds the consumer (`SplitDetectionConsumer`) and payload
+  (`SplitDetectionPayload`) shape — the canonical pattern other
+  consumers follow.
+- `modules/inspection/src/NickERP.Inspection.Application/StateMachines/InspectionStateMachine.cs`
+  is the state-machine integration — the `Stateless` configuration
+  plus the `OnTransitionedAsync` override that enqueues downstream
+  rows.
+- `modules/inspection/src/NickERP.Inspection.Database/Migrations/20260506130000_Add_QueueSplitDetection.cs`
+  is the per-queue migration template — one queue table per
+  consumer, partial indexes, RLS, GRANTS, all expressed as raw SQL
+  alongside the standard EF-generated `CreateTable` calls for the
+  `QueueRow`-shaped columns.
+
+---
+
+## 16. Related documents
 
 - **This repo (`C:\Shared\ERP V2\`):**
   - [`../README.md`](../README.md) — entry point.
