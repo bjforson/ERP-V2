@@ -34,6 +34,8 @@
     <Project Path="platform/NickERP.Platform.Identity/NickERP.Platform.Identity.csproj" />
     <Project Path="platform/NickERP.Platform.Logging/NickERP.Platform.Logging.csproj" />
     <Project Path="platform/NickERP.Platform.Plugins/NickERP.Platform.Plugins.csproj" />
+    <Project Path="platform/NickERP.Platform.Queueing/NickERP.Platform.Queueing.csproj" />
+    <Project Path="platform/NickERP.Platform.Queueing.Database/NickERP.Platform.Queueing.Database.csproj" />
     <Project Path="platform/NickERP.Platform.Telemetry/NickERP.Platform.Telemetry.csproj" />
     <Project Path="platform/NickERP.Platform.Tenancy/NickERP.Platform.Tenancy.csproj" />
     <Project Path="platform/NickERP.Platform.Web.Shared/NickERP.Platform.Web.Shared.csproj" />

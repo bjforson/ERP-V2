@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Platform.Queueing.Database</RootNamespace>
+    <AssemblyName>NickERP.Platform.Queueing.Database</AssemblyName>
+    <Description>NICKSCAN ERP SOLUTION — QueueingDbContext for the canonical nickerp_platform PostgreSQL database, schema 'queueing'. Hosts the platform-wide outbox + dead-letter queue tables and the queue_metrics materialised view. Per-module queue tables live in the owning module's *.Database project; this project hosts only the cross-module concerns.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NickERP.Platform.Queueing\NickERP.Platform.Queueing.csproj" />
+    <!-- Uses ITenantOwned + the connection interceptor for RLS. -->
+    <ProjectReference Include="..\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NickERP.Platform.Tests" />
+  </ItemGroup>
+
+</Project>

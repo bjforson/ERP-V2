@@ -20,6 +20,10 @@
          tool. The reference does not pull anything heavy; the seeder is a
          tiny console-grade class that drives EF directly. -->
     <ProjectReference Include="..\..\tools\perf-seed\NickERP.Tools.PerfSeed.csproj" />
+    <!-- Sprint 14 / B-queues — WorkItemStateMachine unit tests + PostgresQueue
+         integration tests. Both projects expose InternalsVisibleTo this assembly. -->
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Queueing\NickERP.Platform.Queueing.csproj" />
+    <ProjectReference Include="..\..\platform\NickERP.Platform.Queueing.Database\NickERP.Platform.Queueing.Database.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +33,13 @@
     <!-- Sprint 8 P3 — AuditNotificationProjectorTests use the EF in-memory provider to drive the
          projector through one tick deterministically without a Postgres dependency. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.7" />
+    <!-- Sprint 14 / B-queues — Testcontainers spins a throwaway postgres:17-alpine
+         per integration-test fixture so the queueing claim/lease/DLQ paths run
+         against real Postgres without depending on a developer's localhost cluster.
+         Tests are gated on Docker availability + auto-skip when the daemon isn't
+         reachable so CI without Docker passes silently (matches the
+         NICKSCAN_DB_PASSWORD-skip convention used by the existing live-DB suites). -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="3.10.0" />
     <!-- Sprint 35 / B8.2 — bunit page-render coverage for the
          portal admin pages (FeatureFlags + TenantSettings). -->
     <PackageReference Include="bunit" Version="1.36.0" />

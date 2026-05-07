@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NickERP.Platform.Queueing</RootNamespace>
+    <AssemblyName>NickERP.Platform.Queueing</AssemblyName>
+    <Description>NICKSCAN ERP SOLUTION — Postgres-backed work-queue substrate. Provides IQueue&lt;T&gt; with FOR UPDATE SKIP LOCKED claim semantics, lease + DLQ, LISTEN/NOTIFY wakeups, an outbox-relay primitive, and a sole-writer WorkItemStateMachine&lt;TState,TTrigger&gt; base. Modules consume via AddNickErpQueueing() and define their own state machines + consumer BackgroundServices on top.</Description>
+    <Version>0.1.0</Version>
+    <Company>Nick TC-Scan Ltd</Company>
+    <Product>NICKSCAN ERP SOLUTION</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- EF Core abstractions for ISaveChangesInterceptor / DbContext interop. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.7" />
+    <!-- Npgsql is required for LISTEN/NOTIFY (the streaming Notification event lives on
+         NpgsqlConnection, not on the EF abstraction). The DbContext implementation
+         lives in NickERP.Platform.Queueing.Database; this assembly references
+         Npgsql only for the listener primitive. -->
+    <PackageReference Include="Npgsql" Version="10.0.1" />
+    <!-- Stateless — small, zero-dep state-machine library. Used as the engine for
+         WorkItemStateMachine&lt;TState,TTrigger&gt;: configures legal triggers,
+         enforces guards, exposes Graphviz export for design-time review. -->
+    <PackageReference Include="Stateless" Version="5.16.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ITenantOwned (entity marker) + the connection / SaveChanges interceptors
+         live here; queue rows implement ITenantOwned and inherit the same
+         RLS enforcement as the rest of the platform. -->
+    <ProjectReference Include="..\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
+    <!-- IdempotencyKey, IEventPublisher (DomainEvent emission on every state
+         transition is wired via the existing audit pipeline; this assembly
+         references only the DB-free abstraction). -->
+    <ProjectReference Include="..\NickERP.Platform.Audit\NickERP.Platform.Audit.csproj" />
+    <!-- IBackgroundServiceProbe — every BackgroundService in this assembly
+         (PgNotifyListener, QueueJanitor, OutboxRelay, QueueMetricsRefresher)
+         registers a probe so the platform health endpoint surfaces queue health. -->
+    <ProjectReference Include="..\NickERP.Platform.Telemetry\NickERP.Platform.Telemetry.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Sprint 14 / B-queues — let the platform tests reach internals on
+         WorkItemStateMachine + PostgresQueue (claim semantics, lease handling,
+         DLQ migration) without exposing them on the public API. -->
+    <InternalsVisibleTo Include="NickERP.Platform.Tests" />
+    <InternalsVisibleTo Include="NickERP.Platform.Queueing.Database" />
+  </ItemGroup>
+
+</Project>
