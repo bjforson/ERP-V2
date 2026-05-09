@@ -1,5 +1,7 @@
 # Runbook 14 — Pilot site stand-up
 
+> **Sprint 60 — scripted rehearsal.** Three new tools convert hand-stepped operator sections of this runbook into idempotent PowerShell scripts. See `tools/cutover-dryrun/`, `tools/security-scan/`, `tools/perf/` and the **Scripted alternative** callouts below.
+
 > **Scope.** End-to-end operator-facing playbook for standing up
 > ERP V2 at a brand-new pilot site, from "we want to pilot at site
 > X" through "first real case decisioned end-to-end and the five
@@ -403,6 +405,14 @@ per ROADMAP §1 answer 3 — v0 is single-region.
 
 After racking + OS install, run [`09-postgres-ha-setup.md`](09-postgres-ha-setup.md)
 §5.1-§5.8 to bring the cluster up.
+
+> **Scripted alternative.** Run `tools/cutover-dryrun/run.ps1` for an automated, idempotent provision-clean-PG17 + apply-all-migrations rehearsal of these steps:
+>
+> ```pwsh
+> pwsh tools/cutover-dryrun/run.ps1 -TargetUri <postgres-uri>
+> ```
+>
+> Output: `tools/cutover-dryrun/reports/dryrun-{date}-migration-report.md`. See `tools/cutover-dryrun/README.md` for full options.
 
 ### 4.2 Edge node hardware
 
@@ -1147,6 +1157,14 @@ The auditor's per-pilot file is committed to the pilot
 documentation repository (a `pilots/{site}/audit-{date}.md` path
 or equivalent).
 
+> **Scripted alternative.** Run `tools/security-scan/run-audit.ps1` for an automated, idempotent walk of the SEC-* checklist that emits the per-pilot file ready for the auditor's countersignature:
+>
+> ```pwsh
+> pwsh tools/security-scan/run-audit.ps1 -Site <site>
+> ```
+>
+> Output: `tools/security-scan/reports/audit-{site}-{date}.md`. See `tools/security-scan/README.md` for full options.
+
 ### 10.2 Phase V perf load test
 
 The operator runs the load tests defined in
@@ -1171,6 +1189,14 @@ every endpoint's p99 latency sits under its budgeted ceiling. At
 If the 1x test fails, **stop**. The pilot will not survive its
 own peak. Resolve the bottleneck (typically: add CPU / RAM at the
 primary, tune Npgsql pool, profile the slow endpoint) and re-run.
+
+> **Scripted alternative.** Run `tools/perf/run-phase-v.ps1` for an automated, idempotent NickPerf wrapper that drives the 1x acceptance run and records p99 latencies vs the budgeted ceilings:
+>
+> ```pwsh
+> pwsh tools/perf/run-phase-v.ps1 -TargetUri <url> -Site <site> -Profile 1x
+> ```
+>
+> Output: `tools/perf/reports/perf-{site}-{date}.md`. See `tools/perf/README.md` for full options.
 
 ### 10.3 Backup + restore drill
 
