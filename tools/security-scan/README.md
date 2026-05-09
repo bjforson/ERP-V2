@@ -1,11 +1,12 @@
 # tools/security-scan
 
-Sprint 30 Phase V SAST tooling. Three PowerShell scripts that wrap `dotnet`-native package scanners + a regex secret-scanner. Companion to `docs/security/audit-checklist-2026.md`.
+Sprint 30 Phase V SAST tooling, augmented Sprint 60 with a register-walking audit-checklist runner. PowerShell scripts that wrap `dotnet`-native package scanners + a regex secret-scanner + a checklist-walking audit runner. Companion to `docs/security/audit-checklist-2026.md`.
 
 ## Scripts
 
 | Script | What it does | Audit item |
 |---|---|---|
+| `run-audit.ps1` | Sprint 60 Phase B1 — walks the full audit-checklist; runs per-item handlers where automatable; emits ticked artifact under `reports/audit-{site}-{date}.md`. Manual items are passed through as `[manual]` with the original Verify prose. SEC-DEP and SEC-SECRETS items chain to the per-tool reports below. | All ~89 SEC-* register items |
 | `run-vulnerability-scan.ps1` | `dotnet list package --vulnerable --include-transitive` per project; markdown report | SEC-DEP-1 |
 | `run-dependency-audit.ps1` | `dotnet list package --outdated --include-transitive` per project; markdown report | SEC-DEP-2 |
 | `run-license-audit.ps1` | `dotnet list package --include-transitive` + cross-reference against `license-allowlist.json`; flags non-allowlisted licenses | SEC-DEP-3 |
@@ -13,6 +14,55 @@ Sprint 30 Phase V SAST tooling. Three PowerShell scripts that wrap `dotnet`-nati
 | `check-secrets.ps1` | (Legacy) best-effort regex scan; preserved as a fast smoke check. The Phase V canonical tool is `run-trufflehog.ps1`. | SEC-SECRETS-1 (smoke only) |
 
 All scripts are idempotent and safe to run repeatedly. None of them mutate the tree.
+
+## Audit runner — `run-audit.ps1`
+
+`run-audit.ps1` is the Phase V execution-driver: instead of an operator reading 89 items cold start and grepping by hand, the runner walks the checklist, executes per-SEC-* verification commands where automatable, ticks `[x]` for pass / `[!]` for finding / `[ ]` for skip / `[manual]` for operator-judgement, and emits `audit-{site}-{date}.md` matching the checklist's How-to-use shape.
+
+Example invocations:
+
+```powershell
+# Default: dev site, no DB, read existing reports for chained checks
+.\tools\security-scan\run-audit.ps1
+
+# Tag artifact for the pilot site
+.\tools\security-scan\run-audit.ps1 -Site pilot
+
+# Run SQL-shaped checks (SEC-TENANT-3/5/6/13, SEC-DB-3) against a real DB
+.\tools\security-scan\run-audit.ps1 -ConnectionString "postgres://postgres:pw@localhost:5432/nickerp_platform"
+
+# Single category (e.g. dependency hygiene)
+.\tools\security-scan\run-audit.ps1 -Filter DEP
+
+# Trigger sibling scanners first (slow — runs vuln + license + trufflehog before reading their reports)
+.\tools\security-scan\run-audit.ps1 -RunChained
+
+# Parse only — print categorisation, no artifact
+.\tools\security-scan\run-audit.ps1 -DryRun
+```
+
+### Status semantics
+
+| Status | Marker | Meaning |
+|---|---|---|
+| pass    | `[x]` | Automated handler verified the expectation. |
+| fail    | `[!]` | Automated handler found a violation. P0/P1 fail = exit 2. |
+| skip    | `[ ]` | Handler ran but lacked a prerequisite (e.g. no `-ConnectionString` for a SQL probe, sibling scanner self-skipped, advisory check requires operator interpretation). Does NOT count as a finding. |
+| manual  | `[ ]` (with `[manual]` tail) | No handler exists for this item. Operator verifies by hand against the artifact's preserved Verify prose. |
+| xref    | `[ ]` (with `[xref → ...]` tail) | Item is a "See SEC-X-N" cross-reference. Tick the target. |
+
+### Adding new automation
+
+`docs/security/audit-checklist-2026.md` is **read-only input**. New automation handlers go in this script's `$ItemHandlers` table — add a row mapping `SEC-CAT-N → { handler-scriptblock }` and add the handler function above. Do not edit the checklist.
+
+### Exit codes
+
+- `0` — clean run; all P0+P1 automated checks pass (or are skipped/manual).
+- `1` — pre-flight failure (e.g. checklist absent).
+- `2` — at least one P0 or P1 automated check failed (CI-blocking).
+- `3` — checklist parser failure (file shape changed unexpectedly).
+
+P2/P3 findings DO NOT block exit; they surface in the artifact only. This matches the checklist's own §Phase V exit criteria — P0/P1 must pass; P2/P3 backlog OK.
 
 ## Run
 
