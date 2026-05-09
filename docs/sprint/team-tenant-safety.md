@@ -1,5 +1,7 @@
 # Team TS — Tenant Safety
 
+> **STATUS: RESOLVED — see commit `90f0d678` (Merge F1: RLS + tenant interceptor wiring), 04-27-2026.** This document describes a problem state that no longer applies. Kept for historical context.
+
 ## Mission
 
 Convert "multi-tenant from day 1" from an unenforced application-layer claim into a DB-enforced reality. Add Postgres RLS policies on every tenant-owned table; attach the tenant interceptors to every `DbContext` registration; remove the `SetTenant(1)` fallback that silently coerces unresolved tenants; tenant-filter the cross-DB Identity.Users query.

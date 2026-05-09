@@ -1,5 +1,7 @@
 # Team PT — Plugin Tenancy
 
+> **STATUS: RESOLVED — see commit `aa9abb93` (Merge F4: TenantId on plugin configs), 04-27-2026.** This document describes a problem state that no longer applies. Kept for historical context.
+
 ## Mission
 
 Make plugins tenant-aware. Add `long TenantId` to `ScannerDeviceConfig` and `ExternalSystemConfig`; have the host populate it from `ITenantContext`; partition any in-memory plugin state (especially `IcumsGhAdapter._indexes`) by tenant so two tenants pointing at the same physical resource don't share state.

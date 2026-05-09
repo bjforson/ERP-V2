@@ -1,5 +1,7 @@
 # Team DP — Demo Path
 
+> **STATUS: RESOLVED — see commit `749f2736` (Merge D2: scanner ingestion worker — demo path closed), 04-27-2026.** This document describes a problem state that no longer applies. Kept for historical context.
+
 ## Mission
 
 Close the case-lifecycle loop end-to-end. Today the FS6000 adapter's `StreamAsync` is dead code — only manual button clicks (`SimulateScanAsync`) consume it. Build a `ScannerIngestionWorker : BackgroundService` that runs `StreamAsync` per registered scanner and auto-creates cases on file emission. Refactor `SimulateScanAsync` to share an `IngestArtifactAsync(deviceId, raw, ct)` helper. Auto-fire `EvaluateAuthorityRulesAsync` after `FetchDocumentsAsync` succeeds.
