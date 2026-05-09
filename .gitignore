@@ -103,5 +103,10 @@ storage/**/*.onnx.data
 # operator-intent.
 tools/migrations/*.sql
 
+# Sprint 60 Phase A cutover dry-run reports — per-run engineering
+# artifact, not source-tracked. The reports/ directory itself is kept
+# via reports/.gitkeep so a fresh checkout has the target dir.
+tools/cutover-dryrun/reports/dryrun-*.md
+
 # External design docs ingested as reference material
 *.docx
