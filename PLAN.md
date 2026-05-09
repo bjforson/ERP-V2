@@ -96,7 +96,7 @@ Each work item below has a **Status** field. Values: `pending`, `in-progress`, `
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `90f0d678` |
 | **Predecessors** | none |
 | **Parallel-safe with** | F2, F3 (different files); tread carefully with F4/F5 (Program.cs hotspot) |
 | **Effort** | ~1 day |
@@ -436,14 +436,14 @@ Plus a markdown runbook at `docs/runbooks/demo-walkthrough.md` documenting the m
 
 ## 7. Phase V — Validation (deferred to next sprint)
 
-Tracked here for context. **Do not execute this sprint.**
+Tracked here for context. **All items shipped — see V1/V2/V3/V4 rows below.**
 
-| ID | Title | Predecessors | Effort |
-|---|---|---|---|
-| V1 | Acceptance-bar instrumentation (`image.serve_ms{kind,tier}`, `prerender.render_ms`, `case.state_transitions_total`, `/perf` admin page) | F+D | ~1 day |
-| V2 | Multi-location proof — Tema + Kotoka with two users, RLS canary | F1, D | ~1 day |
-| V3 | Persist `RuleEvaluation` rows (analyst sees historical checks on case open + queryable from `/audit`) | D3 | ~1 day |
-| V4 | Analyst viewer Razor — W/L sliders, 16-bit decode, ROI inspector, pixel probe | F+D+V1 | ~3-5 days |
+| ID | Title | Predecessors | Effort | Status |
+|---|---|---|---|---|
+| V1 | Acceptance-bar instrumentation (`image.serve_ms{kind,tier}`, `prerender.render_ms`, `case.state_transitions_total`, `/perf` admin page) | F+D | ~1 day | shipped — merged in `9bc66d94` (re-scoped as Sprint 2 A2) |
+| V2 | Multi-location proof — Tema + Kotoka with two users, RLS canary | F1, D | ~1 day | shipped — merged in `21a548b4` (re-scoped as Sprint 2 E1) |
+| V3 | Persist `RuleEvaluation` rows (analyst sees historical checks on case open + queryable from `/audit`) | D3 | ~1 day | shipped — see migration `20260428104221_AddRuleEvaluations` (re-scoped as Sprint 2 A1) |
+| V4 | Analyst viewer Razor — W/L sliders, 16-bit decode, ROI inspector, pixel probe | F+D+V1 | ~3-5 days | shipped — merged in `31ba561b` |
 
 ---
 
@@ -1426,7 +1426,7 @@ expect FU-7 to be the longest (touches consumers of the colliding type).
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `70a244e1` |
 | **Predecessors** | none |
 | **Parallel-safe with** | FU-3, FU-4, FU-5, FU-6, FU-7 |
 | **Effort** | ~0.25 day |
@@ -1481,7 +1481,7 @@ This is `CaseDetail.razor` only.
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `d20d6615` |
 | **Predecessors** | none |
 | **Parallel-safe with** | FU-2, FU-4, FU-5, FU-6, FU-7 |
 | **Effort** | ~0.25 day |
@@ -1562,7 +1562,7 @@ item, dependent on Sprint 5's system-context mechanism plus an
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `e15d85a1` |
 | **Predecessors** | none |
 | **Parallel-safe with** | FU-2, FU-3, FU-5, FU-6, FU-7 |
 | **Effort** | ~0.1 day |
@@ -1620,7 +1620,7 @@ inspection."__EFMigrationsHistory" ORDER BY 1` shows exactly seven rows
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `1d0e4d7f` |
 | **Predecessors** | none |
 | **Parallel-safe with** | FU-2, FU-3, FU-4, FU-6, FU-7 |
 | **Effort** | ~0.25 day |
@@ -1685,7 +1685,7 @@ control).
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `112fccb4` |
 | **Predecessors** | none (per-context history is in production for both DBs since H3) |
 | **Parallel-safe with** | FU-2, FU-3, FU-4, FU-5, FU-7 |
 | **Effort** | ~0.1 day |
@@ -1746,7 +1746,7 @@ the public history table.
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `956a5be5` |
 | **Predecessors** | none |
 | **Parallel-safe with** | FU-2, FU-3, FU-4, FU-5, FU-6 (touches different files) |
 | **Effort** | ~0.5 day |
@@ -1803,12 +1803,12 @@ Just the rename.
 
 | ID | Phase | Status | Branch | Merge commit |
 |---|---|---|---|---|
-| FU-2 | Followup | pending | `plan/fu2-foreign-case-404` | _(filled)_ |
-| FU-3 | Followup | pending | `plan/fu3-source-blob-collision-doc` | _(filled)_ |
-| FU-4 | Followup | pending | `plan/fu4-stale-migrations-history-row` | _(filled)_ |
-| FU-5 | Followup | pending | `plan/fu5-dotnet-ef-env-var-doc` | _(filled)_ |
-| FU-6 | Followup | pending | `plan/fu6-drop-public-migrations-history` | _(filled)_ |
-| FU-7 | Followup | pending | `plan/fu7-authoritydocument-rename` | _(filled)_ |
+| FU-2 | Followup | shipped | `plan/fu2-foreign-case-404` | `70a244e1` |
+| FU-3 | Followup | shipped | `plan/fu3-source-blob-collision-doc` | `d20d6615` |
+| FU-4 | Followup | shipped | `plan/fu4-stale-migrations-history-row` | `e15d85a1` |
+| FU-5 | Followup | shipped | `plan/fu5-dotnet-ef-env-var-doc` | `1d0e4d7f` |
+| FU-6 | Followup | shipped | `plan/fu6-drop-public-migrations-history` | `112fccb4` |
+| FU-7 | Followup | shipped | `plan/fu7-authoritydocument-rename` | `956a5be5` |
 
 ### 17.4 End-of-sprint smoke verification
 
