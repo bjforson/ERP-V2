@@ -185,6 +185,50 @@ builder.Services.AddPostgresQueue<SplitDetectionPayload>(opts =>
 });
 builder.Services.AddQueueConsumer<SplitDetectionConsumer, SplitDetectionPayload>();
 
+// --- Sprint S+3 / B-queues — five remaining stage queues + stub consumers ---
+// Tables created by 20260509153236_Add_S3_QueueTables (raw SQL — same shape
+// as queue_split_detection). Consumers are compile-clean stubs that log
+// TODO[Sprint S+3] once on first claim then complete; wiring lives here so
+// the platform host loops + janitor sweep + metrics surface include the
+// new queues from S+3 onwards. Real consumer bodies + producer enqueues
+// (from InspectionStateMachine.OnTransitionedAsync) land in subsequent
+// sprints per the IAS-Design plan's v2 delivery sequence.
+builder.Services.AddPostgresQueue<ImageAnalysisPayload>(opts =>
+{
+    opts.Schema = "inspection";
+    opts.Name = "image_analysis";
+});
+builder.Services.AddQueueConsumer<ImageAnalysisConsumer, ImageAnalysisPayload>();
+
+builder.Services.AddPostgresQueue<DecisionAgentPayload>(opts =>
+{
+    opts.Schema = "inspection";
+    opts.Name = "decision_agent";
+});
+builder.Services.AddQueueConsumer<DecisionAgentConsumer, DecisionAgentPayload>();
+
+builder.Services.AddPostgresQueue<AuditAssignmentPayload>(opts =>
+{
+    opts.Schema = "inspection";
+    opts.Name = "audit_assignment";
+});
+builder.Services.AddQueueConsumer<AuditAssignmentConsumer, AuditAssignmentPayload>();
+
+builder.Services.AddPostgresQueue<AuditReviewPayload>(opts =>
+{
+    opts.Schema = "inspection";
+    opts.Name = "audit_review";
+});
+builder.Services.AddQueueConsumer<AuditReviewConsumer, AuditReviewPayload>();
+
+builder.Services.AddPostgresQueue<OutboundSubmissionPayload>(opts =>
+{
+    opts.Schema = "inspection";
+    opts.Name = "submission";
+});
+builder.Services.AddQueueConsumer<SubmissionConsumer, OutboundSubmissionPayload>();
+// --- end Sprint S+3 / B-queues ---
+
 // Sprint 14 / B-queues — concrete InspectionStateMachine. Sole writer for
 // InspectionWorkItem.CurrentState (the platform base enforces this via
 // the internal setter on WorkItem<TState>); fires the split-detection
