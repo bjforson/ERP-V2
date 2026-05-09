@@ -31,12 +31,16 @@ public sealed class QueueJanitor : BackgroundService
     private readonly QueueJanitorOptions _options;
     private readonly ILogger<QueueJanitor> _logger;
 
-    // Constructor accepts the internal IPostQueueRegistration enumeration
-    // (the marker interface published by AddPostgresQueue<T>); marking the
-    // ctor itself internal keeps the accessibility consistent. DI resolves
-    // ctors regardless of accessibility, and the whole class is constructed
-    // exclusively by DI / by AddHostedService<QueueJanitor>().
-    internal QueueJanitor(
+    // Constructor accepts the (public) IPostQueueRegistration enumeration
+    // marker published by AddPostgresQueue<T>. Must be PUBLIC: the default
+    // Microsoft.Extensions.DependencyInjection activator only discovers
+    // public constructors — an `internal` ctor here makes
+    // services.AddHostedService<QueueJanitor>() throw at startup with
+    // "A suitable constructor could not be located." (Found pre-pilot
+    // 2026-05-09 during the first end-to-end Inspection.Web start; the
+    // sibling hosted services PgNotifyListener / OutboxRelay /
+    // QueueMetricsRefresher all already have public ctors.)
+    public QueueJanitor(
         NpgsqlDataSource dataSource,
         QueueJanitorOptions options,
         IEnumerable<IPostQueueRegistration> queueRegistrations,
