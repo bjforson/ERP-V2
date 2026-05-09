@@ -6,10 +6,14 @@
    manual + API rows look identical downstream — distinguishable only by
    payload.entry_method.
 
-   TODO(team): the §6.11.10 admin role is `inspection.outcome_admin`; until
-   that role lands in the v2 identity role list, gate via Inspection.Admin
-   the same way Thresholds.razor does. *@
-@attribute [Authorize(Roles = "Inspection.Admin")]
+   Authz: Inspection.OutcomeAdmin OR Inspection.Admin (any-of), per spec
+   §6.11.10 ("Admin role `inspection.outcome_admin` — gates manual-entry
+   tool and pseudo-instance reads"). Inspection.Admin retained in the
+   any-of list so existing generic-admin grants continue to work without
+   a per-grant migration — same additive pattern as RulesAdmin (Sprint
+   37). Role constants in
+   platform/NickERP.Platform.Identity/Auth/InspectionRoles.cs. *@
+@attribute [Authorize(Roles = "Inspection.OutcomeAdmin,Inspection.Admin")]
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Inspection.Application.PostHocOutcomes

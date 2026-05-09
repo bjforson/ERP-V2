@@ -5,12 +5,16 @@
    with Approve and Reject actions. Approve creates a new Status='shadow' row pointing at
    the proposed values (per §6.5.3); the actual shadow runner is out of this team's scope.
 
-   TODO(team-A): replace `Inspection.Admin` with the dedicated
-   `inspection.threshold_admin` role once it's added to the v2 identity
-   role list. The spec calls for the dedicated role so threshold approval
-   can be delegated without granting full inspection-admin access. Until
-   then, fall back to the most-restrictive existing admin role. *@
-@attribute [Authorize(Roles = "Inspection.Admin")]
+   Authz: Inspection.ThresholdAdmin OR Inspection.Admin (any-of), per
+   spec §6.5 / §6.5.3 ("admin role `inspection.threshold_admin` may
+   bypass shadow with explicit `bypass_reason`"). Granular role allows
+   threshold approval to be delegated without granting full
+   inspection-admin access. Inspection.Admin retained in the any-of
+   list so existing generic-admin grants continue to work without a
+   per-grant migration — same additive pattern as RulesAdmin (Sprint
+   37). Role constants in
+   platform/NickERP.Platform.Identity/Auth/InspectionRoles.cs. *@
+@attribute [Authorize(Roles = "Inspection.ThresholdAdmin,Inspection.Admin")]
 @using System.Text.Json
 @using Microsoft.EntityFrameworkCore
 @using NickERP.Inspection.Core.Entities

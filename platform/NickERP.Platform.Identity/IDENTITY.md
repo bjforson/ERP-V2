@@ -159,7 +159,7 @@ The validator runs at the API boundary; existing rows from before G1 are not ret
 | App | File | Role constants |
 |---|---|---|
 | Identity | `Identity.Api/IdentityAdminEndpoints.cs` | `Identity.Admin` |
-| Inspection | `Identity/Auth/InspectionRoles.cs` (Sprint 37) | `Inspection.Admin`, `Inspection.RulesAdmin` |
+| Inspection | `Identity/Auth/InspectionRoles.cs` (Sprint 37) | `Inspection.Admin`, `Inspection.RulesAdmin`, `Inspection.OutcomeAdmin`, `Inspection.ThresholdAdmin` |
 | NickFinance | `NickFinance.Core/Roles/PettyCashRoles.cs` | `petty_cash.reopen_period`, `petty_cash.publish_fx`, `petty_cash.manage_periods` |
 
 > NickFinance's role codes are lowercased + dotted today — they
