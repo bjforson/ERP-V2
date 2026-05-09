@@ -1,5 +1,7 @@
 # Team PC — Plugin Contract Versioning
 
+> **STATUS: RESOLVED — see commit `f941f717` (Merge F3: plugin contract version pinning), 04-27-2026.** This document describes a problem state that no longer applies. Kept for historical context.
+
 ## Mission
 
 Detect plugin contract drift at host startup, not at first call. Add a `[ContractVersion]` attribute to every Abstractions assembly; have plugin manifests declare a `minHostContractVersion`; have the plugin loader refuse to register plugins whose declared minimum exceeds the host's current contract version, with a clear log message.
