@@ -2308,3 +2308,306 @@ Once the pilot proves stable, parity-driven expansion to second site follows. Po
 - **Post-pilot scope kickoff** — when pilot proves stable, dispatch the first post-pilot sprint (likely §6.1 OCR pilot or NickFinance v1-clone fold-into-G2).
 
 `docs/runbooks/14-pilot-cutover.md` (Sprint 54) is the operator-facing deliverable that closes the loop. The plan-file at `~/.claude/plans/tingly-launching-quasar.md` stays as historical reference for the plan-walk rationale; this PLAN.md §22.7 is the durable saturation record.
+
+## 23. Sprint 60 — Engineering-side cutover dry-run (C1)
+
+### 23.0 Goal
+
+Convert runbook 14 + Phase V execution from operator-prose-with-shell-fragments
+into a scripted, idempotent rehearsal the operator can run against the pilot
+site on day 1. Pre-pilot is saturated (§22.7); marginal engineering value
+right now is **reducing operator risk on cutover day**, not new capability.
+C1 de-risks the open `operatorActions[]` gates (`live-deploy-staged-migrations`,
+`provision-standby-box`, `install-pgbackrest`, `wire-backup-cadence`,
+`wire-ha-alerts`) and the `docs/security/audit-checklist-2026.md` ~89 SEC-*
+items by giving each a tested step instead of a runbook paragraph. Pure
+tooling — no application features, no schema changes, no RLS policies, no
+module work. Lives in `tools/`, `docs/runbooks/`, `docs/security/`.
+
+### 23.1 Phases
+
+```
+A: tools/cutover-dryrun/ — clean Postgres provision + 32-migration apply
+   │
+   ├── B1: Phase V audit-checklist runner (markdown → ticked-artifact pipeline)
+   │
+   └── B2: Phase V perf-execution wrapper (NickPerf scenarios → site-scoped report)
+                  │
+                  ▼
+   C: rehearsal smoke against scratch host + sign-off doc updates
+                  │
+                  ▼
+   D: track commit + sprint-progress.json reconciliation
+```
+
+A is sequential predecessor for B1+B2 (both need a clean DB to verify
+against). B1 and B2 are orthogonal (different tools, different docs) and run
+parallel. C is the soak run. D is the standard close-out shape. Total
+~3.25 days wall-clock; parallelism on B1/B2 brings it to ~2.5 days.
+
+### 23.2 Work items
+
+#### A — Clean-host migration runner
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | none |
+| **Parallel-safe with** | (none — predecessor for B1+B2) |
+| **Effort** | ~1.0 day |
+| **Branch** | `plan/sprint-60-phase-a-cutover-dryrun` |
+
+**Why this matters.** Runbook 14 is operator-prose (1457 lines); no engineer
+has executed it end-to-end on a clean machine. The 32 staged migrations
+(`operatorActions.live-deploy-staged-migrations`) are disk-only. SEC-DEP-3
+is closed (Sprint 58 NickPerf) so Phase V perf is unblocked, but the
+runbook 14 §4-§10 sequence is still hand-stepped shell. A scripted runner
+turns the hand-stepped block into a tested step.
+
+**Deliverable.**
+
+`tools/cutover-dryrun/run.ps1` provisions a throwaway Postgres (PG17, locked
+per runbook 11), applies migrations from all three DBs (`nickerp_platform`
++ `nickerp_inspection` + `nickerp_nickfinance`) in order, produces
+`dryrun-{date}-migration-report.md` capturing:
+
+- Per-migration apply duration and final row count.
+- `__EFMigrationsHistory` final state per DB.
+- Schema diff vs. expected (named migrations from EF model snapshot).
+- Failure mode + reproduction step if any migration fails.
+
+Idempotent: re-running against an already-applied target is a no-op that
+produces the same report shape. Vendor-neutral target: accepts a connection
+string env var and runs against either Docker scratch Postgres or a
+staging HA pair.
+
+**Files in scope.**
+- `tools/cutover-dryrun/run.ps1` (new)
+- `tools/cutover-dryrun/README.md` (new — invocation + expected output)
+- Possibly `tools/cutover-dryrun/lib/` for shared shell helpers.
+
+**Acceptance criteria.**
+- `tools/cutover-dryrun/run.ps1` runs green from a clean PG17 install
+  to all 32 migrations applied with the same 1099/1099 test pass on a
+  live DB target.
+- Re-run against the same target produces a report with zero new
+  migrations applied (idempotency check).
+- Failure injection (drop a column the migration expects) produces a
+  failure report that names the migration and reproduction step.
+- `dotnet build` clean; `dotnet test` 1128/1129 (no new flakes from
+  tooling).
+
+**Out of scope.** Any application features, schema changes, RLS policies,
+or module work. The runner targets the existing 32 migrations as-is; it
+does not author new migrations.
+
+---
+
+#### B1 — Audit-checklist runner
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | A |
+| **Parallel-safe with** | B2 |
+| **Effort** | ~0.75 day |
+| **Branch** | `plan/sprint-60-phase-b1-audit-runner` |
+
+**Why this matters.** `docs/security/audit-checklist-2026.md` lists ~89
+SEC-* items as flat doc with no runner. Phase V execution today is "operator
+reads 89 items cold start." A runner ticks the automatable items and emits
+the `audit-{site}-{date}.md` artifact shape Phase V will produce on-site,
+leaving only the genuinely manual items for the operator.
+
+**Deliverable.**
+
+`tools/security-scan/run-audit.ps1` walks `docs/security/audit-checklist-2026.md`,
+executes per-SEC-* commands where automatable (e.g. `dotnet list package
+--vulnerable`, `trufflehog filesystem`, the existing license-allowlist
+check, RLS-policy presence checks), ticks the checklist, emits
+`audit-{site}-{date}.md` matching the §4.3 output shape. Non-automatable
+items emit a `[manual]` line in the artifact with the original prose
+preserved. SEC-DEP-3 NBomber resolution surfaces as a tracked-item line
+since it's closed Sprint 58 — runner reads its closure status from
+`tools/security-scan/license-allowlist-rationale.md`.
+
+**Files in scope.**
+- `tools/security-scan/run-audit.ps1` (new — or augment existing if present)
+- `tools/security-scan/README.md` (update — runner invocation)
+- `docs/security/audit-checklist-2026.md` (no content edits — runner reads
+  it as a structured input).
+
+**Acceptance criteria.**
+- `tools/security-scan/run-audit.ps1` ticks every automatable SEC-* item;
+  non-automatable items emit a `[manual]` line in the artifact.
+- Output `audit-{site}-{date}.md` matches the §4.3 output shape and is
+  diffable across runs.
+- Runner exits non-zero if any automatable check fails (so it's CI-ready).
+- `dotnet build` clean; `dotnet test` 1128/1129.
+
+**Out of scope.** Authoring new SEC-* items. Implementing automation for
+items the runbook explicitly flags as manual operator-judgement steps.
+
+---
+
+#### B2 — Phase V perf-execution wrapper
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | A |
+| **Parallel-safe with** | B1 |
+| **Effort** | ~0.75 day |
+| **Branch** | `plan/sprint-60-phase-b2-perf-runner` |
+
+**Why this matters.** Sprint 58 NickPerf closed SEC-DEP-3 P0 (NickPerf
+homegrown runner replaces NBomber), unblocking Phase V perf execution. But
+the four scenarios (Health + CaseCreate + EdgeReplay + 24h-backlog) are
+invoked individually; a wrapper produces a site-scoped report in the
+shape Sprint 55 perf reports use, matching the test-plan output shape.
+
+**Deliverable.**
+
+`tools/perf/run-phase-v.ps1` runs the four NickPerf scenarios against a
+target URL, captures latency/throughput/error rates per scenario, produces
+`perf-{site}-{date}.md` matching the existing Sprint 55 perf reports
+(`docs/perf/`). Wrapper handles scenario sequencing (Health first as
+warm-up, 24h-backlog last as the heavy run) and per-scenario timeout
+budgeting. Uses the perf-seed tool (Sprint 52) for realistic data shapes;
+mock JWT bearer (Sprint 52) for rep-volume.
+
+**Files in scope.**
+- `tools/perf/run-phase-v.ps1` (new)
+- `tools/perf/README.md` (update — wrapper invocation + scenario sequencing)
+- `docs/perf/test-plan.md` (no content edits — runner reads it as a
+  structured input).
+
+**Acceptance criteria.**
+- `tools/perf/run-phase-v.ps1` produces a perf artifact whose shape
+  matches the existing Sprint 55 perf reports (`docs/perf/`).
+- All four scenarios run; per-scenario pass/fail surfaces in the artifact
+  header.
+- Runner exits non-zero if any scenario fails its SLO threshold.
+- `dotnet build` clean; `dotnet test` 1128/1129.
+
+**Out of scope.** Authoring new perf scenarios. Tuning SLO thresholds.
+Replacing the NickPerf runner — the wrapper consumes it as-is.
+
+---
+
+#### C — Rehearsal smoke + runbook 14 amendments
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | B1, B2 |
+| **Parallel-safe with** | (none — soak run) |
+| **Effort** | ~0.5 day |
+| **Branch** | `plan/sprint-60-phase-c-smoke` |
+
+**Why this matters.** The three runners only earn their keep if they
+actually run end-to-end against a target host. C captures that rehearsal
+and folds the runner invocations into runbook 14 wherever a hand-stepped
+command block currently lives. No operator-prose deletions — additions
+only — so the prose-form runbook stays readable for operators who prefer
+to read first and run later.
+
+**Deliverable.**
+
+Run A→B1→B2 on a scratch host (Docker scratch Postgres acceptable per the
+vendor-neutrality posture); capture artifacts (`dryrun-{date}-migration-report.md`,
+`audit-{date}-{date}.md`, `perf-{date}-{date}.md`). Amend runbook 14
+§4-§10 with "**operator runs `tools/cutover-dryrun/run.ps1`**" (and the
+B1/B2 equivalents) wherever a hand-stepped block currently lives. Sign-off
+appendix in runbook 14 references the three artifacts as the acceptance
+gates for that runbook section.
+
+**Files in scope.**
+- `docs/runbooks/14-pilot-site-standup.md` (amendments §4-§10)
+- `docs/runbooks/14-pilot-acceptance-checklist.md` (amendments referencing
+  the runner artifacts)
+- Possibly a new `docs/runbooks/14-rehearsal-artifacts/` directory holding
+  example artifacts from the scratch run as reference output.
+
+**Acceptance criteria.**
+- Runbook 14 §4-§10 references the new tools wherever a hand-stepped
+  command block exists; no operator-prose deletions, only additions.
+- Three artifacts from the scratch rehearsal land in the repo (or are
+  referenced as committable example output) so the operator can compare.
+- `dotnet build` 0 errors; `dotnet test` 1128/1129 (no new flakes).
+
+**Out of scope.** Rewriting runbook 14 voice or structure. New runbooks.
+Operator-side rehearsal on the actual pilot hardware (operator pickup —
+see §23.4 question 4 in the proposal).
+
+---
+
+#### D — Track + sprint-progress.json
+
+| | |
+|---|---|
+| **Status** | pending |
+| **Predecessors** | C |
+| **Parallel-safe with** | (none — close-out) |
+| **Effort** | ~0.25 day |
+| **Branch** | `plan/sprint-60-phase-d-track` |
+
+**Why this matters.** Standard close-out — keeps the durable saturation
+record accurate.
+
+**Deliverable.**
+
+Track commit `track: Sprint 60 shipped — pilot cutover scripted (rehearsal
+artifact pattern)`; reconcile `docs/sprint-progress.json` with the new
+sprint count, the closed `operatorActions[]` gates (those that the runners
+now cover), and any newly-surfaced findings from the C-phase rehearsal.
+Update `ROADMAP.md` §3.2 status row if the count band shifts.
+
+**Files in scope.**
+- `docs/sprint-progress.json`
+- `ROADMAP.md` §3.2 (status row only — no new scope)
+- Possibly `PLAN.md §22.7` if the saturation record needs an updated
+  total-sprints number (additive note only — no edits to existing prose).
+
+**Acceptance criteria.**
+- `docs/sprint-progress.json` validates against its existing shape; new
+  sprint count is accurate.
+- Track commit follows the standard `track: Sprint NN shipped` shape per
+  prior tracks (e.g. `59119aff`).
+- `dotnet build` 0 errors; `dotnet test` 1128/1129.
+
+**Out of scope.** Any scope adjustment to the post-pilot arc. Status
+edits to non-Sprint-60 sections of PLAN.md.
+
+### 23.3 Status snapshot
+
+| ID | Phase | Status | Branch | Merge commit |
+|---|---|---|---|---|
+| A  | Tooling | pending | `plan/sprint-60-phase-a-cutover-dryrun` | _(filled)_ |
+| B1 | Tooling | pending | `plan/sprint-60-phase-b1-audit-runner` | _(filled)_ |
+| B2 | Tooling | pending | `plan/sprint-60-phase-b2-perf-runner` | _(filled)_ |
+| C  | Smoke   | pending | `plan/sprint-60-phase-c-smoke` | _(filled)_ |
+| D  | Track   | pending | `plan/sprint-60-phase-d-track` | _(filled)_ |
+
+### 23.4 End-of-sprint smoke verification
+
+1. `tools/cutover-dryrun/run.ps1` runs green from a clean PG17 install
+   to all 32 migrations applied with the same 1099/1099 test pass on a
+   live DB target (A acceptance).
+2. `tools/security-scan/run-audit.ps1` ticks every automatable SEC-*
+   item; non-automatable items emit a `[manual]` line in the artifact
+   (B1 acceptance).
+3. `tools/perf/run-phase-v.ps1` produces a perf artifact whose shape
+   matches the existing Sprint 55 perf reports (`docs/perf/`)
+   (B2 acceptance).
+4. Runbook 14 §4-§10 references the new tools wherever a hand-stepped
+   command block exists; no operator-prose deletions, only additions
+   (C acceptance).
+5. Three rehearsal artifacts (`dryrun-{date}-migration-report.md`,
+   `audit-{date}-{date}.md`, `perf-{date}-{date}.md`) exist in the repo
+   from the C-phase scratch run.
+6. `dotnet build` 0 errors; `dotnet test` 1128/1129 (no new flakes).
+7. `git log` shows phase A→B1+B2→C→D commit chain matching the
+   `Sprint 60 phase X` convention (e.g. `Sprint 50 phase E:`).
+8. `docs/sprint-progress.json` reflects the new sprint count and any
+   `operatorActions[]` gates the runners now cover (D acceptance).
