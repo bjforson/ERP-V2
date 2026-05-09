@@ -2351,7 +2351,7 @@ parallel. C is the soak run. D is the standard close-out shape. Total
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `c2463e2f` |
 | **Predecessors** | none |
 | **Parallel-safe with** | (none — predecessor for B1+B2) |
 | **Effort** | ~1.0 day |
@@ -2407,7 +2407,7 @@ does not author new migrations.
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `5e18c590` |
 | **Predecessors** | A |
 | **Parallel-safe with** | B2 |
 | **Effort** | ~0.75 day |
@@ -2454,7 +2454,7 @@ items the runbook explicitly flags as manual operator-judgement steps.
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `3cb20a5a` |
 | **Predecessors** | A |
 | **Parallel-safe with** | B1 |
 | **Effort** | ~0.75 day |
@@ -2499,7 +2499,7 @@ Replacing the NickPerf runner — the wrapper consumes it as-is.
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `017d4505` |
 | **Predecessors** | B1, B2 |
 | **Parallel-safe with** | (none — soak run) |
 | **Effort** | ~0.5 day |
@@ -2546,7 +2546,7 @@ see §23.4 question 4 in the proposal).
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `055fdad9` |
 | **Predecessors** | C |
 | **Parallel-safe with** | (none — close-out) |
 | **Effort** | ~0.25 day |
@@ -2583,11 +2583,11 @@ edits to non-Sprint-60 sections of PLAN.md.
 
 | ID | Phase | Status | Branch | Merge commit |
 |---|---|---|---|---|
-| A  | Tooling | pending | `plan/sprint-60-phase-a-cutover-dryrun` | _(filled)_ |
-| B1 | Tooling | pending | `plan/sprint-60-phase-b1-audit-runner` | _(filled)_ |
-| B2 | Tooling | pending | `plan/sprint-60-phase-b2-perf-runner` | _(filled)_ |
-| C  | Smoke   | pending | `plan/sprint-60-phase-c-smoke` | _(filled)_ |
-| D  | Track   | pending | `plan/sprint-60-phase-d-track` | _(filled)_ |
+| A  | Tooling | shipped | `plan/sprint-60-phase-a-cutover-dryrun` | `c2463e2f` |
+| B1 | Tooling | shipped | `plan/sprint-60-phase-b1-audit-runner` | `5e18c590` |
+| B2 | Tooling | shipped | `plan/sprint-60-phase-b2-perf-runner` | `3cb20a5a` |
+| C  | Smoke   | shipped | `plan/sprint-60-phase-c-smoke` | `017d4505` |
+| D  | Track   | shipped | `plan/sprint-60-phase-d-track` | `055fdad9` |
 
 ### 23.4 End-of-sprint smoke verification
 
