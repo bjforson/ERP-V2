@@ -115,5 +115,11 @@ tools/cutover-dryrun/reports/dryrun-*.md
 # tools/security-scan/run-audit.ps1 is ignored.
 tools/security-scan/reports/audit-*.md
 
+# Sprint 60 Phase B2 Phase-V perf-execution reports — per-run engineering
+# artifact, not source-tracked. Same posture as Phase A: reports/.gitkeep
+# keeps the target dir present after a fresh checkout, individual
+# perf-{site}-{date}.md artifacts are produced + consumed per Phase V run.
+tools/perf/reports/perf-*.md
+
 # External design docs ingested as reference material
 *.docx

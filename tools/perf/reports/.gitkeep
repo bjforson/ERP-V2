@@ -1,0 +1,4 @@
+# Keeps the reports directory present after a fresh checkout so
+# tools/perf/run-phase-v.ps1 (Sprint 60 Phase B2) has a target to write
+# perf-{site}-{date}.md files into. Per-run reports themselves are
+# gitignored — see .gitignore for the pattern.
