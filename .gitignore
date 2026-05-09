@@ -103,5 +103,23 @@ storage/**/*.onnx.data
 # operator-intent.
 tools/migrations/*.sql
 
+# Sprint 60 Phase A cutover dry-run reports — per-run engineering
+# artifact, not source-tracked. The reports/ directory itself is kept
+# via reports/.gitkeep so a fresh checkout has the target dir.
+tools/cutover-dryrun/reports/dryrun-*.md
+
+# Sprint 60 Phase B1 audit-runner artifacts — per-run, per-site engineering
+# artifact, not source-tracked. The reports/ directory is shared with
+# the existing per-tool reports (2026-*-vulnerabilities.md, etc.) which
+# stay tracked as baselines. Only the audit-{site}-{date}.md output of
+# tools/security-scan/run-audit.ps1 is ignored.
+tools/security-scan/reports/audit-*.md
+
+# Sprint 60 Phase B2 Phase-V perf-execution reports — per-run engineering
+# artifact, not source-tracked. Same posture as Phase A: reports/.gitkeep
+# keeps the target dir present after a fresh checkout, individual
+# perf-{site}-{date}.md artifacts are produced + consumed per Phase V run.
+tools/perf/reports/perf-*.md
+
 # External design docs ingested as reference material
 *.docx
