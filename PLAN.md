@@ -163,7 +163,7 @@ PGPASSWORD="$NICKSCAN_DB_PASSWORD" "$PSQL" -h localhost -U postgres -d nickerp_i
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `2dde6db9` |
 | **Predecessors** | none |
 | **Parallel-safe with** | F1, F3, F4, F5 (touches only new `tests/` tree) |
 | **Effort** | ~2 days |
@@ -200,7 +200,7 @@ PGPASSWORD="$NICKSCAN_DB_PASSWORD" "$PSQL" -h localhost -U postgres -d nickerp_i
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `f941f717` |
 | **Predecessors** | none |
 | **Parallel-safe with** | F1, F2, F4 (PT bumps versions on the same Abstractions assemblies — coordinate, but no real conflict) |
 | **Effort** | ~0.5 day |
@@ -234,7 +234,7 @@ PGPASSWORD="$NICKSCAN_DB_PASSWORD" "$PSQL" -h localhost -U postgres -d nickerp_i
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `aa9abb93` |
 | **Predecessors** | F3 (logically — bumps Abstractions contract versions) |
 | **Parallel-safe with** | F1, F2 |
 | **Effort** | ~0.5 day |
@@ -272,7 +272,7 @@ PGPASSWORD="$NICKSCAN_DB_PASSWORD" "$PSQL" -h localhost -U postgres -d nickerp_i
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — slices 1+2 merged in `91cb3904`; slice 3 cutover deferred to Sprint Hardening as H3 (`8fe01efc`) |
 | **Predecessors** | F1 (interceptor wiring) for clean health-check semantics |
 | **Parallel-safe with** | F2, F3, F4 (different files within Program.cs; coordinate edits) |
 | **Effort** | ~1 day |
@@ -315,7 +315,7 @@ PGPASSWORD="$NICKSCAN_DB_PASSWORD" "$PSQL" -h localhost -U postgres -d nickerp_i
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `6b16c23a` |
 | **Predecessors** | F4 (`ScannerDeviceConfig.TenantId` exists) |
 | **Parallel-safe with** | F1, F2, F3, F5 |
 | **Effort** | ~0.5 day |
@@ -340,7 +340,7 @@ PGPASSWORD="$NICKSCAN_DB_PASSWORD" "$PSQL" -h localhost -U postgres -d nickerp_i
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `749f2736` |
 | **Predecessors** | D1, F4 |
 | **Parallel-safe with** | D3 (D3 touches `FetchDocumentsAsync` and `CaseDetail.razor`) |
 | **Effort** | ~1 day |
@@ -375,7 +375,7 @@ Register via `builder.Services.AddHostedService<ScannerIngestionWorker>();` in `
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `3dee8698` |
 | **Predecessors** | none structural; depends on the existing `EvaluateAuthorityRulesAsync` shipped earlier |
 | **Parallel-safe with** | D1, D2 |
 | **Effort** | ~0.25 day |
@@ -404,7 +404,7 @@ Register via `builder.Services.AddHostedService<ScannerIngestionWorker>();` in `
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `b101c7b5` |
 | **Predecessors** | D1, D2, D3, F1, F4, F5 |
 | **Parallel-safe with** | none (this is the integration gate) |
 | **Effort** | ~0.5 day |
@@ -547,7 +547,7 @@ F5 slice 3 (commit `8b29407` on `plan/f5-prod-minimum`) creates a non-superuser 
 
 | | |
 |---|---|
-| **Status** | pending (blocking F5 slice 3) |
+| **Status** | shipped — re-scoped as Sprint Hardening H2, merged in `03330fd6` |
 | **Predecessors** | F1 (interceptors must be in place — done) |
 | **Effort** | ~0.5–1 day |
 | **Branch** | `plan/f6-identity-tenancy-interlock` |
@@ -560,7 +560,7 @@ F5 slice 3 (commit `8b29407` on `plan/f5-prod-minimum`) creates a non-superuser 
 
 | | |
 |---|---|
-| **Status** | pending (live-system bug) |
+| **Status** | shipped — re-scoped as Sprint Hardening H1, merged in `0a402425` |
 | **Predecessors** | F1 (interceptor wiring — done), D2 (worker reference pattern — done) |
 | **Effort** | ~0.5 day |
 | **Branch** | `plan/f7-worker-tenant-resolution` |
@@ -654,7 +654,7 @@ Inherits from §4. Specifically:
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `0a402425` |
 | **Predecessors** | none (F1's interceptor wiring already in main) |
 | **Parallel-safe with** | H2, A1, A2 |
 | **Effort** | ~0.5 day |
@@ -689,7 +689,7 @@ Inherits from §4. Specifically:
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `03330fd6` |
 | **Predecessors** | F1 (in main) |
 | **Parallel-safe with** | H1, A1, A2 |
 | **Effort** | ~1 day |
@@ -729,7 +729,7 @@ Inherits from §4. Specifically:
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `8fe01efc` |
 | **Predecessors** | H2 (must merge first) |
 | **Parallel-safe with** | (waits for H2) |
 | **Effort** | ~0.25 day |
@@ -763,7 +763,7 @@ Inherits from §4. Specifically:
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `7c489e1e` |
 | **Predecessors** | none (D3 already wired the auto-fire path in main) |
 | **Parallel-safe with** | H1, H2, A2 |
 | **Effort** | ~1 day |
@@ -816,7 +816,7 @@ Inherits from §4. Specifically:
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `9bc66d94` |
 | **Predecessors** | none |
 | **Parallel-safe with** | H1, H2, A1 |
 | **Effort** | ~1 day |
@@ -857,7 +857,7 @@ Plus a small admin page `/perf` that exposes a snapshot of the meters' current r
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `21a548b4` |
 | **Predecessors** | H1, H2, H3 (all merged) |
 | **Parallel-safe with** | none (this is the gate) |
 | **Effort** | ~1 day |
@@ -997,7 +997,7 @@ Both items can dispatch in parallel — they touch entirely different files. ~2 
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `5854c811` |
 | **Predecessors** | none (post-Sprint 2 main is fine) |
 | **Parallel-safe with** | G1 |
 | **Effort** | ~0.25 day |
@@ -1038,7 +1038,7 @@ The `audit.events` table itself stays SELECT+INSERT only (append-only invariant 
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — items #1, #2, #4, #5, #6 merged in `545a0f94`; item #3 escalated and merged as G1-3 in `5a1938c7` |
 | **Predecessors** | none |
 | **Parallel-safe with** | FU-1 |
 | **Effort** | ~2 days |
@@ -1155,7 +1155,7 @@ Single work item, single agent. ~0.5 day wall-clock.
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `5a1938c7` |
 | **Predecessors** | none (Sprint 4's G1 #1, #2, #4, #5, #6 already in main) |
 | **Parallel-safe with** | (none — single-item sprint) |
 | **Effort** | ~0.5 day |
@@ -1853,7 +1853,7 @@ between runbooks is easier to keep consistent with one author.)
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `f0e5afc0` |
 | **Predecessors** | none |
 | **Parallel-safe with** | (none — single-item sprint) |
 | **Effort** | ~1 day |
@@ -2000,7 +2000,7 @@ coupled — splitting them adds merge friction). ~2-3 days wall-clock.
 
 | | |
 |---|---|
-| **Status** | pending |
+| **Status** | shipped — merged in `f9a595df` |
 | **Predecessors** | none |
 | **Parallel-safe with** | (none — single-item sprint) |
 | **Effort** | ~2-3 days |
