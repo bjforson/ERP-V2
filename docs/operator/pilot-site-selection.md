@@ -1,6 +1,8 @@
 # Pilot site selection — decision memo
 
-**Decision needed.** Lock pilot site (Kotoka Cargo / KIA vs Takoradi). Pilot launch (runbook 14) blocked until named.
+**LOCKED: Tema (2026-05-09)** — operator-chosen pilot site. Runbook 14 stand-up unblocked.
+
+> The original memo evaluated Kotoka Cargo (KIA) and Takoradi as candidates. The operator decision selected **Tema** — a third option already known to the codebase (referenced as a test-tenant location in `tests/NickERP.Inspection.E2E.Tests/MultiLocationFederationTests.cs`). The §3 hard-gate evidence + weighted-score matrix for Tema is the operator team's deliverable; this memo is the lock-record.
 
 **Stakeholders.**
 - **Decides:** business owner + customs-side §2.4 MOU counterpart.
@@ -79,11 +81,12 @@ Score 1 (worst) to 5 (best). "Pilot prefers higher" criterion scores 5 when site
 
 ## Recommendation
 
-**TBD** — data-bounded; cannot be made from inside the codebase. Fill the matrix, then apply §3.3 lowest-traffic-gate-passer rule: if both sites pass all four hard gates, lower-traffic site wins tiebreak.
+**Tema (locked 2026-05-09).** Operator decision; rationale to be appended by operator team. Per the §3.3 lowest-traffic-gate-passer rule the operator is on the hook to demonstrate Tema passes all four hard gates from §3.1 — that evidence lives in the §3.5 one-pager (`pilots/tema/site-selection-2026-05-09.md`), not here.
 
-Trade-offs the recommendation must name:
-- If Kotoka wins on cooperation but Takoradi wins on traffic, **traffic wins** (§3.3).
-- If a site fails any hard gate, weighted score is irrelevant (§3.1).
+Trade-offs the operator team will name in the §3.5 one-pager:
+- Why Tema over Kotoka and Takoradi (the two original candidates this memo evaluated).
+- Hard-gate evidence for Tema (cooperation, connectivity, scanner coverage, data residency).
+- Weighted score and lowest-traffic tiebreak result.
 
 ---
 
