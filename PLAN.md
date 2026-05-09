@@ -1365,7 +1365,7 @@ closes that gap.
 
 | ID | Phase | Status | Branch | Merge commit |
 |---|---|---|---|---|
-| G1-3 | Generalization | pending | `plan/g1-3-system-context` | _(filled at merge)_ |
+| G1-3 | Generalization | shipped | `plan/g1-3-system-context` | `5a1938c7` |
 
 ### 16.4 End-of-sprint smoke verification
 
@@ -1959,7 +1959,7 @@ and a "if you don't know which runbook to use, start here" decision tree.
 
 | ID | Phase | Status | Branch | Merge commit |
 |---|---|---|---|---|
-| P1 | Production prep | pending | `plan/p1-operations-runbooks` | _(filled)_ |
+| P1 | Production prep | shipped | `plan/p1-operations-runbooks` | `f0e5afc0` |
 
 ### 18.4 End-of-sprint smoke verification
 
@@ -2115,7 +2115,7 @@ Two phases, both on the same branch:
 
 | ID | Phase | Status | Branch | Merge commit |
 |---|---|---|---|---|
-| P3 | Production prep | pending | `plan/p3-audit-projection-notifications` | _(filled)_ |
+| P3 | Production prep | shipped | `plan/p3-audit-projection-notifications` | `f9a595df` |
 
 ### 19.4 End-of-sprint smoke verification
 
