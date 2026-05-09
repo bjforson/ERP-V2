@@ -372,6 +372,61 @@ this site was chosen. Without the §3 output document, §10's
 auditor will cite SEC-AUDIT-7-equivalent ("system-context call
 without documented reason") at audit time.
 
+### 3.6 Tag the pre-pilot release
+
+Before any hardware leaves §4 or any binary leaves a build host,
+pin the source commit. This is the immutable reference the
+auditor + the operator + the rollback playbook all point at.
+
+Standard sequence (run on a workstation with `gh` authenticated,
+or perform the second step via the GitHub web UI):
+
+```bash
+# 1. Lock the commit. Tag name pattern: pilot-<site>-<YYYY-MM-DD>
+git fetch origin
+git checkout main
+git pull
+git tag -a pilot-<site>-<YYYY-MM-DD> -m "Pre-pilot release for <site> launch"
+git push origin pilot-<site>-<YYYY-MM-DD>
+
+# 2. Cut a GitHub release from the tag. Title = tag name. Body should
+#    include: pre-pilot saturation marker (current shippedSprints from
+#    docs/sprint-progress.json), the site name, the §3.5 output doc
+#    URL, and a one-line summary of what's in scope.
+gh release create pilot-<site>-<YYYY-MM-DD> \
+  --title "Pre-pilot release — <site>" \
+  --notes-from-tag --verify-tag
+```
+
+If `gh` isn't available, create the release at
+`https://github.com/<owner>/<repo>/releases/new?tag=pilot-<site>-<YYYY-MM-DD>`
+and paste the body manually. Either path is acceptable; the
+**tag** is the load-bearing artifact, the release is metadata.
+
+**Why this matters.** `Deploy.ps1` (the publish step in §4–§5
+combined) does `dotnet publish` from the working tree of whichever
+commit is checked out on the prod box. Without a tag, "what we
+shipped" drifts as commits land on `main` post-cutover. With a
+tag, anyone running `git checkout pilot-<site>-<date>` reproduces
+the exact deployed bits — needed for the §10.4 Phase V exit-gate
+sign-off, §11.5 rollback, and any post-pilot forensic.
+
+The tag pre-dates `Deploy.ps1` invocation. The operator should
+`git checkout pilot-<site>-<date>` on the prod box before running
+`Deploy.ps1` for the first cutover, so the publish output matches
+the tagged commit.
+
+> **Scripted alternative.** No tooling for this step yet —
+> `tools/release-tag/` could ship in a future sprint to automate
+> the tag-then-release pair (verify clean working tree, derive site
+> from `--Site`, derive date from `Get-Date -Format yyyy-MM-dd`,
+> validate `docs/sprint-progress.json` is in `currentSprint: null`
+> state). Out of scope for Sprint 60.
+
+**Output of §3.6.** The tag exists on `origin`, the GitHub release
+points at it, and the operator's deploy plan names it. Reference
+the tag URL in the §3.5 output document.
+
 ---
 
 ## 4. Hardware provisioning
