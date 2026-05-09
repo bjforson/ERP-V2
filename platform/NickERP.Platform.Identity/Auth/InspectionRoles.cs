@@ -56,4 +56,60 @@ public static class InspectionRoles
     /// </para>
     /// </summary>
     public const string RulesAdmin = "Inspection.RulesAdmin";
+
+    /// <summary>
+    /// Dedicated admin role for post-hoc-outcome surfaces — the
+    /// manual-entry page (<c>PostHocOutcomes.razor</c>) and any future
+    /// pseudo-instance read screens. Defined by spec
+    /// <c>docs/IMAGE-ANALYSIS-MODERNIZATION.md</c> §6.11.10
+    /// ("Admin role <c>inspection.outcome_admin</c> — gates
+    /// manual-entry tool and pseudo-instance reads. Distinct from
+    /// <c>inspection.case_review</c> (analyst) and
+    /// <c>inspection.tenant_admin</c>"). The spec also reserves this
+    /// role for unmasking officer-PII (<c>decided_by_officer_id</c>)
+    /// in the §6.4 extractor; that surface is not yet implemented but
+    /// will gate on the same constant.
+    ///
+    /// <para>
+    /// Spec text uses snake_case (<c>inspection.outcome_admin</c>);
+    /// the v2 identity scope-code regex
+    /// <c>^[A-Z][A-Za-z]+(\.[A-Z][A-Za-z]+)+$</c> requires PascalCase,
+    /// so the on-the-wire code is <c>Inspection.OutcomeAdmin</c> —
+    /// same convention used for <see cref="RulesAdmin"/> versus the
+    /// spec's "rules-admin role".
+    /// </para>
+    ///
+    /// <para>
+    /// Wired additive: <c>PostHocOutcomes.razor</c> accepts BOTH
+    /// <see cref="OutcomeAdmin"/> and <see cref="Admin"/> via the
+    /// any-of pattern, mirroring <see cref="RulesAdmin"/>. Existing
+    /// <see cref="Admin"/> grants continue to work — the granular
+    /// role is purely additive.
+    /// </para>
+    /// </summary>
+    public const string OutcomeAdmin = "Inspection.OutcomeAdmin";
+
+    /// <summary>
+    /// Dedicated admin role for the per-scanner threshold-calibration
+    /// approve / reject surface (<c>Thresholds.razor</c>). Defined by
+    /// spec <c>docs/IMAGE-ANALYSIS-MODERNIZATION.md</c> §6.5 / §6.5.3
+    /// ("admin role <c>inspection.threshold_admin</c> may bypass
+    /// shadow with explicit <c>bypass_reason</c>"). The shadow-bypass
+    /// capability is not yet wired but will gate on the same
+    /// constant.
+    ///
+    /// <para>
+    /// Spec text uses snake_case (<c>inspection.threshold_admin</c>);
+    /// the v2 identity scope-code regex requires PascalCase, so the
+    /// on-the-wire code is <c>Inspection.ThresholdAdmin</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// Wired additive: <c>Thresholds.razor</c> accepts BOTH
+    /// <see cref="ThresholdAdmin"/> and <see cref="Admin"/> via the
+    /// any-of pattern. Existing <see cref="Admin"/> grants continue
+    /// to work — the granular role is purely additive.
+    /// </para>
+    /// </summary>
+    public const string ThresholdAdmin = "Inspection.ThresholdAdmin";
 }
