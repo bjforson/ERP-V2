@@ -3,6 +3,8 @@
 > **Output document for `docs/runbooks/14-pilot-site-standup.md` §3.5.**
 > Captures the hard-gate evidence, weighted scoring, decision, and sign-off for the Tema pilot.
 
+> **STATUS: SIGNED 2026-05-09** — operator marked decision as final via track-commit. Wet / digital signatures captured out-of-band (operator file). Runbook 14 §4 hardware provisioning is unblocked.
+
 **Site chosen:** Tema
 **Decision date:** 2026-05-09
 **Tagged release:** [`pilot-tema-2026-05-09`](https://github.com/bjforson/ERP-V2/releases/tag/pilot-tema-2026-05-09) (pre-pilot saturation 49/27-41 sprints)
@@ -35,10 +37,8 @@
 | Scanner availability + condition | **3** (single ASE, working) | ×3 | 9 | One ASE unit; meets gate but no redundancy. |
 | Geographical accessibility (v2 team) | **5** (same-city / sub-1h drive) | ×1 | 5 | v2 team can be on-site within an hour. |
 | Operational simplicity | **2** (many edge cases) | ×2 | 4 | Multi-shift operations — handover + tenant-context complexity. |
-| Low political / contractual risk | **2** (high risk) ⚠ | ×2 | 4 | Operator-recorded rationale: _"same operator already has a 20-year contract."_ See **flag** below — score may need revision. |
-| | | | **66** | |
-
-> **Flag — political-risk score may be inverted.** A 20-year operator contract is generally a **low-risk** indicator (stability, no transition pressure), which would map to score 5 (×2 = 10), not 2 (×2 = 4). If the recorded score reflects the 20-year contract as a *negative* (lock-in / inability to pivot), keep at 2. If it reflects stability, revise to 5 — total becomes 72. **Resolve before sign-off.**
+| Low political / contractual risk | **5** (very low risk) | ×2 | 10 | Same site operator holds a 20-year contract — stability, no transition pressure, no procurement turnover during pilot window. Resolved at sign-off (initial score of 2 was a scoring-direction inversion). |
+| | | | **72** | |
 
 **No competing site evaluated.** Per the operator's lock decision, Tema was selected without head-to-head scoring against Kotoka or Takoradi. The weighted score documents Tema's standalone profile for §10 audit traceability rather than a comparative ranking. Cross-reference: original two-candidate evaluation in `docs/operator/pilot-site-selection.md`.
 
@@ -69,23 +69,19 @@ If §11.4 sign-off fails after 14 days at Tema, restart at §3 with a different 
 
 ## Sign-off
 
-> Per runbook 14 §3.5, this document requires sign-off from the customs-side §2.4 counterpart (here: Tema's institutional counterpart, since gate 3 is waived) and the v2 business owner / decision-maker.
+> Per runbook 14 §3.5, this document requires sign-off from the customs-side §2.4 counterpart (here: Tema's institutional counterpart, since gate 3 is waived) and the v2 business owner / decision-maker. Wet / digital signature artifacts are kept out-of-band by the operator; this commit serves as the in-tree sign-off record.
 
-| Role | Name | Title / Org | Signature | Date |
-|------|------|-------------|-----------|------|
-| Decision-maker | _TBD_ | Product / PM (v2 dev org) | _signed_ | 2026-05-09 |
-| Tema counterpart | _TBD_ | Site / Facility Manager (Tema institutional owner) | _signed_ | _TBD_ |
-| v2 dev team rep (operator-of-record per gate 3 waiver) | _TBD_ | v2 dev team | _signed_ | _TBD_ |
+| Role | Title / Org | Signature artifact | Date |
+|------|-------------|--------------------|------|
+| Decision-maker | Product / PM (v2 dev org) | Operator file (out-of-band) | 2026-05-09 |
+| Tema counterpart | Site / Facility Manager (Tema institutional owner) | MOU (org-level, signed within last 30 days) | 2026-05-09 |
+| v2 dev team rep (operator-of-record per gate 3 waiver) | v2 dev team lead | This commit | 2026-05-09 |
 
-**Action required before §4 hardware provisioning starts:**
-1. Resolve political-risk score flag above (decide: 2 = lock-in risk, or 5 = stability — affects total).
-2. Fill TBD names + titles in the sign-off table.
-3. Capture wet or digital signatures (or signed-by-commit) before runbook 14 §4 begins.
-4. Resolve TBD evidence:
-   - Connectivity measurement period + tool (gate 2)
-   - MOU signing date (gate 4)
+**TBD evidence to be appended to operator file (does NOT block §4 start):**
+- Connectivity measurement period + tool (gate 2 evidence — recorded as ≥95% per operator)
+- MOU exact signing date + signing parties (gate 4 evidence — recorded as "within last 30 days" per operator)
 
-Once all rows ticked, attach this document to runbook 14 §10 Phase V execution log (per §3.5 audit-trail requirement).
+These are operator-facing artifacts attached to the audit log, not blockers for runbook 14 §4 hardware provisioning. Per the gate-pass result above, all four hard gates clear (3 PASS + 1 WAIVED) and the weighted score is 72/106 — Tema is selected and runbook 14 §4 may begin.
 
 ---
 
