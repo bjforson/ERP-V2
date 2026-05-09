@@ -27,7 +27,7 @@
     "operatorActions": [
       { "id": "live-deploy-staged-migrations", "title": "Apply Sprint 13 T1 staged SQL scripts to live nickerp_platform + nickerp_nickfinance (32 migrations)", "blocking": "any prod cutover" },
       { "id": "gpu-box-availability", "title": "Confirm GPU box (A100 / H100 / 4090, 24 GB+ VRAM) for Florence-2 fine-tune", "blocking": "post-pilot §6.1 work" },
-      { "id": "pilot-site-selection", "title": "Pick pilot site (Kotoka / Takoradi / other) per plan §13 decision matrix", "blocking": "Phase V scoping (Sprint 22-24)" },
+      { "id": "pilot-site-selection", "title": "Pick pilot site (Kotoka / Takoradi / other) per plan §13 decision matrix", "blocking": "Phase V scoping (Sprint 22-24)", "status": "resolved", "resolvedAt": "2026-05-09", "resolution": "Tema (operator-locked). §3.5 one-pager + hard-gate evidence pending from operator team — runbook 14 §3.6 tag-and-release uses convention pilot-tema-<YYYY-MM-DD>." },
       { "id": "provision-standby-box", "title": "Provision second physical box / VM for streaming-standby Postgres (per runbook 09 §3)", "blocking": "production HA cutover" },
       { "id": "install-pgbackrest", "title": "Install pgbackrest 2.50+ on primary + choose repo location (local-disk for v0; S3/Azure recommended) per runbook 10 §5", "blocking": "production backup posture" },
       { "id": "wire-backup-cadence", "title": "Wire cron / scheduled-task for pgbackrest cadence (Sunday 02:00 full + 6-hourly incrementals + WAL archiving) + schedule first quarterly restore drill (runbook 10 §6+§8)", "blocking": "production backup posture" },
