@@ -107,7 +107,7 @@ Tenant                      (customer — e.g. "Ghana Revenue Authority")
 | `AnalystReview` | The analyst's work product within a session | `session_id`, `findings[]`, `verdict_id`, `confidence_score`, `time_to_decision_ms`, `roi_interactions jsonb` |
 | `Finding` | A single observation | `review_id`, `finding_type`, `severity`, `location_in_image jsonb` (ROI box), `note` |
 | `Verdict` | Composite decision on a case | `case_id`, `decision` ∈ {Clear, HoldForInspection, Seize, Inconclusive}, `decided_at`, `decided_by_user_id`, `basis` |
-| `OutboundSubmission` | Dispatch to an external system | `case_id`, `external_system_instance_id`, `payload jsonb`, `submitted_at`, `idempotency_key`, `status`, `response_jsonb` |
+| `OutboundSubmission` | Dispatch to an external system. Two dispatch paths share this table post-S+3 (transactional queue + legacy poll worker) — see [OUTBOUND-DISPATCH-OWNERSHIP.md](OUTBOUND-DISPATCH-OWNERSHIP.md) for the path-ownership contract and retirement criteria. | `case_id`, `external_system_instance_id`, `payload jsonb`, `submitted_at`, `idempotency_key`, `status`, `response_jsonb` |
 | `CaseCompleteness` | Validation state for completeness rules | `case_id`, `rule_set_version`, `violations jsonb`, `ready_for_review bool` |
 
 ### 5.2 Plugin & configuration entities
