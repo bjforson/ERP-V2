@@ -157,6 +157,47 @@ public sealed class AuditReviewConsumerTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessAsync_ConcurReusesPriorAnalystVerdictInsteadOfSeverityInference()
+    {
+        // Analyst landed HoldForInspection. Auditor concurs but leaves no
+        // findings — severity inference would have downgraded this to Clear.
+        // Prior-verdict-aware concur must preserve the analyst's call.
+        var c = await SeedCaseAsync();
+        var priorDecidedBy = Guid.NewGuid();
+        _db.Verdicts.Add(new Verdict
+        {
+            Id = Guid.NewGuid(),
+            CaseId = c.Id,
+            Decision = VerdictDecision.HoldForInspection,
+            Basis = "Analyst held the case for inspection.",
+            DecidedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+            DecidedByUserId = priorDecidedBy,
+            TenantId = 1
+        });
+        await _db.SaveChangesAsync();
+
+        var review = await SeedAuditReviewAsync(c.Id, outcome: "concur", completed: true);
+        var workItemId = Guid.NewGuid();
+
+        await NewConsumer().ProcessAsync(
+            new StubQueueClaim(
+                workItemId,
+                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow)
+                {
+                    ReviewId = review.Id,
+                    Outcome = "concur"
+                },
+                correlationId: "corr-prior"),
+            CancellationToken.None);
+
+        var verdict = await _db.Verdicts.AsNoTracking().SingleAsync(v => v.CaseId == c.Id);
+        verdict.Decision.Should().Be(VerdictDecision.HoldForInspection,
+            because: "audit concur agrees with the analyst — does not override their decision");
+        verdict.DecidedByUserId.Should().Be(priorDecidedBy,
+            because: "the prior verdict is reused as-is, not recreated under the auditor's identity");
+    }
+
+    [Fact]
     public async Task ProcessAsync_SecondRunDoesNotDuplicateVerdictOrSubmissionRows()
     {
         var c = await SeedCaseAsync();

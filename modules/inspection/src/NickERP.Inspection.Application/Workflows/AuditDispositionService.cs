@@ -104,9 +104,15 @@ public sealed class AuditDispositionService : IAuditDispositionService
             return new AuditDispositionResult(caseId, selected.Review.Id, outcome, null, false);
         }
 
-        var decision = DecideVerdict(outcome, await LoadCaseFindingsAsync(caseId, ct).ConfigureAwait(false));
+        var decision = await DecideVerdictAsync(outcome, caseId, ct).ConfigureAwait(false);
         var verdict = await EnsureVerdictAsync(@case.Id, selected, outcome, decision, now, ct)
             .ConfigureAwait(false);
+
+        // When a prior analyst verdict exists, EnsureVerdictAsync reuses
+        // it as-is; surface the actual verdict's decision in the result
+        // so downstream callers don't see the audit-inferred decision
+        // diverging from what's persisted.
+        decision = verdict.Decision;
 
         @case.State = InspectionWorkflowState.Verdict;
         @case.StateEnteredAt = now;
@@ -349,13 +355,40 @@ public sealed class AuditDispositionService : IAuditDispositionService
                 var normalized => normalized
             };
 
-    private static VerdictDecision DecideVerdict(string outcome, IReadOnlyCollection<Finding> findings)
+    // Concur means the audit reviewer agrees with the prior analyst's call.
+    // Prefer the persisted analyst verdict over re-inferring from finding
+    // severity, since the analyst's verdict reflects context the audit
+    // doesn't have (annotated ROIs, time-to-decision, manifest matches,
+    // etc.). Severity-based inference is the fallback for the
+    // no-prior-verdict path (system-fallback auto-concur, audit-first
+    // shapes).
+    private async Task<VerdictDecision> DecideVerdictAsync(
+        string outcome,
+        Guid caseId,
+        CancellationToken ct)
     {
-        if (outcome is "dissent")
+        if (outcome == "dissent")
         {
             return VerdictDecision.HoldForInspection;
         }
 
+        var prior = await _db.Verdicts.AsNoTracking()
+            .Where(v => v.CaseId == caseId)
+            .OrderByDescending(v => v.DecidedAt)
+            .Select(v => (VerdictDecision?)v.Decision)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (prior is { } priorDecision)
+        {
+            return priorDecision;
+        }
+
+        var findings = await LoadCaseFindingsAsync(caseId, ct).ConfigureAwait(false);
+        return DecideFromSeverity(findings);
+    }
+
+    private static VerdictDecision DecideFromSeverity(IReadOnlyCollection<Finding> findings)
+    {
         var severities = findings
             .Select(f => f.Severity?.Trim().ToLowerInvariant())
             .Where(s => !string.IsNullOrWhiteSpace(s))
