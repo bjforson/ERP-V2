@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using NickERP.Inspection.Application;
 using NickERP.Inspection.Application.Completeness;
 using NickERP.Inspection.Application.Sla;
+using NickERP.Inspection.Application.StateMachines;
 using NickERP.Inspection.Application.Validation;
 using NickERP.Inspection.Authorities.Abstractions;
 using NickERP.Inspection.Core.Completeness;
@@ -59,6 +60,7 @@ public sealed class CaseWorkflowService
     // <c>inspection.validation.strict_mode_enabled</c>. Default false
     // (safe rollout).
     private readonly ITenantSettingsService? _tenantSettings;
+    private readonly InspectionStateMachine? _inspectionStateMachine;
 
     public CaseWorkflowService(
         InspectionDbContext db,
@@ -72,7 +74,8 @@ public sealed class CaseWorkflowService
         ValidationEngine? validationEngine = null,
         ICompletenessChecker? completenessChecker = null,
         ISlaTracker? slaTracker = null,
-        ITenantSettingsService? tenantSettings = null)
+        ITenantSettingsService? tenantSettings = null,
+        InspectionStateMachine? inspectionStateMachine = null)
     {
         _db = db;
         _events = events;
@@ -86,6 +89,7 @@ public sealed class CaseWorkflowService
         _completenessChecker = completenessChecker;
         _slaTracker = slaTracker;
         _tenantSettings = tenantSettings;
+        _inspectionStateMachine = inspectionStateMachine;
     }
 
     /// <summary>
@@ -147,6 +151,36 @@ public sealed class CaseWorkflowService
             : throw new InvalidOperationException(
                 $"EnsureTenant received a non-positive tenant id ({t}). This indicates a bug in tenant resolution.");
 
+    private static InspectionWorkItem NewWorkItemForCase(InspectionCase c, long tenantId, DateTimeOffset now)
+        => new()
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CaseId = c.Id,
+            IdempotencyAnchor = IdempotencyKey.From(tenantId, "inspection-case", c.Id),
+            CreatedAt = c.OpenedAt == default ? now : c.OpenedAt,
+            UpdatedAt = c.StateEnteredAt == default ? now : c.StateEnteredAt
+        };
+
+    private async Task<InspectionWorkItem> EnsureWorkItemAsync(
+        InspectionCase c,
+        long tenantId,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var existing = await _db.WorkItems
+            .FirstOrDefaultAsync(w => w.CaseId == c.Id, ct)
+            .ConfigureAwait(false);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var created = NewWorkItemForCase(c, tenantId, now);
+        _db.WorkItems.Add(created);
+        return created;
+    }
+
     // ---------------------------------------------------------------------
     // Open a new case
     // ---------------------------------------------------------------------
@@ -176,6 +210,7 @@ public sealed class CaseWorkflowService
             TenantId = tenantId
         };
         _db.Cases.Add(c);
+        _db.WorkItems.Add(NewWorkItemForCase(c, tenantId, now));
         await _db.SaveChangesAsync(ct);
 
         await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.case_opened", "InspectionCase",
@@ -523,9 +558,34 @@ public sealed class CaseWorkflowService
         bool transitionedToValidated = false;
         if (c.State == InspectionWorkflowState.Open && emitted.Count > 0)
         {
-            c.State = InspectionWorkflowState.Validated;
-            c.StateEnteredAt = now;
-            transitionedToValidated = true;
+            if (_inspectionStateMachine is not null)
+            {
+                var workItem = await EnsureWorkItemAsync(c, tenantId, now, ct).ConfigureAwait(false);
+                var transition = await _inspectionStateMachine.TransitionAsync(
+                    _db,
+                    workItem,
+                    InspectionTrigger.Validate,
+                    actor?.ToString() ?? "system/fetch-documents",
+                    "Authority documents fetched.",
+                    c.CorrelationId,
+                    ct).ConfigureAwait(false);
+
+                transitionedToValidated = transition.Outcome == NickERP.Platform.Queueing.StateMachine.StateTransitionOutcome.Applied;
+                if (!transitionedToValidated)
+                {
+                    _logger.LogWarning(
+                        "InspectionStateMachine did not apply Validate for case {CaseId}; outcome {Outcome}, reason {Reason}.",
+                        caseId,
+                        transition.Outcome,
+                        transition.GuardReason);
+                }
+            }
+            else
+            {
+                c.State = InspectionWorkflowState.Validated;
+                c.StateEnteredAt = now;
+                transitionedToValidated = true;
+            }
         }
         await _db.SaveChangesAsync(ct);
 

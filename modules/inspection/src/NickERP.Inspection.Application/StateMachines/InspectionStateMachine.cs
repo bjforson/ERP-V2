@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NickERP.Inspection.Application.Workflows;
 using NickERP.Inspection.Core.Entities;
+using NickERP.Inspection.Database;
 using NickERP.Platform.Audit;
 using NickERP.Platform.Queueing.Abstractions;
 using NickERP.Platform.Queueing.StateMachine;
@@ -146,6 +147,22 @@ public sealed class InspectionStateMachine
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workItem);
+
+        if (db is InspectionDbContext inspectionDb)
+        {
+            var @case = await inspectionDb.Cases
+                .FirstOrDefaultAsync(c => c.Id == workItem.CaseId, ct)
+                .ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Inspection work item {workItem.Id} points at missing case {workItem.CaseId}.");
+
+            @case.State = toState;
+            @case.StateEnteredAt = DateTimeOffset.UtcNow;
+            if (toState is InspectionWorkflowState.Closed or InspectionWorkflowState.Cancelled)
+            {
+                @case.ClosedAt ??= @case.StateEnteredAt;
+            }
+        }
 
         // Sprint 14 / B-queues — only side effect right now is the
         // split-detection enqueue on Open → Validated. Add new effects

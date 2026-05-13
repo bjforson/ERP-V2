@@ -94,9 +94,9 @@ public class ReportsService
     /// <summary>
     /// Counts cases created / decided / submitted in the trailing
     /// 24h, 7d, 30d windows. "Decided" = state machine has progressed
-    /// past <see cref="InspectionWorkflowState.Open"/> /
-    /// <see cref="InspectionWorkflowState.Claimed"/> (i.e. the analyst
-    /// has emitted a decision). "Submitted" = the case has at least
+    /// past <see cref="InspectionWorkflowState.Assigned"/> into
+    /// <see cref="InspectionWorkflowState.Reviewed"/> or later (i.e.
+    /// the analyst has emitted a decision). "Submitted" = the case has at least
     /// one OutboundSubmission row keyed on it within the window.
     /// </summary>
     public async Task<ThroughputSummary> GetThroughputSummaryAsync(CancellationToken ct = default)
