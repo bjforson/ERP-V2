@@ -30,7 +30,7 @@ public sealed class AuditAssignmentConsumerTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
-    public async Task ProcessAsync_AssignsEligibleServiceUserAndEnqueuesAuditReview()
+    public async Task ProcessAsync_AssignsEligibleServiceUserAndWaitsForHumanAuditCompletion()
     {
         var c = await SeedCaseWithServiceAsync(hasUser: true);
         var serviceUser = await _db.AnalysisServiceUsers.AsNoTracking().SingleAsync();
@@ -57,10 +57,7 @@ public sealed class AuditAssignmentConsumerTests : IDisposable
         review.ReviewType.Should().Be(ReviewType.AuditReview);
         review.ReviewSessionId.Should().Be(session.Id);
 
-        _auditReviewQueue.Request.Should().NotBeNull();
-        _auditReviewQueue.Request!.WorkItemId.Should().Be(workItemId);
-        _auditReviewQueue.Request.Payload.CaseId.Should().Be(c.Id);
-        _auditReviewQueue.Request.CorrelationId.Should().Be("corr-aa");
+        _auditReviewQueue.Request.Should().BeNull();
 
         var evt = _events.Events.Single(e => e.EventType == "inspection.audit_assignment.assigned");
         evt.Payload.GetProperty("systemFallback").GetBoolean().Should().BeFalse();
@@ -84,6 +81,10 @@ public sealed class AuditAssignmentConsumerTests : IDisposable
 
         var claim = await _db.CaseClaims.AsNoTracking().SingleAsync();
         claim.ClaimedByUserId.Should().Be(Guid.Empty);
+
+        _auditReviewQueue.Request.Should().NotBeNull();
+        _auditReviewQueue.Request!.WorkItemId.Should().Be(workItemId);
+        _auditReviewQueue.Request.Payload.CaseId.Should().Be(c.Id);
 
         var evt = _events.Events.Single(e => e.EventType == "inspection.audit_assignment.assigned");
         evt.Payload.GetProperty("systemFallback").GetBoolean().Should().BeTrue();

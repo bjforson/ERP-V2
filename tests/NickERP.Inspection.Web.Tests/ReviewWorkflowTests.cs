@@ -4,9 +4,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NickERP.Inspection.Application.Reviews;
 using NickERP.Inspection.Application.Sla;
+using NickERP.Inspection.Application.Workflows;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Platform.Audit.Events;
+using NickERP.Platform.Queueing.Abstractions;
 using NickERP.Platform.Tenancy;
 
 namespace NickERP.Inspection.Web.Tests;
@@ -55,8 +57,16 @@ public sealed class ReviewWorkflowTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private ReviewWorkflow NewWorkflow(bool withSla = true)
-        => new(_db, _events, _tenant, NullLogger<ReviewWorkflow>.Instance, withSla ? _sla : null);
+    private ReviewWorkflow NewWorkflow(
+        bool withSla = true,
+        ITransactionalQueue<AuditReviewPayload>? auditReviewQueue = null)
+        => new(
+            _db,
+            _events,
+            _tenant,
+            NullLogger<ReviewWorkflow>.Instance,
+            withSla ? _sla : null,
+            auditReviewQueue);
 
     private async Task<Guid> SeedCaseAsync()
     {
@@ -263,6 +273,25 @@ public sealed class ReviewWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task CompleteReview_enqueues_audit_review_stage_for_completed_audit_review()
+    {
+        var caseId = await SeedCaseAsync();
+        var userId = Guid.NewGuid();
+        var auditReviewQueue = new CapturingTransactionalQueue();
+        var workflow = NewWorkflow(auditReviewQueue: auditReviewQueue);
+        var reviewId = await workflow.StartReviewAsync(caseId, ReviewType.AuditReview, userId);
+
+        await workflow.CompleteReviewAsync(reviewId, "concur", new List<Finding>(), userId);
+
+        auditReviewQueue.Db.Should().BeSameAs(_db);
+        auditReviewQueue.Request.Should().NotBeNull();
+        auditReviewQueue.Request!.WorkItemId.Should().Be(reviewId);
+        auditReviewQueue.Request.Payload.CaseId.Should().Be(caseId);
+        auditReviewQueue.Request.Payload.WorkItemId.Should().Be(reviewId);
+        auditReviewQueue.Request.IdempotencyKey.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
     public async Task CompleteReview_throws_on_empty_outcome()
     {
         var caseId = await SeedCaseAsync();
@@ -394,4 +423,19 @@ public sealed class ReviewWorkflowTests : IDisposable
         }
     }
 
+    private sealed class CapturingTransactionalQueue : ITransactionalQueue<AuditReviewPayload>
+    {
+        public DbContext? Db { get; private set; }
+        public EnqueueRequest<AuditReviewPayload>? Request { get; private set; }
+
+        public Task<long> EnqueueAsync(
+            DbContext db,
+            EnqueueRequest<AuditReviewPayload> request,
+            CancellationToken ct = default)
+        {
+            Db = db;
+            Request = request;
+            return Task.FromResult(1L);
+        }
+    }
 }

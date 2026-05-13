@@ -12,8 +12,8 @@ namespace NickERP.Inspection.Application.Workflows;
 
 /// <summary>
 /// Consumer for <c>inspection.queue_audit_assignment</c>. Assigns a
-/// case to an eligible analysis-service user, opens an audit review, and
-/// enqueues the audit-review stage.
+/// case to an eligible analysis-service user and opens an audit review.
+/// System fallback assignments are also queued for automatic audit review.
 /// </summary>
 public sealed class AuditAssignmentConsumer : IQueueConsumer<AuditAssignmentPayload>
 {
@@ -56,21 +56,24 @@ public sealed class AuditAssignmentConsumer : IQueueConsumer<AuditAssignmentPayl
             result = await AssignAsync(caseId, ct).ConfigureAwait(false);
 
             var now = DateTimeOffset.UtcNow;
-            await _auditReviewQueue.EnqueueAsync(
-                    _db,
-                    new EnqueueRequest<AuditReviewPayload>
-                    {
-                        WorkItemId = claim.WorkItemId,
-                        Payload = new AuditReviewPayload(claim.WorkItemId, caseId, now),
-                        IdempotencyKey = IdempotencyKey.From(
-                            "inspection",
-                            "audit-review",
-                            claim.WorkItemId,
-                            caseId),
-                        CorrelationId = claim.CorrelationId
-                    },
-                    ct)
-                .ConfigureAwait(false);
+            if (result.SystemFallback)
+            {
+                await _auditReviewQueue.EnqueueAsync(
+                        _db,
+                        new EnqueueRequest<AuditReviewPayload>
+                        {
+                            WorkItemId = claim.WorkItemId,
+                            Payload = new AuditReviewPayload(claim.WorkItemId, caseId, now),
+                            IdempotencyKey = IdempotencyKey.From(
+                                "inspection",
+                                "audit-review",
+                                claim.WorkItemId,
+                                caseId),
+                            CorrelationId = claim.CorrelationId
+                        },
+                        ct)
+                    .ConfigureAwait(false);
+            }
 
             await tx.CommitAsync(ct).ConfigureAwait(false);
         }
@@ -79,13 +82,14 @@ public sealed class AuditAssignmentConsumer : IQueueConsumer<AuditAssignmentPayl
             .ConfigureAwait(false);
 
         _logger.LogInformation(
-            "Audit assignment completed for CaseId={CaseId} WorkItemId={WorkItemId} AttemptCount={AttemptCount}; AssignedUserId={AssignedUserId} AnalysisServiceId={AnalysisServiceId} ReviewId={ReviewId}; enqueued audit review",
+            "Audit assignment completed for CaseId={CaseId} WorkItemId={WorkItemId} AttemptCount={AttemptCount}; AssignedUserId={AssignedUserId} AnalysisServiceId={AnalysisServiceId} ReviewId={ReviewId}; EnqueuedAuditReview={EnqueuedAuditReview}",
             caseId,
             claim.WorkItemId,
             claim.AttemptCount,
             result.AssignedUserId,
             result.AnalysisServiceId,
-            result.ReviewId);
+            result.ReviewId,
+            result.SystemFallback);
     }
 
     private async Task<AuditAssignmentResult> AssignAsync(Guid caseId, CancellationToken ct)

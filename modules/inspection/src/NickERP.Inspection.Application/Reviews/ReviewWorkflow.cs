@@ -2,10 +2,12 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NickERP.Inspection.Application.Sla;
+using NickERP.Inspection.Application.Workflows;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Platform.Audit;
 using NickERP.Platform.Audit.Events;
+using NickERP.Platform.Queueing.Abstractions;
 using NickERP.Platform.Tenancy;
 
 namespace NickERP.Inspection.Application.Reviews;
@@ -38,6 +40,7 @@ public sealed class ReviewWorkflow : IReviewWorkflow
     private readonly IEventPublisher _events;
     private readonly ITenantContext _tenant;
     private readonly ISlaTracker? _sla;
+    private readonly ITransactionalQueue<AuditReviewPayload>? _auditReviewQueue;
     private readonly ILogger<ReviewWorkflow> _logger;
 
     public ReviewWorkflow(
@@ -45,13 +48,15 @@ public sealed class ReviewWorkflow : IReviewWorkflow
         IEventPublisher events,
         ITenantContext tenant,
         ILogger<ReviewWorkflow> logger,
-        ISlaTracker? sla = null)
+        ISlaTracker? sla = null,
+        ITransactionalQueue<AuditReviewPayload>? auditReviewQueue = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _sla = sla;
+        _auditReviewQueue = auditReviewQueue;
     }
 
     /// <inheritdoc/>
@@ -155,62 +160,96 @@ public sealed class ReviewWorkflow : IReviewWorkflow
         var tenantId = _tenant.TenantId;
         var now = DateTimeOffset.UtcNow;
 
-        var review = await _db.AnalystReviews
-            .FirstOrDefaultAsync(r => r.Id == reviewId, ct).ConfigureAwait(false)
-            ?? throw new InvalidOperationException(
-                $"Cannot complete review {reviewId} — not found in this tenant.");
-        if (review.CompletedAt is not null)
+        Guid caseId;
+        ReviewType reviewType;
+        var completedOutcome = outcome.Trim();
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false))
         {
-            _logger.LogDebug(
-                "Review {ReviewId} already completed at {CompletedAt}; ignoring CompleteReviewAsync.",
-                reviewId, review.CompletedAt);
-            return;
-        }
-
-        review.Outcome = outcome.Trim();
-        review.CompletedAt = now;
-        if (review.TimeToDecisionMs == 0)
-        {
-            // Estimate elapsed if not set — typical when the page goes
-            // through Start → Complete without recording per-region dwell.
-            review.TimeToDecisionMs = (int)Math.Min(
-                int.MaxValue, (now - review.CreatedAt).TotalMilliseconds);
-        }
-
-        // Persist the analyst's findings against this review. Caller-
-        // supplied AnalystReviewId is ignored (defensive) so a typo
-        // doesn't strand findings on a different review.
-        if (findings is not null)
-        {
-            foreach (var f in findings)
+            var review = await _db.AnalystReviews
+                .FirstOrDefaultAsync(r => r.Id == reviewId, ct).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Cannot complete review {reviewId} — not found in this tenant.");
+            if (review.CompletedAt is not null)
             {
-                if (f is null) continue;
-                f.Id = f.Id == Guid.Empty ? Guid.NewGuid() : f.Id;
-                f.AnalystReviewId = review.Id;
-                f.TenantId = tenantId;
-                if (f.CreatedAt == default) f.CreatedAt = now;
-                _db.Findings.Add(f);
+                _logger.LogDebug(
+                    "Review {ReviewId} already completed at {CompletedAt}; ignoring CompleteReviewAsync.",
+                    reviewId, review.CompletedAt);
+                return;
             }
-        }
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
 
-        // Look up the case id for the SLA-window close + the audit
-        // event payload.
-        var session = await _db.ReviewSessions.AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == review.ReviewSessionId, ct).ConfigureAwait(false);
-        var caseId = session?.CaseId ?? Guid.Empty;
+            review.Outcome = completedOutcome;
+            review.CompletedAt = now;
+            if (review.TimeToDecisionMs == 0)
+            {
+                // Estimate elapsed if not set — typical when the page goes
+                // through Start → Complete without recording per-region dwell.
+                review.TimeToDecisionMs = (int)Math.Min(
+                    int.MaxValue, (now - review.CreatedAt).TotalMilliseconds);
+            }
+
+            // Persist the analyst's findings against this review. Caller-
+            // supplied AnalystReviewId is ignored (defensive) so a typo
+            // doesn't strand findings on a different review.
+            if (findings is not null)
+            {
+                foreach (var f in findings)
+                {
+                    if (f is null) continue;
+                    f.Id = f.Id == Guid.Empty ? Guid.NewGuid() : f.Id;
+                    f.AnalystReviewId = review.Id;
+                    f.TenantId = tenantId;
+                    if (f.CreatedAt == default) f.CreatedAt = now;
+                    _db.Findings.Add(f);
+                }
+            }
+            await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            // Look up the case id for the SLA-window close + the audit
+            // event payload.
+            var session = await _db.ReviewSessions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == review.ReviewSessionId, ct).ConfigureAwait(false);
+            caseId = session?.CaseId ?? Guid.Empty;
+            reviewType = review.ReviewType;
+
+            if (_auditReviewQueue is not null
+                && caseId != Guid.Empty
+                && review.ReviewType == ReviewType.AuditReview)
+            {
+                var workItemId = await ResolveWorkItemIdAsync(caseId, reviewId, ct)
+                    .ConfigureAwait(false);
+                await _auditReviewQueue.EnqueueAsync(
+                        _db,
+                        new EnqueueRequest<AuditReviewPayload>
+                        {
+                            WorkItemId = workItemId,
+                            Payload = new AuditReviewPayload(workItemId, caseId, now),
+                            IdempotencyKey = IdempotencyKey.From(
+                                "inspection",
+                                "audit-review",
+                                workItemId,
+                                caseId,
+                                reviewId),
+                            CorrelationId = null
+                        },
+                        ct)
+                    .ConfigureAwait(false);
+            }
+
+            await tx.CommitAsync(ct).ConfigureAwait(false);
+        }
+
         if (_sla is not null && caseId != Guid.Empty)
         {
             try
             {
                 await _sla.CloseWindowAsync(
-                    caseId, WindowNameFor(review.ReviewType), now, ct).ConfigureAwait(false);
+                    caseId, WindowNameFor(reviewType), now, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex,
                     "SlaTracker.CloseWindowAsync failed for case {CaseId} review {ReviewType}; window may stay open.",
-                    caseId, review.ReviewType);
+                    caseId, reviewType);
             }
         }
 
@@ -218,13 +257,13 @@ public sealed class ReviewWorkflow : IReviewWorkflow
             tenantId, userId, correlationId: null,
             "nickerp.inspection.review.completed",
             "AnalystReview",
-            review.Id.ToString(),
+            reviewId.ToString(),
             new
             {
-                ReviewId = review.Id,
+                ReviewId = reviewId,
                 CaseId = caseId,
-                ReviewType = review.ReviewType.ToString(),
-                Outcome = review.Outcome,
+                ReviewType = reviewType.ToString(),
+                Outcome = completedOutcome,
                 FindingCount = findings?.Count ?? 0,
             }, ct).ConfigureAwait(false);
     }
@@ -284,6 +323,17 @@ public sealed class ReviewWorkflow : IReviewWorkflow
     /// </summary>
     public static string WindowNameFor(ReviewType type) =>
         SlaWindowPrefix + type.ToString().ToLowerInvariant() + ".elapsed";
+
+    private async Task<Guid> ResolveWorkItemIdAsync(Guid caseId, Guid reviewId, CancellationToken ct)
+    {
+        var workItemId = await _db.WorkItems.AsNoTracking()
+            .Where(w => w.CaseId == caseId)
+            .OrderByDescending(w => w.CreatedAt)
+            .Select(w => (Guid?)w.Id)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        return workItemId ?? reviewId;
+    }
 
     private void EnsureTenantResolved()
     {
