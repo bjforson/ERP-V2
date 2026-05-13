@@ -24,7 +24,32 @@ public sealed class OutboundSubmission : ITenantOwned
     /// <summary>Stable key for at-most-once semantics. Must be deterministic for a given verdict + case + external system.</summary>
     public string IdempotencyKey { get; set; } = string.Empty;
 
-    /// <summary>Lifecycle status — "queued", "pending", "accepted", "rejected", "error".</summary>
+    /// <summary>
+    /// Lifecycle status. Two dispatch paths share this column and the
+    /// state value tells you who owns the row:
+    /// <list type="bullet">
+    ///   <item><c>queued</c> — owned by the transactional outbound-submission
+    ///         queue (Sprint S+3). <c>CaseWorkflowService.SubmitAsync</c>
+    ///         writes <c>queued</c> in the same transaction as the queue
+    ///         payload row; <c>SubmissionConsumer</c> claims via the queue
+    ///         lease and dispatches.</item>
+    ///   <item><c>pending</c> — owned by the legacy poll-based
+    ///         <c>OutboundSubmissionDispatchWorker</c>. Post-S+3 this is
+    ///         the manual-retry path: <c>IcumsSubmissionQueueAdminService</c>
+    ///         flips <c>error</c> (and historical pre-S+3 rows) back to
+    ///         <c>pending</c> when an operator requeues.</item>
+    ///   <item><c>dispatching</c> — short-lived intermediate set by
+    ///         <c>SubmissionConsumer</c> between row claim and adapter
+    ///         call. Used to make double-dispatch on consumer crash a
+    ///         visible state rather than a silent reclaim.</item>
+    ///   <item><c>accepted</c> — terminal success; adapter confirmed.</item>
+    ///   <item><c>rejected</c> — terminal failure; adapter declined the
+    ///         submission (e.g. authority validation rejection).</item>
+    ///   <item><c>error</c> — transient retry budget exhausted (or the
+    ///         legacy worker hit a permanent fault). Awaits operator
+    ///         triage via the admin queue.</item>
+    /// </list>
+    /// </summary>
     public string Status { get; set; } = "pending";
 
     /// <summary>Adapter-shaped response from the external system, as JSON. Null until a response arrives.</summary>

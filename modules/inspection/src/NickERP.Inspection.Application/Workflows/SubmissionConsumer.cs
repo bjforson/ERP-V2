@@ -13,9 +13,23 @@ using NickERP.Platform.Tenancy;
 namespace NickERP.Inspection.Application.Workflows;
 
 /// <summary>
-/// Consumer for <c>inspection.queue_submission</c>. Dispatches a concrete
+/// Sprint S+3 — primary outbound-submission dispatch path. Consumer for
+/// <c>inspection.queue_submission</c>. Dispatches a concrete
 /// <see cref="OutboundSubmission"/> row to its configured external-system
 /// adapter and advances the case to Submitted when accepted.
+///
+/// <para>
+/// <b>State-machine ownership.</b> Picks up rows that arrived via the
+/// transactional queue (status <c>queued</c>); also accepts <c>pending</c>,
+/// <c>error</c>, and <c>dispatching</c> when re-driven by an explicit
+/// queue payload (e.g. retry on consumer restart). Flips through
+/// <c>dispatching</c> before the adapter call, then sets <c>accepted</c>,
+/// <c>rejected</c>, or <c>error</c> per result. Operator-driven manual
+/// retries land on the legacy
+/// <see cref="NickERP.Inspection.Web.Services.OutboundSubmissionDispatchWorker"/>
+/// via status <c>pending</c> without enqueueing a payload, so the two
+/// paths do not contend on the same row.
+/// </para>
 /// </summary>
 public sealed class SubmissionConsumer : IQueueConsumer<OutboundSubmissionPayload>
 {

@@ -19,12 +19,23 @@ using NickERP.Platform.Tenancy.Entities;
 namespace NickERP.Inspection.Web.Services;
 
 /// <summary>
-/// Sprint 24 / B3.2 — Outbound submission dispatch worker.
-/// Reads <see cref="OutboundSubmission"/> rows in <c>Status='pending'</c>
-/// and dispatches them to the corresponding
+/// Sprint 24 / B3.2 — Outbound submission dispatch worker. Post-S+3 this
+/// is the <b>legacy retry path</b>; primary dispatch flows through the
+/// transactional queue (<see cref="NickERP.Inspection.Application.Workflows.SubmissionConsumer"/>
+/// consuming <c>OutboundSubmissionPayload</c>).
+///
+/// <para>
+/// This worker reads <see cref="OutboundSubmission"/> rows in
+/// <c>Status='pending'</c> only and dispatches them to the corresponding
 /// <see cref="ExternalSystemInstance"/> via the adapter's
-/// <see cref="IExternalSystemAdapter.SubmitAsync"/> path. Replaces v1
-/// <c>ICUMSSubmissionService</c>; vendor-neutralised.
+/// <see cref="IExternalSystemAdapter.SubmitAsync"/>. After S+3, <c>pending</c>
+/// rows arrive here from two sources: (a) operator-driven requeue via
+/// <c>IcumsSubmissionQueueAdminService</c>, and (b) historical pre-S+3
+/// rows. <c>queued</c> rows are owned by the queue consumer and are NOT
+/// picked up here.
+/// </para>
+///
+/// <para>Replaces v1 <c>ICUMSSubmissionService</c>; vendor-neutralised.</para>
 ///
 /// <para>
 /// <b>Priority + LastAttempt ordering.</b> Sprint 22 / B2.1 added

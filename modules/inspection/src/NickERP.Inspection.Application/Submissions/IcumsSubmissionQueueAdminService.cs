@@ -149,12 +149,27 @@ public sealed class IcumsSubmissionQueueAdminService
     }
 
     /// <summary>
-    /// Reset a single submission back to <c>pending</c> + clear its
-    /// error. Queue-owned <c>queued</c> rows are treated as active and
-    /// are not requeued into the legacy pending dispatcher. Emits an
+    /// Operator-triggered retry of a single submission. Resets the row to
+    /// <c>pending</c> (the legacy dispatcher's pickup state — see
+    /// <c>OutboundSubmission.Status</c> for the full state contract),
+    /// clears the previous error, and emits an
     /// <c>inspection.icums.submission_requeued</c> domain event tagged
-    /// with the actor user id and the submission id. Idempotent: if the
-    /// row is already pending or queued, no-op (no event emitted).
+    /// with the actor user id and the submission id.
+    ///
+    /// <para>
+    /// <b>Path ownership.</b> Requeue intentionally routes through the
+    /// legacy <c>OutboundSubmissionDispatchWorker</c> (status <c>pending</c>)
+    /// rather than re-enqueueing onto the transactional queue. That keeps
+    /// operator-driven retries auditable + bounded by the dispatcher's
+    /// retry budget, and avoids contention between the queue consumer
+    /// and the operator action.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Idempotent.</b> If the row is already <c>pending</c> (legacy
+    /// path already owns it) or <c>queued</c> (transactional queue still
+    /// owns it), the call is a no-op and no event is emitted.
+    /// </para>
     /// </summary>
     public async Task<RequeueResult> RequeueAsync(
         Guid submissionId,
@@ -213,13 +228,19 @@ public sealed class IcumsSubmissionQueueAdminService
     }
 
     /// <summary>
-    /// Bulk-requeue every <see cref="OutboundSubmission"/> matching
-    /// <paramref name="filters"/>, up to a hard cap of
-    /// <see cref="MaxBulkRequeueRows"/> rows. Rows already in
-    /// <c>pending</c> or <c>queued</c> are skipped. Emits a single
-    /// <c>inspection.icums.submission_bulk_requeued</c> domain event
-    /// summarising the action; per-row events are NOT emitted (would
-    /// overwhelm the audit log on a 1000-row flip).
+    /// Operator-triggered bulk retry — flips every
+    /// <see cref="OutboundSubmission"/> matching <paramref name="filters"/>
+    /// to <c>pending</c> (the legacy dispatcher's pickup state), up to a
+    /// hard cap of <see cref="MaxBulkRequeueRows"/> rows. Rows already
+    /// in <c>pending</c> (legacy path) or <c>queued</c> (transactional
+    /// queue path) are skipped — see <see cref="RequeueAsync"/> for the
+    /// path-ownership rationale.
+    ///
+    /// <para>
+    /// Emits one <c>inspection.icums.submission_bulk_requeued</c> domain
+    /// event summarising the action; per-row events are NOT emitted
+    /// (would overwhelm the audit log on a 1000-row flip).
+    /// </para>
     /// </summary>
     public async Task<RequeueResult> RequeueBulkAsync(
         SubmissionQueueFilter filters,
