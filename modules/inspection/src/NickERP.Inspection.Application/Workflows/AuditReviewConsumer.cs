@@ -157,25 +157,40 @@ public sealed class AuditReviewConsumer : IQueueConsumer<AuditReviewPayload>
         @case.State = InspectionWorkflowState.Verdict;
         @case.StateEnteredAt = now;
 
-        await _submissionQueue.EnqueueAsync(
+        var submission = await EnsureOutboundSubmissionAsync(@case, verdict, now, ct)
+            .ConfigureAwait(false);
+        var shouldEnqueueSubmission = submission.Status is "pending" or "error";
+
+        if (shouldEnqueueSubmission)
+        {
+            await _submissionQueue.EnqueueAsync(
                 _db,
                 new EnqueueRequest<OutboundSubmissionPayload>
                 {
                     WorkItemId = workItemId,
-                    Payload = new OutboundSubmissionPayload(workItemId, caseId, now),
+                    Payload = new OutboundSubmissionPayload(workItemId, caseId, now)
+                    {
+                        OutboundSubmissionId = submission.Id,
+                        ExternalSystemInstanceId = submission.ExternalSystemInstanceId,
+                        IdempotencyKey = submission.IdempotencyKey
+                    },
                     IdempotencyKey = IdempotencyKey.From(
                         "inspection",
                         "submission",
                         workItemId,
                         caseId,
-                        selected.Review.Id),
+                        submission.Id),
                     CorrelationId = correlationId
                 },
-                ct)
-            .ConfigureAwait(false);
+                ct).ConfigureAwait(false);
+        }
 
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
-        return new AuditReviewRouteResult(selected.Review.Id, outcome, decision, EnqueuedSubmission: true);
+        return new AuditReviewRouteResult(
+            selected.Review.Id,
+            outcome,
+            decision,
+            EnqueuedSubmission: shouldEnqueueSubmission);
     }
 
     private async Task<List<Finding>> LoadCaseFindingsAsync(Guid caseId, CancellationToken ct)
@@ -188,6 +203,77 @@ public sealed class AuditReviewConsumer : IQueueConsumer<AuditReviewPayload>
                 select finding)
             .ToListAsync(ct)
             .ConfigureAwait(false);
+    }
+
+    private async Task<OutboundSubmission> EnsureOutboundSubmissionAsync(
+        InspectionCase @case,
+        Verdict verdict,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var instance = await ResolveExternalSystemInstanceAsync(@case.LocationId, ct)
+            .ConfigureAwait(false);
+        var idempotencyKey = IdempotencyKey.From(
+            _tenant.TenantId,
+            "submission",
+            @case.Id,
+            verdict.Id,
+            instance.Id);
+        var existing = await _db.OutboundSubmissions
+            .FirstOrDefaultAsync(s => s.IdempotencyKey == idempotencyKey, ct)
+            .ConfigureAwait(false);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            caseId = @case.Id,
+            decision = verdict.Decision.ToString(),
+            basis = verdict.Basis
+        });
+        var submission = new OutboundSubmission
+        {
+            Id = Guid.NewGuid(),
+            CaseId = @case.Id,
+            ExternalSystemInstanceId = instance.Id,
+            PayloadJson = payload,
+            IdempotencyKey = idempotencyKey,
+            Status = "pending",
+            SubmittedAt = now,
+            TenantId = _tenant.TenantId
+        };
+        _db.OutboundSubmissions.Add(submission);
+        return submission;
+    }
+
+    private async Task<ExternalSystemInstance> ResolveExternalSystemInstanceAsync(
+        Guid locationId,
+        CancellationToken ct)
+    {
+        var shared = await _db.ExternalSystemInstances.AsNoTracking()
+            .Where(e => e.IsActive && e.Scope == ExternalSystemBindingScope.Shared)
+            .OrderBy(e => e.CreatedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (shared is not null)
+        {
+            return shared;
+        }
+
+        var bound = await _db.ExternalSystemBindings.AsNoTracking()
+            .Where(b => b.LocationId == locationId
+                        && b.Instance != null
+                        && b.Instance.IsActive)
+            .OrderBy(b => b.Role == "primary" ? 0 : 1)
+            .ThenBy(b => b.CreatedAt)
+            .Select(b => b.Instance!)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        return bound
+            ?? throw new InvalidOperationException(
+                $"No active ExternalSystemInstance serves location {locationId}; cannot enqueue outbound submission.");
     }
 
     private static string NormalizeOutcome(string? outcome)

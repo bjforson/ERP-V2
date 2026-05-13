@@ -14,11 +14,7 @@ namespace NickERP.Inspection.Application.Workflows;
 /// The <see cref="NickERP.Platform.Queueing.Entities.WorkItem{TState}"/>
 /// id this row dispatches work for. Stable across retries.
 /// </param>
-/// <param name="CaseId">
-/// Identifier of the <see cref="NickERP.Inspection.Core" /> case the
-/// submission work was enqueued for. Used for log correlation in the
-/// Sprint S+3 placeholder body.
-/// </param>
+/// <param name="CaseId">Identifier of the case being submitted.</param>
 /// <param name="EnqueuedAt">
 /// Wallclock at producer-side enqueue. Useful for queue-depth /
 /// dwell-time observability before the platform metrics surface lands.
@@ -42,4 +38,18 @@ namespace NickERP.Inspection.Application.Workflows;
 /// or removing them is not.
 /// </para>
 /// </remarks>
-public sealed record OutboundSubmissionPayload(Guid WorkItemId, Guid CaseId, DateTimeOffset EnqueuedAt);
+public sealed record OutboundSubmissionPayload(Guid WorkItemId, Guid CaseId, DateTimeOffset EnqueuedAt)
+{
+    /// <summary>
+    /// Exact outbound-submission row the consumer should dispatch. Kept
+    /// nullable so older queue rows containing only case/work-item data can
+    /// still deserialize and fall back to case/idempotency lookup.
+    /// </summary>
+    public Guid? OutboundSubmissionId { get; init; }
+
+    /// <summary>External-system instance chosen by the producer.</summary>
+    public Guid? ExternalSystemInstanceId { get; init; }
+
+    /// <summary>Stable host-side adapter idempotency key.</summary>
+    public string? IdempotencyKey { get; init; }
+}

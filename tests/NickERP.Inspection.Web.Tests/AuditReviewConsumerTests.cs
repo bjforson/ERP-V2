@@ -48,11 +48,15 @@ public sealed class AuditReviewConsumerTests : IDisposable
 
         var verdict = await _db.Verdicts.AsNoTracking().SingleAsync(v => v.CaseId == c.Id);
         verdict.Decision.Should().Be(VerdictDecision.Clear);
+        var submission = await _db.OutboundSubmissions.AsNoTracking().SingleAsync(s => s.CaseId == c.Id);
+        submission.Status.Should().Be("pending");
 
         _submissionQueue.Db.Should().BeSameAs(_db);
         _submissionQueue.Request.Should().NotBeNull();
         _submissionQueue.Request!.WorkItemId.Should().Be(workItemId);
         _submissionQueue.Request.Payload.CaseId.Should().Be(c.Id);
+        _submissionQueue.Request.Payload.OutboundSubmissionId.Should().Be(submission.Id);
+        _submissionQueue.Request.Payload.ExternalSystemInstanceId.Should().Be(submission.ExternalSystemInstanceId);
         _submissionQueue.Request.CorrelationId.Should().Be("corr-ar");
 
         var evt = _events.Events.Single(e => e.EventType == "inspection.audit_review.routed");
@@ -88,6 +92,8 @@ public sealed class AuditReviewConsumerTests : IDisposable
             && f.FindingType == "review.audit.system_auto_concur");
         (await _db.Verdicts.AsNoTracking().SingleAsync(v => v.CaseId == c.Id))
             .Decision.Should().Be(VerdictDecision.Clear);
+        (await _db.OutboundSubmissions.AsNoTracking().CountAsync(s => s.CaseId == c.Id))
+            .Should().Be(1);
         _submissionQueue.Request.Should().NotBeNull();
     }
 
@@ -151,6 +157,17 @@ public sealed class AuditReviewConsumerTests : IDisposable
             TenantId = 1
         };
         _db.Cases.Add(c);
+        _db.ExternalSystemInstances.Add(new ExternalSystemInstance
+        {
+            Id = Guid.NewGuid(),
+            TypeCode = "test-authority",
+            DisplayName = "Test Authority",
+            Scope = ExternalSystemBindingScope.Shared,
+            ConfigJson = "{}",
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TenantId = 1
+        });
         await _db.SaveChangesAsync();
         return c;
     }

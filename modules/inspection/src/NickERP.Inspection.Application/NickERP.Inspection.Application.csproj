@@ -27,6 +27,7 @@
   <ItemGroup>
     <ProjectReference Include="..\NickERP.Inspection.Core\NickERP.Inspection.Core.csproj" />
     <ProjectReference Include="..\NickERP.Inspection.Database\NickERP.Inspection.Database.csproj" />
+    <ProjectReference Include="..\NickERP.Inspection.ExternalSystems.Abstractions\NickERP.Inspection.ExternalSystems.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Tenancy\NickERP.Platform.Tenancy.csproj" />
     <!-- Sprint 14 / VP6 Phase C — CaseVisibilityService reads
          Tenant.CaseVisibilityModel via TenancyDbContext to pick the
@@ -39,6 +40,7 @@
          IQueueConsumer<SplitDetectionPayload> from the platform queueing
          abstractions. -->
     <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Queueing\NickERP.Platform.Queueing.csproj" />
+    <ProjectReference Include="..\..\..\..\platform\NickERP.Platform.Plugins\NickERP.Platform.Plugins.csproj" />
   </ItemGroup>
 
 </Project>
