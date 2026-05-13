@@ -1,85 +1,186 @@
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Core.Entities;
+using NickERP.Inspection.Database;
+using NickERP.Platform.Audit;
+using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Queueing.Abstractions;
+using NickERP.Platform.Tenancy;
 
 namespace NickERP.Inspection.Application.Workflows;
 
 /// <summary>
-/// Sprint S+3 / B-queues — placeholder consumer for the
-/// <c>inspection.queue_decision_agent</c> queue. Implements
-/// <see cref="IQueueConsumer{TPayload}"/> for
-/// <see cref="DecisionAgentPayload"/>.
+/// Consumer for <c>inspection.queue_decision_agent</c>. Scores the case
+/// from persisted findings, emits an auditable recommendation, and hands
+/// the work item to audit assignment.
 /// </summary>
-/// <remarks>
-/// <para>
-/// <b>What this is right now.</b> A compile-clean stub that logs a
-/// single TODO once on first claim then completes successfully. Lays
-/// the structural rail (DI registration, host loop, claim + payload
-/// shape) so the real decision-agent scoring pass can drop in without
-/// touching the platform wiring.
-/// </para>
-/// <para>
-/// <b>What lands later.</b> The actual call into the rules-based
-/// decision agent (today shadow-mode by config; honouring the
-/// <c>decisionagentsettings</c> singleton's posture) is intentionally
-/// deferred — that integration carries its own design questions
-/// (live vs. shadow, condition-weight resolution from settings,
-/// audit-trail emission to <c>auditdecisions</c>) that aren't blocked
-/// by this scaffold.
-/// </para>
-/// <para>
-/// <b>Stage role.</b> Consumes work items whose findings have landed
-/// from <see cref="ImageAnalysisConsumer"/> and applies the
-/// rules-based scoring pass. In shadow mode the decision is logged
-/// but no auto-advance happens; in live mode the case advances to
-/// audit assignment via <see cref="AuditAssignmentConsumer"/>.
-/// </para>
-/// <para>
-/// <b>Idempotency contract.</b> The placeholder body is naturally
-/// idempotent (logging only). When the real scoring call lands, it
-/// MUST stay idempotent under retry — janitor reclaims, lease
-/// expiries, and worker restarts all replay the same claim, and the
-/// queueing layer guarantees at-least-once not exactly-once delivery.
-/// </para>
-/// <para>
-/// <b>Throw to fail.</b> The host wraps the call and routes thrown
-/// exceptions to <see cref="IQueueClaim{TPayload}.FailAsync"/>; consumers
-/// don't call Fail directly. The placeholder body never throws, so
-/// every claim auto-completes — that's the proof-of-life signal until
-/// the real body lands.
-/// </para>
-/// </remarks>
 public sealed class DecisionAgentConsumer : IQueueConsumer<DecisionAgentPayload>
 {
+    private const string EventType = "inspection.decision_agent.scored";
+
+    private readonly InspectionDbContext _db;
+    private readonly ITenantContext _tenant;
+    private readonly IEventPublisher _events;
+    private readonly ITransactionalQueue<AuditAssignmentPayload> _auditAssignmentQueue;
     private readonly ILogger<DecisionAgentConsumer> _logger;
 
-    /// <summary>
-    /// Construct the consumer. Registered as scoped — the platform host
-    /// resolves a fresh instance per claimed row, so capturing the
-    /// per-row claim in instance state would be unsafe but isn't done
-    /// here.
-    /// </summary>
-    /// <param name="logger">DI-supplied logger; used for the proof-of-life trace.</param>
-    public DecisionAgentConsumer(ILogger<DecisionAgentConsumer> logger)
+    public DecisionAgentConsumer(
+        InspectionDbContext db,
+        ITenantContext tenant,
+        IEventPublisher events,
+        ITransactionalQueue<AuditAssignmentPayload> auditAssignmentQueue,
+        ILogger<DecisionAgentConsumer> logger)
     {
+        _db = db ?? throw new ArgumentNullException(nameof(db));
+        _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
+        _events = events ?? throw new ArgumentNullException(nameof(events));
+        _auditAssignmentQueue = auditAssignmentQueue ?? throw new ArgumentNullException(nameof(auditAssignmentQueue));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     /// <inheritdoc />
-    public Task ProcessAsync(IQueueClaim<DecisionAgentPayload> claim, CancellationToken ct)
+    public async Task ProcessAsync(IQueueClaim<DecisionAgentPayload> claim, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(claim);
+        if (!_tenant.IsResolved)
+        {
+            throw new InvalidOperationException(
+                "DecisionAgentConsumer cannot run without a resolved tenant context.");
+        }
 
-        // TODO[Sprint S+3]: implement DecisionAgentConsumer — read
-        // decisionagentsettings, evaluate condition weights, emit
-        // shadow or live decision, persist auditdecisions row when
-        // non-shadow. Sprint S+3 placeholder logs once + completes so
-        // the queue plumbing is exercisable end-to-end.
+        var caseId = claim.Payload.CaseId;
+        var score = await ScoreAsync(caseId, ct).ConfigureAwait(false);
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
+        await _auditAssignmentQueue.EnqueueAsync(
+                _db,
+                new EnqueueRequest<AuditAssignmentPayload>
+                {
+                    WorkItemId = claim.WorkItemId,
+                    Payload = new AuditAssignmentPayload(claim.WorkItemId, caseId, now),
+                    IdempotencyKey = IdempotencyKey.From(
+                        "inspection",
+                        "audit-assignment",
+                        claim.WorkItemId,
+                        caseId),
+                    CorrelationId = claim.CorrelationId
+                },
+                ct)
+            .ConfigureAwait(false);
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+
+        await EmitScoreEventAsync(caseId, claim.WorkItemId, score, claim.CorrelationId, ct)
+            .ConfigureAwait(false);
+
         _logger.LogInformation(
-            "TODO[Sprint S+3]: implement DecisionAgentConsumer — placeholder ran for CaseId={CaseId} WorkItemId={WorkItemId} AttemptCount={AttemptCount} (no-op — real decision-agent scoring lands in a later sprint)",
-            claim.Payload.CaseId,
+            "Decision agent scored CaseId={CaseId} WorkItemId={WorkItemId} AttemptCount={AttemptCount} Recommendation={Recommendation} FindingCount={FindingCount}; enqueued audit assignment",
+            caseId,
             claim.WorkItemId,
-            claim.AttemptCount);
-
-        return Task.CompletedTask;
+            claim.AttemptCount,
+            score.Recommendation,
+            score.FindingCount);
     }
+
+    private async Task<DecisionAgentScore> ScoreAsync(Guid caseId, CancellationToken ct)
+    {
+        var reviewIds = await _db.ReviewSessions.AsNoTracking()
+            .Where(s => s.CaseId == caseId)
+            .Join(
+                _db.AnalystReviews.AsNoTracking(),
+                s => s.Id,
+                r => r.ReviewSessionId,
+                (_, r) => r.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var severities = reviewIds.Count == 0
+            ? new List<string>()
+            : await _db.Findings.AsNoTracking()
+                .Where(f => reviewIds.Contains(f.AnalystReviewId))
+                .Select(f => f.Severity)
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+
+        var counts = severities
+            .Select(NormalizeSeverity)
+            .GroupBy(s => s, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        var criticalCount = Count(counts, "critical")
+                          + Count(counts, "error")
+                          + Count(counts, "incomplete");
+        var warningCount = Count(counts, "warning")
+                         + Count(counts, "partial")
+                         + Count(counts, "partiallycomplete")
+                         + Count(counts, "partially-complete");
+
+        var recommendation = criticalCount > 0
+            ? "refer"
+            : warningCount > 0
+                ? "inspect"
+                : "clear";
+
+        return new DecisionAgentScore(
+            Recommendation: recommendation,
+            FindingCount: severities.Count,
+            SeverityCounts: counts);
+    }
+
+    private async Task EmitScoreEventAsync(
+        Guid caseId,
+        Guid workItemId,
+        DecisionAgentScore score,
+        string? correlationId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var payload = JsonSerializer.SerializeToElement(new
+            {
+                caseId,
+                workItemId,
+                recommendation = score.Recommendation,
+                findingCount = score.FindingCount,
+                severityCounts = score.SeverityCounts
+            });
+            var key = IdempotencyKey.From(
+                _tenant.TenantId,
+                EventType,
+                workItemId,
+                caseId);
+            var evt = DomainEvent.Create(
+                _tenant.TenantId,
+                actorUserId: null,
+                correlationId: correlationId,
+                eventType: EventType,
+                entityType: nameof(InspectionCase),
+                entityId: caseId.ToString(),
+                payload: payload,
+                idempotencyKey: key);
+            await _events.PublishAsync(evt, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to emit {EventType} for case {CaseId}.",
+                EventType,
+                caseId);
+        }
+    }
+
+    private static string NormalizeSeverity(string? severity)
+        => string.IsNullOrWhiteSpace(severity)
+            ? "info"
+            : severity.Trim().ToLowerInvariant();
+
+    private static int Count(IReadOnlyDictionary<string, int> counts, string key)
+        => counts.TryGetValue(key, out var count) ? count : 0;
+
+    private sealed record DecisionAgentScore(
+        string Recommendation,
+        int FindingCount,
+        IReadOnlyDictionary<string, int> SeverityCounts);
 }
