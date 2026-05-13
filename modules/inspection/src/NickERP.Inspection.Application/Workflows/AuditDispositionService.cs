@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
 using NickERP.Platform.Audit;
@@ -22,6 +23,7 @@ public sealed class AuditDispositionService : IAuditDispositionService
     private readonly ITenantContext _tenant;
     private readonly IEventPublisher _events;
     private readonly ITransactionalQueue<OutboundSubmissionPayload> _submissionQueue;
+    private readonly ExternalSystemAdminService _externalSystems;
     private readonly ILogger<AuditDispositionService> _logger;
 
     public AuditDispositionService(
@@ -29,12 +31,14 @@ public sealed class AuditDispositionService : IAuditDispositionService
         ITenantContext tenant,
         IEventPublisher events,
         ITransactionalQueue<OutboundSubmissionPayload> submissionQueue,
+        ExternalSystemAdminService externalSystems,
         ILogger<AuditDispositionService> logger)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _submissionQueue = submissionQueue ?? throw new ArgumentNullException(nameof(submissionQueue));
+        _externalSystems = externalSystems ?? throw new ArgumentNullException(nameof(externalSystems));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -282,26 +286,10 @@ public sealed class AuditDispositionService : IAuditDispositionService
         Guid locationId,
         CancellationToken ct)
     {
-        var shared = await _db.ExternalSystemInstances.AsNoTracking()
-            .Where(e => e.IsActive && e.Scope == ExternalSystemBindingScope.Shared)
-            .OrderBy(e => e.CreatedAt)
-            .FirstOrDefaultAsync(ct)
+        var instance = await _externalSystems
+            .ResolvePreferredServingInstanceAsync(locationId, ct)
             .ConfigureAwait(false);
-        if (shared is not null)
-        {
-            return shared;
-        }
-
-        var bound = await _db.ExternalSystemBindings.AsNoTracking()
-            .Where(b => b.LocationId == locationId
-                        && b.Instance != null
-                        && b.Instance.IsActive)
-            .OrderBy(b => b.Role == "primary" ? 0 : 1)
-            .ThenBy(b => b.CreatedAt)
-            .Select(b => b.Instance!)
-            .FirstOrDefaultAsync(ct)
-            .ConfigureAwait(false);
-        return bound
+        return instance
             ?? throw new InvalidOperationException(
                 $"No active ExternalSystemInstance serves location {locationId}; cannot enqueue outbound submission.");
     }

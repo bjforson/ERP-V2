@@ -207,4 +207,46 @@ public sealed class ExternalSystemAdminService
 
         return await shared.Union(bound).Distinct().ToListAsync(ct);
     }
+
+    /// <summary>
+    /// Resolve the single <see cref="ExternalSystemInstance"/> that should
+    /// receive an outbound submission for <paramref name="locationId"/>.
+    /// Same three-scope rule as <see cref="ResolveServingInstancesAsync"/>,
+    /// with deterministic tie-breaking when several instances match:
+    /// <list type="number">
+    ///   <item>Prefer any <see cref="ExternalSystemBindingScope.Shared"/>
+    ///         instance (oldest <c>CreatedAt</c> wins).</item>
+    ///   <item>Otherwise pick the <see cref="ExternalSystemBindingScope.PerLocation"/>
+    ///         / <see cref="ExternalSystemBindingScope.SubsetOfLocations"/>
+    ///         binding tagged <c>Role = "primary"</c> (oldest first), then
+    ///         any non-primary binding (oldest first).</item>
+    /// </list>
+    /// Returns <c>null</c> when no active instance serves the location.
+    /// Read-only and tracking-free.
+    /// </summary>
+    public async Task<ExternalSystemInstance?> ResolvePreferredServingInstanceAsync(
+        Guid locationId, CancellationToken ct = default)
+    {
+        var shared = await _db.ExternalSystemInstances.AsNoTracking()
+            .Where(e => e.IsActive && e.Scope == ExternalSystemBindingScope.Shared)
+            .OrderBy(e => e.CreatedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (shared is not null)
+        {
+            return shared;
+        }
+
+        return await _db.ExternalSystemBindings.AsNoTracking()
+            .Where(b => b.LocationId == locationId
+                        && b.Instance != null
+                        && b.Instance.IsActive
+                        && (b.Instance.Scope == ExternalSystemBindingScope.PerLocation
+                            || b.Instance.Scope == ExternalSystemBindingScope.SubsetOfLocations))
+            .OrderBy(b => b.Role == "primary" ? 0 : 1)
+            .ThenBy(b => b.CreatedAt)
+            .Select(b => b.Instance!)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+    }
 }

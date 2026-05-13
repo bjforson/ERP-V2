@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using NickERP.Inspection.Application.ExternalSystems;
 using NickERP.Inspection.Application.Workflows;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Database;
@@ -201,11 +202,16 @@ public sealed class AuditReviewConsumerTests : IDisposable
 
     private AuditReviewConsumer NewConsumer()
     {
+        var externalSystems = new ExternalSystemAdminService(
+            _db,
+            _tenant,
+            NullLogger<ExternalSystemAdminService>.Instance);
         var dispositions = new AuditDispositionService(
             _db,
             _tenant,
             _events,
             _submissionQueue,
+            externalSystems,
             NullLogger<AuditDispositionService>.Instance);
         return new(
             _tenant,
