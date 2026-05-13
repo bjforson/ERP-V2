@@ -20,6 +20,7 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.TryAddEnumerable(ServiceDescriptor.Scoped<ICrossRecordScanDetector, CrossRecordScanDetector>());
+        services.TryAddScoped<CrossRecordDetectionService>();
         return services;
     }
 }

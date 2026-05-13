@@ -52,13 +52,21 @@ public sealed class CrossRecordScanServiceTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     private CrossRecordScanService NewService()
-        => new(
+    {
+        var detection = new CrossRecordDetectionService(
             _db,
             new ICrossRecordScanDetector[] { _detector },
             _tenant,
             _events,
+            NullLogger<CrossRecordDetectionService>.Instance);
+
+        return new CrossRecordScanService(
+            _db,
+            detection,
+            _events,
             _workflow,
             NullLogger<CrossRecordScanService>.Instance);
+    }
 
     private async Task<InspectionCase> SeedCaseAsync(string subject)
     {
