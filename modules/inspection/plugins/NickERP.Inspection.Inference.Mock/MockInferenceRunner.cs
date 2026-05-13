@@ -11,7 +11,7 @@ namespace NickERP.Inspection.Inference.Mock;
 /// load/run path. Use <see cref="WithFixtures"/> for snapshot tests that
 /// pin specific inputs to specific outputs.
 /// </summary>
-[Plugin("mock")]
+[Plugin("mock", Module = "inspection")]
 public sealed class MockInferenceRunner : IInferenceRunner
 {
     private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, ITensor>>? _fixtures;

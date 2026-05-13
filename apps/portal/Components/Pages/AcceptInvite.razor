@@ -108,7 +108,12 @@
     [Parameter] public string? Token { get; set; }
 
     [SupplyParameterFromForm]
-    private AcceptForm _form { get; set; } = new();
+    private AcceptForm _form { get; set; }
+
+    public AcceptInvite()
+    {
+        _form = new AcceptForm();
+    }
 
     private enum Step
     {

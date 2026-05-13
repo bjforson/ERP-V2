@@ -89,9 +89,9 @@ public sealed class FS6000ScanPackageTests
         var materialPath = stem + "material.img";
         try
         {
-            await File.WriteAllBytesAsync(highPath, BuildRawImg(64, seed: 0x10));
-            await File.WriteAllBytesAsync(lowPath, BuildRawImg(64, seed: 0x20));
-            await File.WriteAllBytesAsync(materialPath, BuildRawImg(64, seed: 0x30));
+            await File.WriteAllBytesAsync(highPath, FS6000FormatDecoderTests.BuildChannel(bitDepth: 16, fillSeed: 0x10));
+            await File.WriteAllBytesAsync(lowPath, FS6000FormatDecoderTests.BuildChannel(bitDepth: 16, fillSeed: 0x40));
+            await File.WriteAllBytesAsync(materialPath, FS6000FormatDecoderTests.BuildChannel(bitDepth: 8, fillSeed: 0x07));
 
             var manifestBytes = BuildManifestEnvelope(
                 stem: stem, highPath: highPath, lowPath: lowPath,
@@ -111,6 +111,14 @@ public sealed class FS6000ScanPackageTests
             });
             parsed.Package.ScannerId.Should().Be("fs6000");
             parsed.Package.ScanType.Should().Be("primary");
+            parsed.Artifacts.Should().ContainSingle();
+            var artifact = parsed.Artifacts[0];
+            artifact.MimeType.Should().Be("image/png",
+                "the inspection ingest projection must stay renderable by PreRenderWorker");
+            artifact.Bytes.Should().StartWith(new byte[] { 0x89, 0x50, 0x4E, 0x47 },
+                "FS6000 ParseScanAsync should persist the normalized preview image, not raw vendor bytes");
+            artifact.WidthPx.Should().BeGreaterThan(0);
+            artifact.HeightPx.Should().BeGreaterThan(0);
 
             // Round-trip via Seal + Validate.
             var sealed_ = ScanPackageManifest.Seal(HostFill(parsed.Package), HmacKey);

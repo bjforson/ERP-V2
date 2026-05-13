@@ -14,9 +14,9 @@ namespace NickERP.Inspection.Inference.OCR.ContainerNumber;
 /// <see cref="ILoadedModel"/> for the configured
 /// <c>(ModelId, ModelVersion)</c>; loaded lazily on first request and
 /// reused for all subsequent calls. Plugin loader discovery uses the
-/// <c>[Plugin("container-ocr-florence2")]</c> attribute.
+/// <c>[Plugin("container-ocr-florence2", Module = "inspection")]</c> attribute.
 /// </summary>
-[Plugin("container-ocr-florence2")]
+[Plugin("container-ocr-florence2", Module = "inspection")]
 public sealed class ContainerNumberRecognizer : IContainerNumberRecognizer, IAsyncDisposable
 {
     private readonly IInferenceRunner _runner;

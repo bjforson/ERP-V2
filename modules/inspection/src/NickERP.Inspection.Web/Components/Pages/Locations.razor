@@ -56,7 +56,12 @@
     private List<Location>? _rows;
     private string _message = string.Empty;
 
-    [SupplyParameterFromForm] private LocationForm _form { get; set; } = new();
+    [SupplyParameterFromForm] private LocationForm _form { get; set; }
+
+    public Locations()
+    {
+        _form = new LocationForm();
+    }
 
     protected override async Task OnInitializedAsync() => await Reload();
 

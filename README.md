@@ -1,46 +1,100 @@
-# NickERP.Inspection — v2 (greenfield)
+# NickERP v2
 
-> **Status:** design phase. Nothing is built yet. No production traffic.
-> **Repo:** standalone — this folder (`C:\Shared\ERP V2\`) is its own git repo, independent of v1.
-> **Parent roadmap:** `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` → Phase 6. (Lives in the v1 repo; absolute path because v1 and v2 are siblings, not parent/child.)
-> **Design of record:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+> **Status:** active .NET 10 modular ERP/inspection platform, not a design-only repository.
+> **Repo:** standalone git repo at `C:\Shared\ERP V2\`, independent of v1.
+> **Current architecture review:** [`docs/architectural-design-analysis-2026-05-13.md`](docs/architectural-design-analysis-2026-05-13.md)
+> **Living design record:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+> **Roadmap:** [`ROADMAP.md`](ROADMAP.md)
 
----
+NickERP v2 is a greenfield ERP platform that currently includes:
 
-## What this is
+- Blazor Server Portal shell for platform administration, tenant/module navigation, and Portal-hosted modules.
+- Blazor Server Inspection Web app for inspection-domain workflows, scanner/external-system plugins, imaging, audit, queueing, and edge replay.
+- Shared platform libraries for identity, tenancy, audit/events, logging, telemetry, plugins, queueing, email, and web chrome.
+- Inspection module packages and plugins under `modules/inspection/`.
+- NickFinance v2 petty-cash pathfinder under `modules/nickfinance/`, hosted by Portal when configured.
+- Edge Node service under `apps/edge-node/` with a local SQLite outbox and central replay worker.
+- A broad test solution, `NickERP.Tests.slnx`, covering platform, inspection, plugins, edge node, and NickFinance.
 
-A vendor-neutral, location-federated, plugin-driven rebuild of the NSCIM scan / analysis / authority-submission pipeline. Runs in parallel with the current production system (`C:\Shared\NSCIM_PRODUCTION\src\NickScanCentralImagingPortal.*`) until cutover.
+The older statement that "nothing is built yet" is stale. This repo is in a pathfinder-to-pilot state: a large amount of functionality exists, while some queue/workflow hardening, operator deployment steps, and post-pilot fold-in work remain open.
 
-The v1 system stays untouched. v2 borrows decoders, rules, and viewer components from v1 as it ports them, but does not share code, schema, services, or git history during the rebuild.
+## Active Services
 
-## Why v2
+| Service | Path | Default local URL | Notes |
+| --- | --- | --- | --- |
+| Portal | `apps/portal/` | `http://localhost:5400` | ERP launcher, tenant/admin pages, health, and Portal-hosted NickFinance when `ConnectionStrings:NickFinance` is configured. |
+| Inspection Web | `modules/inspection/src/NickERP.Inspection.Web/` | `http://localhost:5410` | Inspection UI/API host, plugin composition, imaging, queues, health, and `/api/edge/replay`. |
+| Edge Node | `apps/edge-node/NickERP.EdgeNode/` | host-selected unless `ASPNETCORE_URLS` is set | Local service exposing `/edge/healthz`; replays to the central server configured in `Server:Url`. |
+| NickFinance | `modules/nickfinance/` | Portal-hosted today | The standalone `5420` service slot is reserved, but current v2 NickFinance runs inside Portal. |
+| NickHR | `v1-clone/nickhr/` | not a v2-native service | Co-located clone for pilot compatibility; v2-native refactor is post-pilot. |
 
-Current system is flat, vendor-entangled, and single-location. See `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` gaps #1, #3, #14, #17–#22. Rewriting in place would bleed into live ops for a year. A parallel build gives us a clean domain and a real cutover moment.
+Deployment scripts reserve `5420` for future standalone NickFinance and `5430` for future standalone NickHR, but the currently deployed first-class services are Portal and Inspection Web.
 
-## Where things live
+Health endpoints:
 
+- Portal: `/healthz/live`, `/healthz/ready`
+- Inspection Web: `/healthz/live`, `/healthz/ready`, authenticated `/healthz/workers`
+- Edge Node: `/edge/healthz`
+
+## Repository Layout
+
+```text
+C:\Shared\ERP V2\
+|-- apps\
+|   |-- portal\                 # Portal Blazor Server host
+|   `-- edge-node\              # Edge Node host + README
+|-- modules\
+|   |-- inspection\             # Inspection domain, web, database, plugins
+|   `-- nickfinance\            # v2-native Petty Cash pathfinder
+|-- platform\                   # Shared NickERP platform packages
+|-- tests\                      # Active test projects in NickERP.Tests.slnx
+|-- docs\                       # Architecture, migration, runbooks, audits
+|-- tools\                      # Operational and evaluation tooling
+|-- v1-clone\                   # Historical/compatibility clones; see below
+|-- README.md
+|-- ROADMAP.md
+`-- NickERP.Tests.slnx
 ```
-C:\Shared\ERP V2\                ← this repo, separate from NSCIM_PRODUCTION
-├── README.md                    ← this file
-├── docs\
-│   ├── ARCHITECTURE.md          ← the design of record
-│   └── MIGRATION-FROM-V1.md     ← cutover plan (stub, grows over time)
-└── src\                         ← (not yet — created in Phase 6.0 Skeleton)
+
+## How To Run Locally
+
+Use .NET 10 from this repo root.
+
+```powershell
+dotnet build NickERP.Tests.slnx
+dotnet run --project apps/portal/NickERP.Portal.csproj
+dotnet run --project modules/inspection/src/NickERP.Inspection.Web/NickERP.Inspection.Web.csproj
+dotnet run --project apps/edge-node/NickERP.EdgeNode/NickERP.EdgeNode.csproj
 ```
 
-## How to join in
+The apps need the expected Postgres databases and environment/user-secret overrides for placeholder passwords and Cloudflare Access settings. Development bypass is configured through `NickErp:Identity:CfAccess:DevBypass`.
 
-1. Read `docs/ARCHITECTURE.md` top to bottom — the domain vocabulary and plugin contracts are the load-bearing decisions.
-2. Read `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` Phase 6 for schedule context.
-3. Check the "Open questions to settle later" section at the end of `ARCHITECTURE.md` before proposing a change.
+## v1 and v1-clone
 
-## Rules of engagement
+`C:\Shared\NSCIM_PRODUCTION\` remains the separate v1 production repo. Do not make v1 production changes from this repository.
 
-- No code in this tree yet. Phase 6.0 (Skeleton) creates the `src/` projects.
-- **Never reach into `C:\Shared\NSCIM_PRODUCTION\src\NickScanCentralImagingPortal.*`** from here. v2 is standalone — different folder, different repo.
-- Ports from v1 are **line-by-line copies into new files with rename**, not shared references or submodule imports. v1 keeps moving; v2 takes a point-in-time snapshot of the logic it needs.
-- Every vendor name (FS6000, ICUMS, BOE, CMR, regime codes) belongs in an adapter or country module — **never in core domain**.
+`v1-clone/` inside this repo is a compatibility/reference island, not the active v2 architecture. It contains point-in-time NickFinance/NickHR clones used for pilot co-deploy and migration planning. Treat it as read-mostly historical material unless a task explicitly targets the clone workflow. New v2-native work belongs under `modules/` and shared platform work belongs under `platform/`.
 
-## Note on the path
+## Documentation Map
 
-The folder name `ERP V2` contains a space. Quote every shell reference: `"C:\Shared\ERP V2"`. Some scripts and CI tools handle this poorly; if it becomes a recurring papercut, we'll discuss renaming to `erp-v2` or similar.
+- [`docs/architectural-design-analysis-2026-05-13.md`](docs/architectural-design-analysis-2026-05-13.md) is the latest source-backed architecture analysis and target design proposal.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the living design record. Some early sections preserve original design rationale; prefer newer "current state" notes where sections differ.
+- [`ROADMAP.md`](ROADMAP.md) tracks shipped work, operator blockers, and post-pilot scope.
+- [`TESTING.md`](TESTING.md) covers test and click-through workflows.
+- [`apps/edge-node/README.md`](apps/edge-node/README.md) covers edge-node configuration and operational behavior.
+- [`docs/runbooks/`](docs/runbooks/) contains named operational runbooks. Some sprint/team docs are explicitly historical and keep their original problem statements for audit trail.
+
+## Rules Of Engagement
+
+- Keep v2 standalone: no shared project references into `C:\Shared\NSCIM_PRODUCTION\`.
+- Keep vendor and authority names in adapters, plugins, or authority modules; core domain language remains generic.
+- Keep v1-clone changes isolated and clearly marked as clone compatibility work.
+- When documentation disagrees, prefer the source-backed architecture analysis, active project files, and current roadmap over older design-only text.
+
+## Path Note
+
+The folder name `ERP V2` contains a space. Quote shell references:
+
+```powershell
+cd "C:\Shared\ERP V2"
+```

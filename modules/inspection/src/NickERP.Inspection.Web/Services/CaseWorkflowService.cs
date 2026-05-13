@@ -282,7 +282,10 @@ public sealed class CaseWorkflowService
         try
         {
         var now = DateTimeOffset.UtcNow;
-        var parsed = await adapter.ParseAsync(raw, ct);
+        var parsedScan = await adapter.ParseScanAsync(raw.Bytes, adapter.Capabilities, ct);
+        var parsed = parsedScan.Artifacts.FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                $"Adapter '{adapter.TypeCode}' returned a ParsedScan with no Artifacts; cannot ingest.");
 
         // Hash the parsed bytes first — the same hash is used for the
         // content-addressed Scan.IdempotencyKey, the on-disk storage

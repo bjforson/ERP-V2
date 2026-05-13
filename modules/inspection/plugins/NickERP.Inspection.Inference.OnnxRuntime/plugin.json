@@ -1,4 +1,5 @@
 {
+  "module": "inspection",
   "typeCode": "onnx-runtime",
   "displayName": "ONNX Runtime (CPU + DirectML)",
   "version": "0.1.0",

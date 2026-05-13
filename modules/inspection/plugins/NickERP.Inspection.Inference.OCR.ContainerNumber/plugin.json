@@ -1,4 +1,5 @@
 {
+  "module": "inspection",
   "typeCode": "container-ocr-florence2",
   "displayName": "Container OCR (Florence-2 student)",
   "version": "0.1.0",

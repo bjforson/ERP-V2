@@ -194,8 +194,14 @@ else
 @code {
     [Parameter] public Guid? CaseId { get; set; }
 
-    [SupplyParameterFromForm(FormName = "case-search")] public CaseSearchModel _search { get; set; } = new();
-    [SupplyParameterFromForm(FormName = "manual-entry")] public ManualEntryForm _form { get; set; } = new();
+    [SupplyParameterFromForm(FormName = "case-search")] public CaseSearchModel _search { get; set; }
+    [SupplyParameterFromForm(FormName = "manual-entry")] public ManualEntryForm _form { get; set; }
+
+    public PostHocOutcomes()
+    {
+        _search = new CaseSearchModel();
+        _form = new ManualEntryForm();
+    }
 
     private List<InspectionCase>? _searchResults;
     private InspectionCase? _selectedCase;

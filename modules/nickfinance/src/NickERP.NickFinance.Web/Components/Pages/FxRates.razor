@@ -89,7 +89,12 @@ else
     private string _message = string.Empty;
 
     [SupplyParameterFromForm]
-    private PublishForm _form { get; set; } = new();
+    private PublishForm _form { get; set; }
+
+    public FxRates()
+    {
+        _form = new PublishForm();
+    }
 
     protected override async Task OnInitializedAsync()
     {

@@ -110,7 +110,12 @@ else
     private List<ServiceRow>? _rows;
     private string _message = string.Empty;
 
-    [SupplyParameterFromForm] private CreateForm _form { get; set; } = new();
+    [SupplyParameterFromForm] private CreateForm _form { get; set; }
+
+    public AnalysisServicesAdmin()
+    {
+        _form = new CreateForm();
+    }
 
     protected override async Task OnInitializedAsync() => await ReloadAsync();
 

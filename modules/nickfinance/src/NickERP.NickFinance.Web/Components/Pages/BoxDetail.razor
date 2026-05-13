@@ -99,7 +99,12 @@ else
     private string _message = string.Empty;
 
     [SupplyParameterFromForm]
-    private RaiseForm _form { get; set; } = new();
+    private RaiseForm _form { get; set; }
+
+    public BoxDetail()
+    {
+        _form = new RaiseForm();
+    }
 
     protected override async Task OnParametersSetAsync() => await Reload();
 

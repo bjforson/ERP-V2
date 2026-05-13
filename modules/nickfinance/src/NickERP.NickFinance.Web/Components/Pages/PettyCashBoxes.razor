@@ -85,7 +85,12 @@
     private string _message = string.Empty;
 
     [SupplyParameterFromForm]
-    private BoxForm _form { get; set; } = new();
+    private BoxForm _form { get; set; }
+
+    public PettyCashBoxes()
+    {
+        _form = new BoxForm();
+    }
 
     protected override async Task OnInitializedAsync() => await Reload();
 

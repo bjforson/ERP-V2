@@ -5,6 +5,8 @@
 > the v1 tree.
 >
 > This file replaces any v1-side roadmap reference. Edit it freely.
+> For a source-backed snapshot of what is implemented vs. target design,
+> see [`docs/architectural-design-analysis-2026-05-13.md`](docs/architectural-design-analysis-2026-05-13.md).
 
 ---
 
@@ -301,6 +303,7 @@ This file is the source of truth for v2 planning. Edit freely.
 
 Adjacent docs:
 
+- `docs/architectural-design-analysis-2026-05-13.md` — latest source-backed architecture analysis and target design proposal.
 - `docs/ARCHITECTURE.md` — the full design of record (entity model, plugin contracts, cross-cutting concerns).
 - `docs/MIGRATION-FROM-V1.md` — cutover plan stub (grows as parallel-run gets closer).
 - `TESTING.md` — how to run + click through what's built today.

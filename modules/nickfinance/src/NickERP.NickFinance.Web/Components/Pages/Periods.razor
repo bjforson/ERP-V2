@@ -92,7 +92,12 @@ else
     private string _message = string.Empty;
 
     [SupplyParameterFromForm]
-    private CloseForm _form { get; set; } = new() { YearMonth = DateTime.UtcNow.ToString("yyyy-MM") };
+    private CloseForm _form { get; set; }
+
+    public Periods()
+    {
+        _form = new CloseForm { YearMonth = DateTime.UtcNow.ToString("yyyy-MM") };
+    }
 
     protected override async Task OnInitializedAsync()
     {

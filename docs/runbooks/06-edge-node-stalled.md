@@ -136,7 +136,7 @@ Look at the error message to pick the path:
 | `LastReplayError` text | Cause | Fix |
 |---|---|---|
 | `tenant <N> not authorized for edge <id>` | No row in `audit.edge_node_authorizations` for this (edge, tenant) pair. | Insert the row as superuser (operator action; the host can't mutate this table). The edge keeps retrying — pending rows drain on the next tick. |
-| `unsupported eventTypeHint '<x>'` | Edge captured a hint v0 doesn't know. | Either redeploy the edge with v0-shaped captures (audit-event-only), or bump the server to a version that handles the hint. v0 supports only `audit.event.replay`. |
+| `unsupported eventTypeHint '<x>'` | Edge captured a hint the current central host does not handle. Older v0 hosts knew only `audit.event.replay`; newer hosts contain additional replay paths. | Either redeploy the edge with a supported capture shape, or bump the central server to a version that handles the hint. Verify the exact event-type support against `EdgeReplayEndpoint` for the deployed Inspection Web build. |
 | `payload missing required fields: ...` | Edge captured a malformed payload. | Investigate the capturing adapter; a payload without `eventType`/`entityType`/`entityId` is a bug at the call site. |
 | `edge timestamp ... is more than 60s in the future ...` | Edge clock is wrong. | Fix NTP on the edge. The captured rows aren't lost — fix the clock and they replay successfully on the next tick (the edge timestamp survives unchanged through the buffer). |
 

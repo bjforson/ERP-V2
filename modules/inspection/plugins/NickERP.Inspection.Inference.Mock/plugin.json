@@ -1,4 +1,5 @@
 {
+  "module": "inspection",
   "typeCode": "mock",
   "displayName": "Mock Inference (synthetic)",
   "version": "0.1.0",

@@ -40,6 +40,7 @@ public static class QueueingServiceCollectionExtensions
         var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         configureJson?.Invoke(json);
         services.TryAddSingleton(json);
+        services.TryAddSingleton<ITenantContextActivator, TenantContextActivator>();
 
         // PgNotifyListener is both a singleton service AND a hosted
         // service. The cast lets us register it once and have it
@@ -143,9 +144,10 @@ public static class QueueingServiceCollectionExtensions
 /// <summary>
 /// Marker interface used by <see cref="QueueingServiceCollectionExtensions.AddPostgresQueue{TPayload}"/>
 /// to publish a queue's qualified table name to the janitor's sweep
-/// list at startup. Internal — modules don't implement this directly.
+/// list at startup. Infrastructure-only — modules should not implement
+/// this directly.
 /// </summary>
-internal interface IPostQueueRegistration
+public interface IPostQueueRegistration
 {
     string QualifiedTableName { get; }
 }

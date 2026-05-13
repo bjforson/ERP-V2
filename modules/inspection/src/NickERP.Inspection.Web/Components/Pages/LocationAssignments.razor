@@ -93,7 +93,12 @@
     private string _message = string.Empty;
     private Guid _currentUserId;
 
-    [SupplyParameterFromForm] private AssignForm _form { get; set; } = new();
+    [SupplyParameterFromForm] private AssignForm _form { get; set; }
+
+    public LocationAssignments()
+    {
+        _form = new AssignForm();
+    }
 
     protected override async Task OnInitializedAsync()
     {

@@ -125,7 +125,12 @@
     private string _message = string.Empty;
 
     [SupplyParameterFromForm]
-    private TenantForm _form { get; set; } = new();
+    private TenantForm _form { get; set; }
+
+    public Tenants()
+    {
+        _form = new TenantForm();
+    }
 
     protected override async Task OnInitializedAsync() => await Reload();
 

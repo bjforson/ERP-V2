@@ -70,7 +70,12 @@
     private List<Station> _stations = new();
     private string _message = string.Empty;
 
-    [SupplyParameterFromForm] private NewCaseForm _form { get; set; } = new();
+    [SupplyParameterFromForm] private NewCaseForm _form { get; set; }
+
+    public NewCase()
+    {
+        _form = new NewCaseForm();
+    }
 
     protected override async Task OnInitializedAsync()
     {

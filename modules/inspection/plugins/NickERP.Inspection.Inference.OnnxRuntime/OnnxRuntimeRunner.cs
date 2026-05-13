@@ -15,7 +15,7 @@ namespace NickERP.Inspection.Inference.OnnxRuntime;
 /// SHA-256 before opening the session and warms with a metadata-derived
 /// dummy input when <see cref="ModelLoadOptions.WarmupOnLoad"/> is set.
 /// </summary>
-[Plugin("onnx-runtime")]
+[Plugin("onnx-runtime", Module = "inspection")]
 public sealed class OnnxRuntimeRunner : IInferenceRunner
 {
     private readonly ILoggerFactory _loggerFactory;

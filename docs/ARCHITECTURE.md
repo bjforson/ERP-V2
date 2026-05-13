@@ -1,6 +1,6 @@
 # NickERP.Inspection — Architecture (v2)
 
-> **Status:** design of record. Edit freely; this doc and the code evolve together.
+> **Status:** living design record. This file preserves original design rationale and is updated alongside the code; for the latest source-backed current-state review, read [`architectural-design-analysis-2026-05-13.md`](architectural-design-analysis-2026-05-13.md).
 > **Repo:** `C:\Shared\ERP V2\` — separate git repo from v1.
 > **Parent roadmap:** `C:\Shared\NSCIM_PRODUCTION\ROADMAP.md` → Phase 7 (lives in the v1 repo).
 > **Migration companion:** [`MIGRATION-FROM-V1.md`](MIGRATION-FROM-V1.md)
@@ -16,7 +16,7 @@ Rebuild the NSCIM scan / analysis / authority-submission pipeline as a **vendor-
 - Treats *location* as a first-class citizen — every user, scanner, external system, case, and finding lives under a Location.
 - Treats hardware vendors and external authorities as **plugins**, not core concepts — "FS6000" and "ICUMS" do not appear in the domain model.
 - Lives inside the NickERP platform — consumes shared Identity, Tenancy, Comms, and Audit. Does **not** re-implement them.
-- Ships online-first with a clean contract for an offline edge node to be added later without core changes.
+- Ships online-first with an active edge-node pathfinder for intermittent sites and replay-based backfill.
 - Grows cleanly alongside future NickERP modules (Finance, Fleet, Customs per-country).
 
 ---
@@ -25,7 +25,7 @@ Rebuild the NSCIM scan / analysis / authority-submission pipeline as a **vendor-
 
 | # | Decision | Implication |
 |---|---|---|
-| D1 | **Online-first, edge-for-backup.** Central API is the primary path. An optional edge node per location buffers scans when WAN is down and backfills on reconnect. | All state changes are **events with idempotency keys** from day 1. Sync protocol is designed in the domain events model even though the edge binary is built later. |
+| D1 | **Online-first, edge-for-backup.** Central API is the primary path. An edge node can buffer local events when WAN is down and backfill on reconnect. | All state changes are **events with idempotency keys** from day 1. The edge binary exists under `apps/edge-node/`; hardening and richer event coverage continue as versioned work. |
 | D2 | **Blazor Server** for the primary web app. | Fast iteration, familiar to the team. Clean REST + SignalR API underneath means a future WebAssembly or native edge client can be added without domain rework. |
 | D3 | **Central Postgres** cluster (same as v1 + NickHR + Comms). | One ops footprint. Row-level security (RLS) does the isolation, not separate DBs. Edge nodes later carry their own embedded store (SQLite / Postgres-lite), sync via the event log. |
 | D4 | **Multi-tenant from day 1.** | `tenant_id` on every row. Tenancy and Location are **orthogonal** — both filters apply. Single-customer for now doesn't mean single-tenant-schema. |
@@ -691,12 +691,21 @@ steps before applying `Init_NickFinance` + `Add_RLS_And_Grants`.
 
 ---
 
-## 14. Edge nodes (P2 — Sprint 11)
+## 14. Edge nodes (active pathfinder)
 
 The edge story is for deployments where the central server isn't
 reliably reachable: port-of-entry inspection lanes, remote
 NickFinance branches with intermittent connectivity, scanner-attached
-field nodes. P2 ships the offline mechanism end-to-end.
+field nodes. The active edge-node host lives at
+`apps/edge-node/NickERP.EdgeNode/`; operational setup is documented in
+[`../apps/edge-node/README.md`](../apps/edge-node/README.md).
+
+Current-state note (2026-05-13): the original Sprint 11 shared-token
+path still exists in the edge-node client (`EdgeNode:Token` sent as
+`X-Edge-Token`). Inspection Web also supports the newer per-edge
+`X-Edge-Api-Key` flow and requires it for signed scan-package replay.
+Treat legacy token language in older sprint notes as historical
+rollout context, not the preferred production posture.
 
 ### 14.1 Posture: server-authoritative + append-only
 
@@ -751,28 +760,25 @@ the same edge row collapse to a single audit row. A re-replayed
 batch returns `ok=true` for every entry but writes a fresh
 `edge_node_replay_log` summary, so ops sees the retry happened.
 
-### 14.6 v0 scope: audit events only
+### 14.6 Replay event scope
 
-The replay endpoint accepts only one `eventTypeHint` value:
-`audit.event.replay`. The payload is a `DomainEvent`-shape (event
-type, entity, optional actor + correlation), and the server writes
-it to `audit.events` verbatim plus the replay metadata.
+The original v0 replay endpoint accepted only `audit.event.replay`.
+The current Inspection Web endpoint contains richer replay handling
+for additional edge payload shapes, including scan-package paths that
+require per-edge API-key authentication for manifest signing. When
+adding or deploying an edge capture flow, verify the exact
+`eventTypeHint` against the central host before relying on it in
+operations.
 
-The fan-out to other event types (scan-captured, voucher-disbursed)
-is a follow-up sprint when actual edge use-cases land. The mechanism
-is what matters; v0 ships the mechanism end-to-end without
-refactoring every existing append code path.
+### 14.7 Auth + secret rotation
 
-### 14.7 Auth + secret rotation (TODO)
-
-v0 uses a shared `X-Edge-Token` secret matched against the server's
-`EdgeNode:SharedSecret` config. Rotating the secret invalidates every
-edge until they're re-deployed with the new value. This is a
-deliberate v0 simplification, called out in
-[`runbooks/06-edge-node-stalled.md`](runbooks/06-edge-node-stalled.md)
-as a TODO: per-edge mTLS or per-edge JWTs are the proper edge-auth
-path, layered on top of a network ACL that limits ingress to known
-edge addresses.
+The preferred central-host path is per-edge API keys stored in
+`audit.edge_node_api_keys` and presented as `X-Edge-Api-Key` or a
+bearer API key. The legacy `X-Edge-Token` / `EdgeNode:SharedSecret`
+path remains as a rollout bridge and should be disabled once deployed
+edges have per-node credentials. Network ACLs still matter: edge
+replay is an operational ingress point and should be limited to known
+edge addresses where possible.
 
 ### 14.8 SetSystemContext caller
 
@@ -948,6 +954,7 @@ The inspection module is the first consumer:
 
 - **This repo (`C:\Shared\ERP V2\`):**
   - [`../README.md`](../README.md) — entry point.
+  - [`architectural-design-analysis-2026-05-13.md`](architectural-design-analysis-2026-05-13.md) — latest source-backed current-state analysis and target design proposal.
   - [`MIGRATION-FROM-V1.md`](MIGRATION-FROM-V1.md) — cutover plan.
   - [`runbooks/README.md`](runbooks/README.md) — named-incident operations runbooks (Sprint 7 / P1).
 - **v1 repo (`C:\Shared\NSCIM_PRODUCTION\`) — sibling, not parent:**

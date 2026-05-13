@@ -548,9 +548,16 @@ else
     private string _lifecycleMessage = string.Empty;
     private string? _loadError;
 
-    [SupplyParameterFromForm] private SettingsForm _form { get; set; } = new();
-    [SupplyParameterFromForm] private LifecycleForm _lifecycleForm { get; set; } = new();
-    [SupplyParameterFromForm(FormName = "request-export")] private ExportForm _exportForm { get; set; } = new();
+    [SupplyParameterFromForm] private SettingsForm _form { get; set; }
+    [SupplyParameterFromForm] private LifecycleForm _lifecycleForm { get; set; }
+    [SupplyParameterFromForm(FormName = "request-export")] private ExportForm _exportForm { get; set; }
+
+    public TenantDetail()
+    {
+        _form = new SettingsForm();
+        _lifecycleForm = new LifecycleForm();
+        _exportForm = new ExportForm();
+    }
 
     private IReadOnlyList<TenantExportRequest>? _exportRows;
     private string _exportMessage = string.Empty;

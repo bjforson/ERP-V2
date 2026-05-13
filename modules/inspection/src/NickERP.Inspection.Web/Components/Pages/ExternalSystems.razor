@@ -118,7 +118,12 @@
     private List<Location> _locations = new();
     private string _message = string.Empty;
 
-    [SupplyParameterFromForm] private ExternalForm _form { get; set; } = new();
+    [SupplyParameterFromForm] private ExternalForm _form { get; set; }
+
+    public ExternalSystems()
+    {
+        _form = new ExternalForm();
+    }
 
     protected override async Task OnInitializedAsync()
     {

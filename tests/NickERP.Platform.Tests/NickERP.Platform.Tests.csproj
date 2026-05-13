@@ -24,6 +24,15 @@
          integration tests. Both projects expose InternalsVisibleTo this assembly. -->
     <ProjectReference Include="..\..\platform\NickERP.Platform.Queueing\NickERP.Platform.Queueing.csproj" />
     <ProjectReference Include="..\..\platform\NickERP.Platform.Queueing.Database\NickERP.Platform.Queueing.Database.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Authorities.CustomsGh\NickERP.Inspection.Authorities.CustomsGh.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.ExternalSystems.IcumsGh\NickERP.Inspection.ExternalSystems.IcumsGh.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.ExternalSystems.Mock\NickERP.Inspection.ExternalSystems.Mock.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Inference.Mock\NickERP.Inspection.Inference.Mock.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Inference.OCR.ContainerNumber\NickERP.Inspection.Inference.OCR.ContainerNumber.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Inference.OnnxRuntime\NickERP.Inspection.Inference.OnnxRuntime.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Scanners.Ase\NickERP.Inspection.Scanners.Ase.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Scanners.FS6000\NickERP.Inspection.Scanners.FS6000.csproj" />
+    <ProjectReference Include="..\..\modules\inspection\plugins\NickERP.Inspection.Scanners.Mock\NickERP.Inspection.Scanners.Mock.csproj" />
   </ItemGroup>
 
   <ItemGroup>

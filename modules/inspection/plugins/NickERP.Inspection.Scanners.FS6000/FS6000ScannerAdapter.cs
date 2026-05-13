@@ -308,7 +308,19 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
             data: lowBytes,
             view: "low-energy"));
 
+        int width = 0;
+        int height = 0;
+        ushort[]? high = null;
         DateTime? capturedHeader = null;
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["scanner.type"] = "fs6000",
+            ["scanner.stem"] = manifest.Stem,
+            ["channel.high.path"] = manifest.HighPath,
+            ["channel.high.sha256"] = ScanPackageManifest.Sha256Hex(highBytes),
+            ["channel.low.path"] = manifest.LowPath,
+            ["channel.low.sha256"] = ScanPackageManifest.Sha256Hex(lowBytes),
+        };
         var hasMaterial = !string.IsNullOrEmpty(manifest.MaterialPath)
                           && File.Exists(manifest.MaterialPath);
         if (hasMaterial)
@@ -322,7 +334,13 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
             try
             {
                 var decoded = FS6000FormatDecoder.Decode(highBytes, lowBytes, materialBytes);
+                width = decoded.Width;
+                height = decoded.Height;
+                high = decoded.High;
                 capturedHeader = decoded.Timestamp;
+                metadata["channel.material.path"] = manifest.MaterialPath!;
+                metadata["channel.material.sha256"] = ScanPackageManifest.Sha256Hex(materialBytes);
+                metadata["channel.set"] = "high+low+material";
             }
             catch (Exception)
             {
@@ -335,8 +353,12 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
         {
             try
             {
-                var (_, _, _, _, ts) = FS6000FormatDecoder.DecodeEnergyOnly(highBytes, lowBytes);
-                capturedHeader = ts;
+                var decoded = FS6000FormatDecoder.DecodeEnergyOnly(highBytes, lowBytes);
+                width = decoded.Width;
+                height = decoded.Height;
+                high = decoded.High;
+                capturedHeader = decoded.Timestamp;
+                metadata["channel.set"] = "high+low";
             }
             catch (Exception) { /* tolerate decoder failure (above) */ }
         }
@@ -361,24 +383,36 @@ public sealed class FS6000ScannerAdapter : IScannerAdapter
             ManifestSha256: Array.Empty<byte>(),
             ManifestSignature: Array.Empty<byte>());
 
-        // Single ParsedArtifact mirroring the per-channel set; carries
-        // the metadata the inspection-side ingestion needs without
-        // duplicating the percentile-render path (that stays in
-        // ParseAsync(RawScanArtifact)).
+        if (capturedHeader is { } ts3)
+            metadata["scanner.captured_at_header"] =
+                new DateTimeOffset(ts3, TimeSpan.Zero).ToString("O");
+        metadata["preview.percentile_low"] =
+            (manifest.PreviewPercentileLow ?? 1.0).ToString("0.##");
+        metadata["preview.percentile_high"] =
+            (manifest.PreviewPercentileHigh ?? 99.0).ToString("0.##");
+
+        var artifactBytes = high is null || width <= 0 || height <= 0
+            ? highBytes
+            : FS6000PreviewRenderer.RenderHighEnergyPng(
+                high,
+                width,
+                height,
+                manifest.PreviewPercentileLow ?? 1.0,
+                manifest.PreviewPercentileHigh ?? 99.0);
+
+        // Single ParsedArtifact for the inspection-side ingest pipeline.
+        // Keep the canonical package raw-channeled, but persist a normal
+        // image here so PreRenderWorker can build thumbnails/previews with
+        // the shared ImageSharp renderer.
         var artifact = new ParsedArtifact(
             DeviceId: Guid.Empty,
             CapturedAt: occurredAt,
-            WidthPx: 0,
-            HeightPx: 0,
-            Channels: imageFiles.Count,
-            MimeType: "vendor/fs6000",
-            Bytes: highBytes,
-            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["scanner.type"] = "fs6000",
-                ["scanner.stem"] = manifest.Stem,
-                ["channel.set"] = hasMaterial ? "high+low+material" : "high+low"
-            },
+            WidthPx: width,
+            HeightPx: height,
+            Channels: 1,
+            MimeType: high is null ? "vendor/fs6000" : "image/png",
+            Bytes: artifactBytes,
+            Metadata: metadata,
             FormatVersion: "fs6000-v1");
 
         return new ParsedScan(new[] { artifact }, package);

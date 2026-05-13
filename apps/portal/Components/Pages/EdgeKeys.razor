@@ -138,7 +138,12 @@ else
     private bool _busy;
 
     [SupplyParameterFromForm]
-    private IssueForm _form { get; set; } = new();
+    private IssueForm _form { get; set; }
+
+    public EdgeKeys()
+    {
+        _form = new IssueForm();
+    }
 
     protected override async Task OnInitializedAsync()
     {

@@ -202,9 +202,16 @@ else
     private string _message = string.Empty;
     private string? _loadError;
 
-    [SupplyParameterFromForm(FormName = "props")] private PropsForm _propsForm { get; set; } = new();
-    [SupplyParameterFromForm(FormName = "add-location")] private LocationForm _locForm { get; set; } = new();
-    [SupplyParameterFromForm(FormName = "add-user")] private UserForm _userForm { get; set; } = new();
+    [SupplyParameterFromForm(FormName = "props")] private PropsForm _propsForm { get; set; }
+    [SupplyParameterFromForm(FormName = "add-location")] private LocationForm _locForm { get; set; }
+    [SupplyParameterFromForm(FormName = "add-user")] private UserForm _userForm { get; set; }
+
+    public AnalysisServiceDetail()
+    {
+        _propsForm = new PropsForm();
+        _locForm = new LocationForm();
+        _userForm = new UserForm();
+    }
 
     protected override async Task OnParametersSetAsync()
     {

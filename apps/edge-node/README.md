@@ -1,14 +1,16 @@
 # NickERP Edge Node
 
-Sprint 11 / P2 — the edge-node host. Runs on a small box at a
-physical location where the central NickERP server is intermittently
-reachable: port-of-entry inspection lanes, remote NickFinance
-branches with flaky links, scanner-attached field nodes.
+The edge-node host is an active .NET 10 service for physical sites
+where the central NickERP server is intermittently reachable:
+port-of-entry inspection lanes, remote NickFinance branches with
+flaky links, scanner-attached field nodes.
 
 The edge captures events into a local SQLite buffer (`edge_outbox`)
 and a background worker drains them to the central server when it
 becomes reachable. Edges cannot mutate or delete server-side state —
 only append. See [`docs/ARCHITECTURE.md` §14](../../docs/ARCHITECTURE.md)
+and the current architecture review
+[`docs/architectural-design-analysis-2026-05-13.md`](../../docs/architectural-design-analysis-2026-05-13.md)
 for the architectural posture.
 
 ## Prerequisites
@@ -17,9 +19,11 @@ for the architectural posture.
 - Network reachability to the central server's `/healthz/ready` and
   `/api/edge/replay`. The edge does NOT need a public IP — it makes
   outbound HTTPS calls.
-- A pre-shared `EdgeNode:Token` matching the server's
-  `EdgeNode:SharedSecret`. v0 — single shared secret across edges.
-  See [§Hardening](#hardening) below for the proper-edge-auth TODO.
+- An edge replay credential. The current edge-node client reads
+  `EdgeNode:Token` and presents it as `X-Edge-Token`. The central
+  Inspection Web host also has the newer per-edge `X-Edge-Api-Key`
+  authentication path; migrate real deployments to per-edge keys as
+  the edge client/deployment profile is updated.
 - Authorization rows seeded on the server: an admin must INSERT one
   row into `audit.edge_node_authorizations` per `(EdgeNodeId,
   TenantId)` pair this edge is allowed to ship events for. v0 has
@@ -138,23 +142,25 @@ Body:
 
 ## Hardening
 
-### v0 limitations (deliberate, addressed in follow-ups)
+### Current limitations and migration notes
 
-1. **Shared-secret auth.** All edges present the same
-   `X-Edge-Token`. Rotating invalidates every edge until they're
-   re-deployed with the new value. Per-edge mTLS or per-edge JWTs
-   is the proper fix; landed in a future sprint.
+1. **Client credential shape.** The edge-node client still presents
+   `EdgeNode:Token` as `X-Edge-Token`. Inspection Web supports the
+   preferred per-edge API key path (`X-Edge-Api-Key`, or bearer API
+   key) and retains the legacy token path only as a rollout bridge.
+   Use per-edge keys for deployments that need revocation, expiry,
+   and node-scoped audit.
 2. **Network ACL is the load-bearing perimeter.** The shared-secret
    check is necessary but not sufficient — keep the `/api/edge/replay`
    endpoint behind a firewall rule that limits ingress to known
    edge addresses.
 3. **No admin UI for `audit.edge_node_authorizations`.** Operators
    seed via psql under `postgres`. v0 keeps the surface small.
-4. **One event type.** v0 supports only `audit.event.replay`. The
-   capturing adapter must shape its payload to a `DomainEvent`
-   (`eventType`, `entityType`, `entityId`, optional
-   `actorUserId`, `correlationId`). Other event types (scan-
-   captured, voucher-disbursed) are a follow-up sprint.
+4. **Event-type support is central-host dependent.** The original v0
+   supported only `audit.event.replay`; Inspection Web now contains
+   richer replay handling for additional edge event shapes. When
+   operating an edge, match its captured `eventTypeHint` values to
+   the central host version before treating a replay path as live.
 5. **No retention pruning.** Replayed rows stay in the SQLite file
    forever; for long-running edges, plan a cron job that runs
    `DELETE FROM edge_outbox WHERE ReplayedAt < now() - retention`
