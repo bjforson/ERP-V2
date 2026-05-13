@@ -39,7 +39,11 @@ public sealed class AuditReviewConsumerTests : IDisposable
         await NewConsumer().ProcessAsync(
             new StubQueueClaim(
                 workItemId,
-                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow),
+                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow)
+                {
+                    ReviewId = review.Id,
+                    Outcome = "concur"
+                },
                 correlationId: "corr-ar"),
             CancellationToken.None);
 
@@ -78,7 +82,10 @@ public sealed class AuditReviewConsumerTests : IDisposable
         await NewConsumer().ProcessAsync(
             new StubQueueClaim(
                 workItemId,
-                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow),
+                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow)
+                {
+                    ReviewId = review.Id
+                },
                 correlationId: null),
             CancellationToken.None);
 
@@ -101,13 +108,17 @@ public sealed class AuditReviewConsumerTests : IDisposable
     public async Task ProcessAsync_HoldRoutesCaseToExceptionQueueWithoutSubmission()
     {
         var c = await SeedCaseAsync();
-        await SeedAuditReviewAsync(c.Id, outcome: "hold", completed: true);
+        var review = await SeedAuditReviewAsync(c.Id, outcome: "hold", completed: true);
         var workItemId = Guid.NewGuid();
 
         await NewConsumer().ProcessAsync(
             new StubQueueClaim(
                 workItemId,
-                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow),
+                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow)
+                {
+                    ReviewId = review.Id,
+                    Outcome = "hold"
+                },
                 correlationId: null),
             CancellationToken.None);
 
@@ -123,12 +134,15 @@ public sealed class AuditReviewConsumerTests : IDisposable
     {
         var c = await SeedCaseAsync();
         var workItemId = Guid.NewGuid();
-        await SeedAuditReviewAsync(c.Id, outcome: null, completed: false, userId: Guid.NewGuid());
+        var review = await SeedAuditReviewAsync(c.Id, outcome: null, completed: false, userId: Guid.NewGuid());
 
         var act = async () => await NewConsumer().ProcessAsync(
             new StubQueueClaim(
                 workItemId,
-                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow),
+                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow)
+                {
+                    ReviewId = review.Id
+                },
                 correlationId: null),
             CancellationToken.None);
 

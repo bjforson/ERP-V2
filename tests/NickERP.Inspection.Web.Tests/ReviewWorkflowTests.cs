@@ -288,6 +288,8 @@ public sealed class ReviewWorkflowTests : IDisposable
         auditReviewQueue.Request!.WorkItemId.Should().Be(reviewId);
         auditReviewQueue.Request.Payload.CaseId.Should().Be(caseId);
         auditReviewQueue.Request.Payload.WorkItemId.Should().Be(reviewId);
+        auditReviewQueue.Request.Payload.ReviewId.Should().Be(reviewId);
+        auditReviewQueue.Request.Payload.Outcome.Should().Be("concur");
         auditReviewQueue.Request.IdempotencyKey.Should().NotBeNullOrWhiteSpace();
     }
 

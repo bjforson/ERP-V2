@@ -85,6 +85,7 @@ public sealed class AuditAssignmentConsumerTests : IDisposable
         _auditReviewQueue.Request.Should().NotBeNull();
         _auditReviewQueue.Request!.WorkItemId.Should().Be(workItemId);
         _auditReviewQueue.Request.Payload.CaseId.Should().Be(c.Id);
+        _auditReviewQueue.Request.Payload.ReviewId.Should().NotBeNull();
 
         var evt = _events.Events.Single(e => e.EventType == "inspection.audit_assignment.assigned");
         evt.Payload.GetProperty("systemFallback").GetBoolean().Should().BeTrue();

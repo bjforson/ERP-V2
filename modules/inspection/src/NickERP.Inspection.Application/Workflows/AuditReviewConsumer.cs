@@ -53,7 +53,7 @@ public sealed class AuditReviewConsumer : IQueueConsumer<AuditReviewPayload>
         AuditReviewRouteResult result;
         await using (var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false))
         {
-            result = await RouteAsync(caseId, claim.WorkItemId, claim.CorrelationId, ct)
+            result = await RouteAsync(claim.Payload, claim.WorkItemId, claim.CorrelationId, ct)
                 .ConfigureAwait(false);
             await tx.CommitAsync(ct).ConfigureAwait(false);
         }
@@ -72,11 +72,12 @@ public sealed class AuditReviewConsumer : IQueueConsumer<AuditReviewPayload>
     }
 
     private async Task<AuditReviewRouteResult> RouteAsync(
-        Guid caseId,
+        AuditReviewPayload payload,
         Guid workItemId,
         string? correlationId,
         CancellationToken ct)
     {
+        var caseId = payload.CaseId;
         var now = DateTimeOffset.UtcNow;
         var @case = await _db.Cases.FirstOrDefaultAsync(c => c.Id == caseId, ct)
             .ConfigureAwait(false)
@@ -91,15 +92,27 @@ public sealed class AuditReviewConsumer : IQueueConsumer<AuditReviewPayload>
             .ToListAsync(ct)
             .ConfigureAwait(false);
 
-        var selected = auditRows.FirstOrDefault(r => r.Review.CompletedAt is not null)
-            ?? auditRows.FirstOrDefault(r =>
-                r.Review.CompletedAt is null
-                && (r.Review.StartedByUserId == Guid.Empty
-                    || r.Session.AnalystUserId == Guid.Empty));
+        var selected = payload.ReviewId is { } reviewId
+            ? auditRows.FirstOrDefault(r => r.Review.Id == reviewId)
+                ?? throw new InvalidOperationException(
+                    $"Audit review {reviewId} was not found for case {caseId}.")
+            : auditRows.FirstOrDefault(r => r.Review.CompletedAt is not null)
+                ?? auditRows.FirstOrDefault(r =>
+                    r.Review.CompletedAt is null
+                    && (r.Review.StartedByUserId == Guid.Empty
+                        || r.Session.AnalystUserId == Guid.Empty));
         if (selected is null)
         {
             throw new InvalidOperationException(
                 $"Case {caseId} has no completed audit review and no system-fallback audit review to route.");
+        }
+
+        if (selected.Review.CompletedAt is null
+            && selected.Review.StartedByUserId != Guid.Empty
+            && selected.Session.AnalystUserId != Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                $"Audit review {selected.Review.Id} for case {caseId} is not completed yet.");
         }
 
         if (selected.Review.CompletedAt is null)

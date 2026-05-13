@@ -222,7 +222,11 @@ public sealed class ReviewWorkflow : IReviewWorkflow
                         new EnqueueRequest<AuditReviewPayload>
                         {
                             WorkItemId = workItemId,
-                            Payload = new AuditReviewPayload(workItemId, caseId, now),
+                            Payload = new AuditReviewPayload(workItemId, caseId, now)
+                            {
+                                ReviewId = reviewId,
+                                Outcome = completedOutcome
+                            },
                             IdempotencyKey = IdempotencyKey.From(
                                 "inspection",
                                 "audit-review",

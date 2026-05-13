@@ -41,4 +41,14 @@ namespace NickERP.Inspection.Application.Workflows;
 /// not.
 /// </para>
 /// </remarks>
-public sealed record AuditReviewPayload(Guid WorkItemId, Guid CaseId, DateTimeOffset EnqueuedAt);
+public sealed record AuditReviewPayload(Guid WorkItemId, Guid CaseId, DateTimeOffset EnqueuedAt)
+{
+    /// <summary>
+    /// Exact audit-review row to route. Nullable for compatibility with
+    /// older queue rows that only carried case/work-item identifiers.
+    /// </summary>
+    public Guid? ReviewId { get; init; }
+
+    /// <summary>Outcome observed at enqueue time, useful for logs and replay checks.</summary>
+    public string? Outcome { get; init; }
+}

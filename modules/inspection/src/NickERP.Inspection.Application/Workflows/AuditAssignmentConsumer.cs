@@ -63,7 +63,11 @@ public sealed class AuditAssignmentConsumer : IQueueConsumer<AuditAssignmentPayl
                         new EnqueueRequest<AuditReviewPayload>
                         {
                             WorkItemId = claim.WorkItemId,
-                            Payload = new AuditReviewPayload(claim.WorkItemId, caseId, now),
+                            Payload = new AuditReviewPayload(claim.WorkItemId, caseId, now)
+                            {
+                                ReviewId = result.ReviewId,
+                                Outcome = "system-fallback"
+                            },
                             IdempotencyKey = IdempotencyKey.From(
                                 "inspection",
                                 "audit-review",
