@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using NickERP.Inspection.Application.Workflows;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Platform.Audit;
@@ -72,7 +73,7 @@ namespace NickERP.Inspection.Application.StateMachines;
 public sealed class InspectionStateMachine
     : WorkItemStateMachine<InspectionWorkflowState, InspectionTrigger, InspectionWorkItem>
 {
-    private readonly IQueue<SplitDetectionPayload> _splitDetectionQueue;
+    private readonly ITransactionalQueue<SplitDetectionPayload> _splitDetectionQueue;
 
     /// <summary>
     /// Construct the state machine. <paramref name="splitDetectionQueue"/>
@@ -83,10 +84,10 @@ public sealed class InspectionStateMachine
     /// <param name="splitDetectionQueue">
     /// Producer surface for <c>inspection.queue_split_detection</c>.
     /// Resolved from DI as the platform's
-    /// <see cref="IQueue{TPayload}"/> binding for
+    /// <see cref="ITransactionalQueue{TPayload}"/> binding for
     /// <see cref="SplitDetectionPayload"/>.
     /// </param>
-    public InspectionStateMachine(IQueue<SplitDetectionPayload> splitDetectionQueue)
+    public InspectionStateMachine(ITransactionalQueue<SplitDetectionPayload> splitDetectionQueue)
     {
         _splitDetectionQueue = splitDetectionQueue
             ?? throw new ArgumentNullException(nameof(splitDetectionQueue));
@@ -134,6 +135,7 @@ public sealed class InspectionStateMachine
 
     /// <inheritdoc />
     protected override async Task OnTransitionedAsync(
+        DbContext db,
         InspectionWorkItem workItem,
         InspectionWorkflowState fromState,
         InspectionWorkflowState toState,
@@ -165,6 +167,7 @@ public sealed class InspectionStateMachine
             toState.ToString());
 
         await _splitDetectionQueue.EnqueueAsync(
+            db,
             new EnqueueRequest<SplitDetectionPayload>
             {
                 WorkItemId = workItem.Id,

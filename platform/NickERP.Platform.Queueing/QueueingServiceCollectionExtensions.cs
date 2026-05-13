@@ -94,6 +94,10 @@ public static class QueueingServiceCollectionExtensions
             sp.GetRequiredService<JsonSerializerOptions>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PostgresQueue<TPayload>>>()));
 
+        services.AddSingleton<ITransactionalQueue<TPayload>>(sp => new TransactionalPostgresQueue<TPayload>(
+            options,
+            sp.GetRequiredService<JsonSerializerOptions>()));
+
         return services;
     }
 

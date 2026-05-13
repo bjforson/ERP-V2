@@ -39,6 +39,7 @@ public sealed class PostgresQueueIntegrationFixture : IAsyncLifetime
     public bool IsAvailable { get; private set; }
     public string? SkipReason { get; private set; }
     public NpgsqlDataSource? DataSource { get; private set; }
+    public NpgsqlDataSource? AppDataSource { get; private set; }
     public string? ConnectionString { get; private set; }
 
     /// <summary>Test queue table identifier — used by every queue-side integration test.</summary>
@@ -61,6 +62,7 @@ public sealed class PostgresQueueIntegrationFixture : IAsyncLifetime
             DataSource = builder.Build();
 
             await ApplyQueueingSchemaAsync();
+            AppDataSource = new NpgsqlDataSourceBuilder(BuildAppRoleConnectionString()).Build();
             IsAvailable = true;
         }
         catch (Exception ex)
@@ -86,6 +88,11 @@ public sealed class PostgresQueueIntegrationFixture : IAsyncLifetime
         {
             await DataSource.DisposeAsync();
             DataSource = null;
+        }
+        if (AppDataSource is not null)
+        {
+            await AppDataSource.DisposeAsync();
+            AppDataSource = null;
         }
         if (_container is not null)
         {
@@ -191,42 +198,80 @@ public sealed class PostgresQueueIntegrationFixture : IAsyncLifetime
         }
 
         // ----- inspection schema + per-module test queue table -----
-        // PostgresQueue uses unquoted snake_case columns (work_item_id,
-        // available_at, etc.) — the per-module table mirrors that
-        // convention. The platform's RLS policy is keyed on tenant_id.
+        // The per-module table mirrors the production queue migrations:
+        // quoted PascalCase columns with the platform RLS policy keyed
+        // on "TenantId".
         var perModuleSql = $@"
             CREATE SCHEMA IF NOT EXISTS {TestQueueSchema};
 
             CREATE TABLE IF NOT EXISTS {TestQueueQualified} (
-                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                tenant_id BIGINT NOT NULL DEFAULT COALESCE(current_setting('app.tenant_id', true), '0')::bigint,
-                work_item_id UUID NOT NULL,
-                enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                claimed_by VARCHAR(128),
-                claimed_until TIMESTAMPTZ,
-                attempt_count INT NOT NULL DEFAULT 0,
-                payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                idempotency_key VARCHAR(128) NOT NULL,
-                last_error TEXT,
-                correlation_id VARCHAR(128),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                ""Id"" BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                ""TenantId"" BIGINT NOT NULL DEFAULT COALESCE(current_setting('app.tenant_id', true), '0')::bigint,
+                ""WorkItemId"" UUID NOT NULL,
+                ""EnqueuedAt"" TIMESTAMPTZ NOT NULL DEFAULT now(),
+                ""AvailableAt"" TIMESTAMPTZ NOT NULL DEFAULT now(),
+                ""ClaimedBy"" VARCHAR(128),
+                ""ClaimedUntil"" TIMESTAMPTZ,
+                ""AttemptCount"" INT NOT NULL DEFAULT 0,
+                ""Payload"" JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                ""IdempotencyKey"" VARCHAR(128) NOT NULL,
+                ""LastError"" TEXT,
+                ""CorrelationId"" VARCHAR(128),
+                ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT now()
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_{TestQueueName}_idempotency_key ON {TestQueueQualified} (idempotency_key);
-            CREATE INDEX IF NOT EXISTS ix_{TestQueueName}_available_unclaimed ON {TestQueueQualified} (available_at) WHERE claimed_by IS NULL;
-            CREATE INDEX IF NOT EXISTS ix_{TestQueueName}_claimed_until ON {TestQueueQualified} (claimed_until) WHERE claimed_by IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_{TestQueueName}_idempotency_key ON {TestQueueQualified} (""IdempotencyKey"");
+            CREATE INDEX IF NOT EXISTS ix_{TestQueueName}_available_unclaimed ON {TestQueueQualified} (""AvailableAt"") WHERE ""ClaimedBy"" IS NULL;
+            CREATE INDEX IF NOT EXISTS ix_{TestQueueName}_claimed_until ON {TestQueueQualified} (""ClaimedUntil"") WHERE ""ClaimedBy"" IS NOT NULL;
 
             ALTER TABLE {TestQueueQualified} ENABLE ROW LEVEL SECURITY;
             ALTER TABLE {TestQueueQualified} FORCE ROW LEVEL SECURITY;
             DROP POLICY IF EXISTS tenant_isolation_{TestQueueName} ON {TestQueueQualified};
             CREATE POLICY tenant_isolation_{TestQueueName} ON {TestQueueQualified}
-                USING (tenant_id = COALESCE(current_setting('app.tenant_id', true), '0')::bigint)
-                WITH CHECK (tenant_id = COALESCE(current_setting('app.tenant_id', true), '0')::bigint);
+                USING (
+                    (""TenantId"" > 0 AND ""TenantId"" = COALESCE(current_setting('app.tenant_id', true), '0')::bigint)
+                    OR (COALESCE(current_setting('app.tenant_id', true), '0') = '-1' AND ""TenantId"" > 0)
+                )
+                WITH CHECK (
+                    (""TenantId"" > 0 AND ""TenantId"" = COALESCE(current_setting('app.tenant_id', true), '0')::bigint)
+                    OR (COALESCE(current_setting('app.tenant_id', true), '0') = '-1' AND ""TenantId"" > 0)
+                );
         ";
         await using (var cmd = new NpgsqlCommand(perModuleSql, conn))
         {
             await cmd.ExecuteNonQueryAsync();
         }
+
+        const string appRoleSql = @"
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nscim_app_queue_test') THEN
+        CREATE ROLE nscim_app_queue_test LOGIN PASSWORD 'nscim_app_queue_test' NOSUPERUSER NOBYPASSRLS;
+    END IF;
+END $$;
+
+GRANT USAGE ON SCHEMA inspection, queueing TO nscim_app_queue_test;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA inspection TO nscim_app_queue_test;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA queueing TO nscim_app_queue_test;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA inspection TO nscim_app_queue_test;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA queueing TO nscim_app_queue_test;
+";
+        await using (var cmd = new NpgsqlCommand(appRoleSql, conn))
+        {
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+
+    private string BuildAppRoleConnectionString()
+    {
+        if (ConnectionString is null) throw new InvalidOperationException("Container not started.");
+
+        var builder = new NpgsqlConnectionStringBuilder(ConnectionString)
+        {
+            Username = "nscim_app_queue_test",
+            Password = "nscim_app_queue_test",
+            Pooling = false
+        };
+        return builder.ConnectionString;
     }
 
     /// <summary>

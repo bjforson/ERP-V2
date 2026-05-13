@@ -9,7 +9,7 @@ namespace NickERP.Platform.Queueing.Services;
 /// <summary>
 /// Postgres-backed implementation of <see cref="IQueue{TPayload}"/>.
 /// Uses raw SQL via <see cref="NpgsqlDataSource"/> rather than EF Core
-/// because the claim path needs exact control over
+/// because the standalone claim path needs exact control over
 /// <c>FOR UPDATE SKIP LOCKED</c>, <c>ON CONFLICT DO NOTHING</c>, and
 /// CTE-based UPDATE-RETURNING — patterns EF abstracts away. The audit
 /// log (<c>WorkItemTransition</c>) and the work item itself stay on EF
@@ -18,19 +18,17 @@ namespace NickERP.Platform.Queueing.Services;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Tenancy.</b> Every connection sourced from
-/// <see cref="NpgsqlDataSource"/> already has <c>app.tenant_id</c> set
-/// by <see cref="NickERP.Platform.Tenancy.TenantConnectionInterceptor"/>
-/// (when used through EF) — but this class uses the data source
-/// directly, so it relies on the queue tables' DB-side
-/// <c>tenant_id DEFAULT</c> + RLS policy combination to scope writes
-/// and reads. Workers running outside an HTTP scope (background
-/// services) must explicitly resolve a tenant first via
-/// <c>ITenantContext.SetSystemContext</c> or impersonate per row.
+/// <b>Tenancy.</b> Connections opened directly from
+/// <see cref="NpgsqlDataSource"/> do not run EF Core connection
+/// interceptors. State-machine producers use
+/// <see cref="ITransactionalQueue{TPayload}"/> so the queue row is
+/// inserted through the EF transaction that already has
+/// <c>app.tenant_id</c> set; cross-tenant consumer operations push the
+/// queue-system sentinel before claiming or mutating rows.
 /// </para>
 /// <para>
 /// <b>Idempotency.</b> <c>EnqueueAsync</c> uses
-/// <c>ON CONFLICT (idempotency_key) DO NOTHING RETURNING id</c>; if the
+/// <c>ON CONFLICT ("IdempotencyKey") DO NOTHING RETURNING "Id"</c>; if the
 /// row was already there, the RETURNING is empty and we re-SELECT to
 /// fetch the existing id. Producers retrying the same logical event
 /// always get the original row back.
@@ -61,23 +59,26 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
     public string Name => _options.Name;
 
     /// <inheritdoc />
+    public string NotifyChannel => _options.NotifyChannel;
+
+    /// <inheritdoc />
     public async Task<long> EnqueueAsync(EnqueueRequest<TPayload> request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
 
         var payloadJson = JsonSerializer.Serialize(request.Payload, _jsonOptions);
 
-        // ON CONFLICT (idempotency_key) DO NOTHING — if a duplicate INSERT
+        // ON CONFLICT ("IdempotencyKey") DO NOTHING — if a duplicate INSERT
         // collides on the unique index, the RETURNING list is empty. We
         // then re-SELECT to fetch the original row's id so the producer
         // sees the same id either way.
         var sql = $@"
             INSERT INTO {_options.QualifiedTableName}
-                (work_item_id, available_at, payload, idempotency_key, correlation_id)
+                (""WorkItemId"", ""AvailableAt"", ""Payload"", ""IdempotencyKey"", ""CorrelationId"")
             VALUES
                 (@work_item_id, COALESCE(@available_at, now()), @payload::jsonb, @idempotency_key, @correlation_id)
-            ON CONFLICT (idempotency_key) DO NOTHING
-            RETURNING id;";
+            ON CONFLICT (""IdempotencyKey"") DO NOTHING
+            RETURNING ""Id"";";
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
         await using (var cmd = new NpgsqlCommand(sql, conn))
@@ -103,7 +104,7 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
 
         // Conflict path — re-select.
         await using (var lookup = new NpgsqlCommand(
-            $"SELECT id FROM {_options.QualifiedTableName} WHERE idempotency_key = @key", conn))
+            $@"SELECT ""Id"" FROM {_options.QualifiedTableName} WHERE ""IdempotencyKey"" = @key", conn))
         {
             lookup.Parameters.Add(new NpgsqlParameter("@key", NpgsqlDbType.Varchar) { Value = request.IdempotencyKey });
             var existing = await lookup.ExecuteScalarAsync(ct).ConfigureAwait(false);
@@ -118,7 +119,7 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
 
         // Should be unreachable — INSERT conflicted but no row exists?
         throw new InvalidOperationException(
-            $"Queue '{_options.Name}' INSERT conflicted on idempotency_key '{request.IdempotencyKey}' but no existing row found.");
+            $"Queue '{_options.Name}' INSERT conflicted on IdempotencyKey '{request.IdempotencyKey}' but no existing row found.");
     }
 
     /// <inheritdoc />
@@ -134,23 +135,24 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
         // every column we need so the consumer doesn't round-trip.
         var sql = $@"
             WITH next AS (
-                SELECT id
+                SELECT ""Id""
                 FROM {_options.QualifiedTableName}
-                WHERE claimed_by IS NULL
-                  AND available_at <= now()
-                ORDER BY available_at
+                WHERE ""ClaimedBy"" IS NULL
+                  AND ""AvailableAt"" <= now()
+                ORDER BY ""AvailableAt""
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
             UPDATE {_options.QualifiedTableName} q
-            SET claimed_by = @worker_id,
-                claimed_until = now() + @lease,
-                attempt_count = q.attempt_count + 1
+            SET ""ClaimedBy"" = @worker_id,
+                ""ClaimedUntil"" = now() + @lease,
+                ""AttemptCount"" = q.""AttemptCount"" + 1
             FROM next
-            WHERE q.id = next.id
-            RETURNING q.id, q.tenant_id, q.work_item_id, q.attempt_count, q.payload, q.claimed_until, q.correlation_id;";
+            WHERE q.""Id"" = next.""Id""
+            RETURNING q.""Id"", q.""TenantId"", q.""WorkItemId"", q.""AttemptCount"", q.""Payload"", q.""ClaimedUntil"", q.""CorrelationId"";";
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@worker_id", NpgsqlDbType.Varchar) { Value = workerId });
         cmd.Parameters.Add(new NpgsqlParameter("@lease", NpgsqlDbType.Interval) { Value = leaseDuration });
@@ -190,8 +192,9 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
         var sql = $@"
             SELECT COUNT(*)
             FROM {_options.QualifiedTableName}
-            WHERE claimed_by IS NULL AND available_at <= now();";
+            WHERE ""ClaimedBy"" IS NULL AND ""AvailableAt"" <= now();";
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return result is long n ? n : 0L;
@@ -199,8 +202,9 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
 
     internal async Task CompleteAsync(long rowId, CancellationToken ct)
     {
-        var sql = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id;";
+        var sql = $@"DELETE FROM {_options.QualifiedTableName} WHERE ""Id"" = @id;";
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@id", NpgsqlDbType.Bigint) { Value = rowId });
         await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -220,13 +224,14 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
         var backoff = retryAfter ?? ComputeBackoff(attemptCount);
         var sql = $@"
             UPDATE {_options.QualifiedTableName}
-            SET claimed_by = NULL,
-                claimed_until = NULL,
-                available_at = now() + @backoff,
-                last_error = @last_error
-            WHERE id = @id;";
+            SET ""ClaimedBy"" = NULL,
+                ""ClaimedUntil"" = NULL,
+                ""AvailableAt"" = now() + @backoff,
+                ""LastError"" = @last_error
+            WHERE ""Id"" = @id;";
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@id", NpgsqlDbType.Bigint) { Value = rowId });
         cmd.Parameters.Add(new NpgsqlParameter("@backoff", NpgsqlDbType.Interval) { Value = backoff });
@@ -238,9 +243,10 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
     {
         var sql = $@"
             UPDATE {_options.QualifiedTableName}
-            SET claimed_until = COALESCE(claimed_until, now()) + @additional
-            WHERE id = @id AND claimed_by IS NOT NULL;";
+            SET ""ClaimedUntil"" = COALESCE(""ClaimedUntil"", now()) + @additional
+            WHERE ""Id"" = @id AND ""ClaimedBy"" IS NOT NULL;";
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@id", NpgsqlDbType.Bigint) { Value = rowId });
         cmd.Parameters.Add(new NpgsqlParameter("@additional", NpgsqlDbType.Interval) { Value = additional });
@@ -254,16 +260,17 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
         // a crash between the two cannot duplicate or lose the row.
         var sql = $@"
             WITH src AS (
-                DELETE FROM {_options.QualifiedTableName} WHERE id = @id
-                RETURNING tenant_id, work_item_id, enqueued_at, attempt_count, payload, idempotency_key, correlation_id
+                DELETE FROM {_options.QualifiedTableName} WHERE ""Id"" = @id
+                RETURNING ""TenantId"", ""WorkItemId"", ""EnqueuedAt"", ""AttemptCount"", ""Payload"", ""IdempotencyKey"", ""CorrelationId""
             )
             INSERT INTO queueing.dead_letter
-                (tenant_id, work_item_id, enqueued_at, available_at, attempt_count, payload, idempotency_key, last_error, correlation_id, source_queue, source_queue_row_id, promoted_at)
+                (""TenantId"", ""WorkItemId"", ""EnqueuedAt"", ""AvailableAt"", ""AttemptCount"", ""Payload"", ""IdempotencyKey"", ""LastError"", ""CorrelationId"", ""SourceQueue"", ""SourceQueueRowId"", ""PromotedAt"")
             SELECT
-                src.tenant_id, src.work_item_id, src.enqueued_at, now(), src.attempt_count, src.payload, src.idempotency_key, @last_error, src.correlation_id, @source_queue, @source_id, now()
+                src.""TenantId"", src.""WorkItemId"", src.""EnqueuedAt"", now(), src.""AttemptCount"", src.""Payload"", src.""IdempotencyKey"", @last_error, src.""CorrelationId"", @source_queue, @source_id, now()
             FROM src;";
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@id", NpgsqlDbType.Bigint) { Value = rowId });
         cmd.Parameters.Add(new NpgsqlParameter("@last_error", NpgsqlDbType.Text) { Value = error.Message });
@@ -291,6 +298,12 @@ public sealed class PostgresQueue<TPayload> : IQueue<TPayload>
         await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload);", conn);
         cmd.Parameters.Add(new NpgsqlParameter("@channel", NpgsqlDbType.Text) { Value = _options.NotifyChannel });
         cmd.Parameters.Add(new NpgsqlParameter("@payload", NpgsqlDbType.Text) { Value = payload });
+        await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    private static async Task PushQueueSystemContextAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand("SELECT set_config('app.tenant_id', '-1', false);", conn);
         await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 }

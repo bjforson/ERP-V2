@@ -90,20 +90,22 @@ Reference: the `--- Sprint 14 / B-queues ---` block in
 ## 5. Producer: enqueue from `WorkItemStateMachine.OnTransitionedAsync`
 
 The canonical producer for inspection-module queues is the state machine.
-Inject `IQueue<TPayload>` into the machine; emit the row from inside
-`OnTransitionedAsync` so the enqueue commits in the same transaction as
-the state change (the platform base wraps both in one DB transaction).
+Inject `ITransactionalQueue<TPayload>` into the machine; emit the row from
+the transaction-aware `OnTransitionedAsync` overload so the enqueue
+commits in the same transaction as the state change (the platform base
+wraps both in one DB transaction).
 Build the idempotency key from the work item's stable anchor + trigger +
 destination state so retries collapse to one row.
 
 ```csharp
 protected override async Task OnTransitionedAsync(
+    DbContext db,
     InspectionWorkItem workItem, InspectionWorkflowState fromState,
     InspectionWorkflowState toState, InspectionTrigger trigger,
     string actor, string reason, string? correlationId, CancellationToken ct)
 {
     if (toState != InspectionWorkflowState.SomeState) return;
-    await _myWorkQueue.EnqueueAsync(new EnqueueRequest<MyWorkPayload>
+    await _myWorkQueue.EnqueueAsync(db, new EnqueueRequest<MyWorkPayload>
     {
         WorkItemId = workItem.Id,
         Payload = new MyWorkPayload(workItem.CaseId, "..."),

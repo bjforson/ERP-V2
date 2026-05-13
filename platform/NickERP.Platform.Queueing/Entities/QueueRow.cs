@@ -15,7 +15,7 @@ namespace NickERP.Platform.Queueing.Entities;
 /// <para>
 /// <b>Claim semantics.</b> Workers claim with
 /// <c>FOR UPDATE SKIP LOCKED</c> on the partial index
-/// <c>(available_at) WHERE claimed_by IS NULL</c>. Multiple workers can
+/// <c>("AvailableAt") WHERE "ClaimedBy" IS NULL</c>. Multiple workers can
 /// pull concurrently with zero contention; the canonical reference for
 /// scale is GitLab's job-queue, which runs the same pattern on Postgres
 /// past 10M rows/day.

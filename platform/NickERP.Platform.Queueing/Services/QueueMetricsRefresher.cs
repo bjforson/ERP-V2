@@ -62,6 +62,10 @@ public sealed class QueueMetricsRefresher : BackgroundService
             try
             {
                 await using var conn = await _dataSource.OpenConnectionAsync(stoppingToken).ConfigureAwait(false);
+                await using (var tenantCmd = new NpgsqlCommand("SELECT set_config('app.tenant_id', '-1', false);", conn))
+                {
+                    await tenantCmd.ExecuteNonQueryAsync(stoppingToken).ConfigureAwait(false);
+                }
                 await using var cmd = new NpgsqlCommand(
                     "REFRESH MATERIALIZED VIEW CONCURRENTLY queueing.queue_metrics;", conn);
                 cmd.CommandTimeout = (int)_options.RefreshTimeout.TotalSeconds;

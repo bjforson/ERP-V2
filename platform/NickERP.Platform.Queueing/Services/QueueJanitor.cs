@@ -7,8 +7,8 @@ namespace NickERP.Platform.Queueing.Services;
 /// <summary>
 /// Periodically releases expired leases across every registered queue
 /// and across <c>queueing.outbox</c> + <c>queueing.dead_letter</c>. A
-/// row whose <c>claimed_until</c> is in the past gets its
-/// <c>claimed_by</c> reset to NULL so a different worker can pick it up
+/// row whose <c>"ClaimedUntil"</c> is in the past gets its
+/// <c>"ClaimedBy"</c> reset to NULL so a different worker can pick it up
 /// on the next claim.
 /// </summary>
 /// <remarks>
@@ -21,7 +21,7 @@ namespace NickERP.Platform.Queueing.Services;
 /// </para>
 /// <para>
 /// <b>Cost.</b> Single UPDATE per pass, scoped to the partial index on
-/// <c>claimed_until</c>. Run every 30s — well under any reasonable
+/// <c>"ClaimedUntil"</c>. Run every 30s — well under any reasonable
 /// lease duration so a dead worker's rows are picked up promptly.
 /// </para>
 /// </remarks>
@@ -106,13 +106,17 @@ public sealed class QueueJanitor : BackgroundService
 
         var totalReleased = 0;
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await using (var tenantCmd = new NpgsqlCommand("SELECT set_config('app.tenant_id', '-1', false);", conn))
+        {
+            await tenantCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
 
         foreach (var qualified in _options.QualifiedTableNames)
         {
             var sql = $@"
                 UPDATE {qualified}
-                SET claimed_by = NULL, claimed_until = NULL
-                WHERE claimed_by IS NOT NULL AND claimed_until < now();";
+                SET ""ClaimedBy"" = NULL, ""ClaimedUntil"" = NULL
+                WHERE ""ClaimedBy"" IS NOT NULL AND ""ClaimedUntil"" < now();";
             await using var cmd = new NpgsqlCommand(sql, conn);
             cmd.CommandTimeout = (int)_options.CommandTimeout.TotalSeconds;
             var n = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

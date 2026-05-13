@@ -91,6 +91,7 @@ public sealed class WorkItemStateMachineTests
         public TestTrigger? HookObservedTrigger { get; private set; }
         public string? HookObservedActor { get; private set; }
         public bool HookSawTransitionRowAlreadyTracked { get; private set; }
+        public bool HookReceivedDbContext { get; private set; }
 
         protected override void Configure(StateMachine<TestState, TestTrigger> machine, TestWorkItem workItem)
         {
@@ -99,6 +100,7 @@ public sealed class WorkItemStateMachineTests
         }
 
         protected override Task OnTransitionedAsync(
+            DbContext db,
             TestWorkItem workItem,
             TestState fromState,
             TestState toState,
@@ -112,10 +114,14 @@ public sealed class WorkItemStateMachineTests
             HookObservedState = toState;
             HookObservedTrigger = trigger;
             HookObservedActor = actor;
+            HookReceivedDbContext = true;
             // Hook fires after the state machine has appended the audit row
             // to the change tracker but before SaveChanges. If the hook can
             // see the row in the tracker, it's part of the same transaction
             // — which is the contract the platform promises subclasses.
+            HookSawTransitionRowAlreadyTracked = db.ChangeTracker
+                .Entries<WorkItemTransition>()
+                .Any(e => e.State == EntityState.Added);
             return Task.CompletedTask;
         }
     }
@@ -408,6 +414,8 @@ public sealed class WorkItemStateMachineTests
         sut.HookObservedState.Should().Be(TestState.A);
         sut.HookObservedTrigger.Should().Be(TestTrigger.GoToA);
         sut.HookObservedActor.Should().Be("system/test");
+        sut.HookReceivedDbContext.Should().BeTrue("the transaction-aware hook receives the producer DbContext");
+        sut.HookSawTransitionRowAlreadyTracked.Should().BeTrue("the audit row is tracked before downstream queue producers run");
 
         // Audit row was committed (proves the hook ran before SaveChanges
         // and the SaveChanges then succeeded).

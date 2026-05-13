@@ -27,6 +27,7 @@ namespace NickERP.Platform.Tests;
 /// two TenantExportRunner instances concurrently against the same DB.
 /// Distinct ids on each side proves the SKIP LOCKED path is in play.
 /// </remarks>
+[Collection(PlatformLiveDbEnvironmentCollection.Name)]
 public sealed class TenantExportRunnerMultiHostConcurrencyTests : IAsyncLifetime
 {
     private string? _adminConn;

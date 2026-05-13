@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using NickERP.Platform.Queueing.Abstractions;
 using NickERP.Platform.Queueing.Services;
@@ -26,7 +27,9 @@ public sealed class PostgresQueueIntegrationTests
 
     private sealed record TestPayload(string Marker, int Number);
 
-    private (PostgresQueue<TestPayload> queue, PostgresQueueOptions options) NewQueue(int maxAttempts = 5)
+    private (PostgresQueue<TestPayload> queue, PostgresQueueOptions options) NewQueue(
+        int maxAttempts = 5,
+        NpgsqlDataSource? dataSource = null)
     {
         var options = new PostgresQueueOptions
         {
@@ -45,7 +48,11 @@ public sealed class PostgresQueueIntegrationTests
             }
         };
         var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        var queue = new PostgresQueue<TestPayload>(_fx.DataSource!, options, json, NullLogger<PostgresQueue<TestPayload>>.Instance);
+        var queue = new PostgresQueue<TestPayload>(
+            dataSource ?? _fx.DataSource!,
+            options,
+            json,
+            NullLogger<PostgresQueue<TestPayload>>.Instance);
         return (queue, options);
     }
 
@@ -106,10 +113,53 @@ public sealed class PostgresQueueIntegrationTests
         id2.Should().Be(id1, "ON CONFLICT DO NOTHING + re-SELECT returns the original row's id");
 
         await using var conn = await _fx.OpenScopedConnectionAsync();
-        await using var cmd = new NpgsqlCommand($"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE idempotency_key = @k", conn);
+        await using var cmd = new NpgsqlCommand($@"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE ""IdempotencyKey"" = @k", conn);
         cmd.Parameters.AddWithValue("k", key);
         var count = (long)(await cmd.ExecuteScalarAsync())!;
         count.Should().Be(1, "the duplicate INSERT was rejected; only one row exists");
+    }
+
+    [Fact]
+    public async Task TransactionalEnqueue_RollsBackWithAmbientDbTransaction()
+    {
+        if (!_fx.IsAvailable) return;
+        await _fx.ResetAsync();
+
+        var (_, options) = NewQueue();
+        var writer = new TransactionalPostgresQueue<TestPayload>(
+            options,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var key = "ipk-tx-" + Guid.NewGuid().ToString("N");
+
+        var dbOptions = new DbContextOptionsBuilder<DbContext>()
+            .UseNpgsql(_fx.ConnectionString!)
+            .Options;
+
+        await using (var db = new DbContext(dbOptions))
+        {
+            await db.Database.OpenConnectionAsync();
+            await db.Database.ExecuteSqlRawAsync("SELECT set_config('app.tenant_id', '1', false);");
+            await using var tx = await db.Database.BeginTransactionAsync();
+
+            var id = await writer.EnqueueAsync(db, new EnqueueRequest<TestPayload>
+            {
+                WorkItemId = Guid.NewGuid(),
+                Payload = new TestPayload("tx", 99),
+                IdempotencyKey = key,
+                CorrelationId = "corr-tx"
+            });
+
+            id.Should().BeGreaterThan(0);
+            await tx.RollbackAsync();
+        }
+
+        await using var conn = await _fx.OpenScopedConnectionAsync(tenantId: 1L);
+        await using var cmd = new NpgsqlCommand(
+            $@"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE ""IdempotencyKey"" = @key",
+            conn);
+        cmd.Parameters.AddWithValue("key", key);
+        var persisted = (long)(await cmd.ExecuteScalarAsync())!;
+        persisted.Should().Be(0, "the queue row participates in the caller's transaction");
     }
 
     [Fact]
@@ -164,8 +214,8 @@ public sealed class PostgresQueueIntegrationTests
         await using (var conn = await _fx.OpenScopedConnectionAsync())
         await using (var cmd = new NpgsqlCommand(
             $@"UPDATE {_fx.TestQueueQualified}
-               SET claimed_by = NULL, claimed_until = NULL
-               WHERE claimed_by IS NOT NULL AND claimed_until < now();", conn))
+               SET ""ClaimedBy"" = NULL, ""ClaimedUntil"" = NULL
+               WHERE ""ClaimedBy"" IS NOT NULL AND ""ClaimedUntil"" < now();", conn))
         {
             var released = await cmd.ExecuteNonQueryAsync();
             released.Should().Be(1, "the expired claim was released");
@@ -256,7 +306,7 @@ public sealed class PostgresQueueIntegrationTests
 
         await using var conn = await _fx.OpenScopedConnectionAsync();
         await using var cmd = new NpgsqlCommand(
-            $"SELECT claimed_by, available_at, last_error, attempt_count FROM {_fx.TestQueueQualified} WHERE id = @id", conn);
+            $@"SELECT ""ClaimedBy"", ""AvailableAt"", ""LastError"", ""AttemptCount"" FROM {_fx.TestQueueQualified} WHERE ""Id"" = @id", conn);
         cmd.Parameters.AddWithValue("id", rowId);
         await using var reader = await cmd.ExecuteReaderAsync();
         (await reader.ReadAsync()).Should().BeTrue("the row is still in the source queue");
@@ -291,7 +341,7 @@ public sealed class PostgresQueueIntegrationTests
             // available_at delta. Easier to clear directly.
             await using (var conn = await _fx.OpenScopedConnectionAsync())
             await using (var reset = new NpgsqlCommand(
-                $"UPDATE {_fx.TestQueueQualified} SET claimed_by=NULL, claimed_until=NULL, available_at=now() WHERE id=@id", conn))
+                $@"UPDATE {_fx.TestQueueQualified} SET ""ClaimedBy"" = NULL, ""ClaimedUntil"" = NULL, ""AvailableAt"" = now() WHERE ""Id"" = @id", conn))
             {
                 reset.Parameters.AddWithValue("id", rowId);
                 await reset.ExecuteNonQueryAsync();
@@ -305,7 +355,7 @@ public sealed class PostgresQueueIntegrationTests
         await using (var conn = await _fx.OpenScopedConnectionAsync())
         {
             await using (var liveCheck = new NpgsqlCommand(
-                $"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE id = @id", conn))
+                $@"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE ""Id"" = @id", conn))
             {
                 liveCheck.Parameters.AddWithValue("id", rowId);
                 var live = (long)(await liveCheck.ExecuteScalarAsync())!;
@@ -342,10 +392,10 @@ public sealed class PostgresQueueIntegrationTests
         await using (var connT1 = await _fx.OpenScopedConnectionAsync(tenantId: 1L))
         await using (var ins = new NpgsqlCommand(
             $@"INSERT INTO {_fx.TestQueueQualified}
-                   (work_item_id, payload, idempotency_key)
+                   (""WorkItemId"", ""Payload"", ""IdempotencyKey"")
                VALUES
                    (@wi, '{{}}'::jsonb, @ik)
-               RETURNING id;", connT1))
+               RETURNING ""Id"";", connT1))
         {
             ins.Parameters.AddWithValue("wi", Guid.NewGuid());
             ins.Parameters.AddWithValue("ik", idempotencyKey);
@@ -358,14 +408,14 @@ public sealed class PostgresQueueIntegrationTests
 
         const string claimSql = @"
             WITH next AS (
-                SELECT id FROM ""inspection"".""queue_test_queue""
-                WHERE claimed_by IS NULL AND available_at <= now()
-                ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1
+                SELECT ""Id"" FROM ""inspection"".""queue_test_queue""
+                WHERE ""ClaimedBy"" IS NULL AND ""AvailableAt"" <= now()
+                ORDER BY ""AvailableAt"" FOR UPDATE SKIP LOCKED LIMIT 1
             )
             UPDATE ""inspection"".""queue_test_queue"" q
-            SET claimed_by = 'worker-T2', claimed_until = now() + interval '1 minute', attempt_count = q.attempt_count + 1
-            FROM next WHERE q.id = next.id
-            RETURNING q.id;";
+            SET ""ClaimedBy"" = 'worker-T2', ""ClaimedUntil"" = now() + interval '1 minute', ""AttemptCount"" = q.""AttemptCount"" + 1
+            FROM next WHERE q.""Id"" = next.""Id""
+            RETURNING q.""Id"";";
         await using (var cmd = new NpgsqlCommand(claimSql, connT2))
         await using (var reader = await cmd.ExecuteReaderAsync())
         {
@@ -376,11 +426,55 @@ public sealed class PostgresQueueIntegrationTests
         // Sanity: the row IS visible to tenant 1.
         await using var connT1Verify = await _fx.OpenScopedConnectionAsync(tenantId: 1L);
         await using (var verify = new NpgsqlCommand(
-            $"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE idempotency_key = @ik", connT1Verify))
+            $@"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE ""IdempotencyKey"" = @ik", connT1Verify))
         {
             verify.Parameters.AddWithValue("ik", idempotencyKey);
             var visible = (long)(await verify.ExecuteScalarAsync())!;
             visible.Should().Be(1, "tenant 1 still sees its own row");
         }
+    }
+
+    [Fact]
+    public async Task ClaimAsync_AppRoleUsesQueueSystemContext_ToClaimPositiveTenantRows()
+    {
+        if (!_fx.IsAvailable) return;
+        await _fx.ResetAsync();
+
+        var idempotencyKey = "ipk-system-claim-" + Guid.NewGuid().ToString("N");
+        var workItemId = Guid.NewGuid();
+        long rowId;
+
+        await using (var connT1 = await _fx.OpenScopedConnectionAsync(tenantId: 1L))
+        await using (var ins = new NpgsqlCommand(
+            $@"INSERT INTO {_fx.TestQueueQualified}
+                   (""WorkItemId"", ""Payload"", ""IdempotencyKey"")
+               VALUES
+                   (@wi, '{{""marker"":""tenant-row"",""number"":7}}'::jsonb, @ik)
+               RETURNING ""Id"";", connT1))
+        {
+            ins.Parameters.AddWithValue("wi", workItemId);
+            ins.Parameters.AddWithValue("ik", idempotencyKey);
+            rowId = (long)(await ins.ExecuteScalarAsync())!;
+        }
+
+        var (queue, _) = NewQueue(dataSource: _fx.AppDataSource);
+
+        await using var claim = await queue.ClaimAsync("worker-app-role", TimeSpan.FromMinutes(1));
+        claim.Should().NotBeNull("the queue claim path pushes the constrained system context before RLS applies");
+        claim!.Id.Should().Be(rowId);
+        claim.TenantId.Should().Be(1L);
+        claim.WorkItemId.Should().Be(workItemId);
+        claim.Payload.Marker.Should().Be("tenant-row");
+        claim.Payload.Number.Should().Be(7);
+
+        await claim.CompleteAsync();
+
+        await using var verifyConn = await _fx.OpenScopedConnectionAsync(tenantId: 1L);
+        await using var verify = new NpgsqlCommand(
+            $@"SELECT count(*) FROM {_fx.TestQueueQualified} WHERE ""Id"" = @id",
+            verifyConn);
+        verify.Parameters.AddWithValue("id", rowId);
+        var remaining = (long)(await verify.ExecuteScalarAsync())!;
+        remaining.Should().Be(0, "CompleteAsync also uses the queue-system context and deletes the claimed row");
     }
 }

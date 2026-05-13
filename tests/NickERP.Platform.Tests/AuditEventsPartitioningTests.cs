@@ -34,6 +34,7 @@ namespace NickERP.Platform.Tests;
 /// CI-friendly skip-by-pass pattern as the rest of the platform tests.
 /// </para>
 /// </remarks>
+[Collection(PlatformLiveDbEnvironmentCollection.Name)]
 public sealed class AuditEventsPartitioningTests : IAsyncLifetime
 {
     private string? _adminConn;

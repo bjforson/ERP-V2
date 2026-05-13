@@ -34,6 +34,7 @@ namespace NickERP.Platform.Tests;
 /// Postgres passes.
 /// </para>
 /// </remarks>
+[Collection(PlatformLiveDbEnvironmentCollection.Name)]
 public sealed class PerfSeederSmokeTests : IAsyncLifetime
 {
     private string? _adminConn;

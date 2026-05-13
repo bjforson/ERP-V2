@@ -137,18 +137,19 @@ public sealed class OutboxRelay : BackgroundService
     {
         const string sql = @"
             WITH next AS (
-                SELECT id FROM queueing.outbox
-                WHERE claimed_by IS NULL AND available_at <= now()
-                ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1
+                SELECT ""Id"" FROM queueing.outbox
+                WHERE ""ClaimedBy"" IS NULL AND ""AvailableAt"" <= now()
+                ORDER BY ""AvailableAt"" FOR UPDATE SKIP LOCKED LIMIT 1
             )
             UPDATE queueing.outbox o
-            SET claimed_by = @worker, claimed_until = now() + @lease, attempt_count = o.attempt_count + 1
+            SET ""ClaimedBy"" = @worker, ""ClaimedUntil"" = now() + @lease, ""AttemptCount"" = o.""AttemptCount"" + 1
             FROM next
-            WHERE o.id = next.id
-            RETURNING o.id, o.tenant_id, o.work_item_id, o.attempt_count, o.payload, o.idempotency_key, o.correlation_id,
-                      o.destination_kind, o.destination_name, o.content_type;";
+            WHERE o.""Id"" = next.""Id""
+            RETURNING o.""Id"", o.""TenantId"", o.""WorkItemId"", o.""AttemptCount"", o.""Payload"", o.""IdempotencyKey"", o.""CorrelationId"",
+                      o.""DestinationKind"", o.""DestinationName"", o.""ContentType"";";
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@worker", NpgsqlDbType.Varchar) { Value = _options.WorkerId });
         cmd.Parameters.Add(new NpgsqlParameter("@lease", NpgsqlDbType.Interval) { Value = _options.LeaseDuration });
@@ -206,7 +207,8 @@ public sealed class OutboxRelay : BackgroundService
     private async Task DeleteAsync(long id, CancellationToken ct)
     {
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
-        await using var cmd = new NpgsqlCommand("DELETE FROM queueing.outbox WHERE id = @id;", conn);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
+        await using var cmd = new NpgsqlCommand(@"DELETE FROM queueing.outbox WHERE ""Id"" = @id;", conn);
         cmd.Parameters.Add(new NpgsqlParameter("@id", NpgsqlDbType.Bigint) { Value = id });
         await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
@@ -215,14 +217,21 @@ public sealed class OutboxRelay : BackgroundService
     {
         const string sql = @"
             UPDATE queueing.outbox
-            SET claimed_by = NULL, claimed_until = NULL,
-                available_at = now() + interval '30 seconds',
-                last_error = @last_error
-            WHERE id = @id;";
+            SET ""ClaimedBy"" = NULL, ""ClaimedUntil"" = NULL,
+                ""AvailableAt"" = now() + interval '30 seconds',
+                ""LastError"" = @last_error
+            WHERE ""Id"" = @id;";
         await using var conn = await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+        await PushQueueSystemContextAsync(conn, ct).ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.Add(new NpgsqlParameter("@id", NpgsqlDbType.Bigint) { Value = id });
         cmd.Parameters.Add(new NpgsqlParameter("@last_error", NpgsqlDbType.Text) { Value = lastError });
+        await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    private static async Task PushQueueSystemContextAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand("SELECT set_config('app.tenant_id', '-1', false);", conn);
         await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 }

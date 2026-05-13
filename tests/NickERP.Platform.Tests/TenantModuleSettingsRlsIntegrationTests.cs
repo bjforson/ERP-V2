@@ -39,6 +39,7 @@ namespace NickERP.Platform.Tests;
 /// Postgres on <c>localhost:5432</c> with throwaway databases.
 /// </para>
 /// </remarks>
+[Collection(PlatformLiveDbEnvironmentCollection.Name)]
 public sealed class TenantModuleSettingsRlsIntegrationTests : IAsyncLifetime
 {
     private string? _adminConn;

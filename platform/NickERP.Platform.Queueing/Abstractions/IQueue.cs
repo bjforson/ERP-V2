@@ -1,5 +1,7 @@
 namespace NickERP.Platform.Queueing.Abstractions;
 
+using Microsoft.EntityFrameworkCore;
+
 /// <summary>
 /// Producer + consumer surface for a single named work queue. One concrete
 /// queue per <typeparamref name="TPayload"/> per logical channel —
@@ -24,16 +26,22 @@ public interface IQueue<TPayload>
     string Name { get; }
 
     /// <summary>
+    /// Postgres LISTEN/NOTIFY channel used for low-latency wakeups.
+    /// Includes schema and queue name to avoid collisions between modules.
+    /// </summary>
+    string NotifyChannel { get; }
+
+    /// <summary>
     /// Insert a row. Returns the row's primary key. Idempotency is
     /// enforced via the unique constraint on
     /// <see cref="Entities.QueueRow.IdempotencyKey"/>: a duplicate INSERT
     /// is treated as a no-op and the existing row's id is returned.
     /// </summary>
     /// <remarks>
-    /// Producers usually call this from inside an existing
-    /// <c>WorkItemStateMachine.TransitionAsync</c> transaction so the
-    /// state change and the queue insert commit atomically. Standalone
-    /// enqueues (rare) wrap their own transaction.
+    /// State-machine producers should prefer
+    /// <see cref="ITransactionalQueue{TPayload}"/> so the state change
+    /// and queue insert commit atomically. This standalone path is for
+    /// tests and explicitly tenant-scoped producers.
     /// </remarks>
     Task<long> EnqueueAsync(EnqueueRequest<TPayload> request, CancellationToken ct = default);
 
@@ -72,6 +80,26 @@ public interface IQueue<TPayload>
     /// observability layer.
     /// </summary>
     Task<long> GetReadyDepthAsync(CancellationToken ct = default);
+}
+
+/// <summary>
+/// Producer-only surface for inserting queue rows through an existing EF
+/// Core transaction. State-machine producers use this path so their state
+/// update, transition audit row, and downstream queue row commit or roll
+/// back as one database unit.
+/// </summary>
+/// <typeparam name="TPayload">Payload type carried in the queue row.</typeparam>
+public interface ITransactionalQueue<TPayload>
+{
+    /// <summary>
+    /// Insert a row using <paramref name="db"/>'s current relational
+    /// transaction. Throws if no transaction is active, because falling
+    /// back to an independent connection would break producer atomicity.
+    /// </summary>
+    Task<long> EnqueueAsync(
+        DbContext db,
+        EnqueueRequest<TPayload> request,
+        CancellationToken ct = default);
 }
 
 /// <summary>

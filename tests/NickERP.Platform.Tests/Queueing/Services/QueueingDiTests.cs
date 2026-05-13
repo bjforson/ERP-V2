@@ -94,5 +94,14 @@ public sealed class QueueingDiTests
         hostedServiceNames.Count(name => name.StartsWith("QueueConsumerHost", StringComparison.Ordinal))
             .Should()
             .Be(2);
+
+        provider.GetRequiredService<ITransactionalQueue<TestPayload>>()
+            .Should()
+            .NotBeNull("state-machine producers need the transactional enqueue surface");
+
+        provider.GetRequiredService<IQueue<TestPayload>>()
+            .NotifyChannel
+            .Should()
+            .Be("queue_inspection_di_probe", "consumer hosts must listen on the same schema-qualified channel used by PostgresQueue");
     }
 }

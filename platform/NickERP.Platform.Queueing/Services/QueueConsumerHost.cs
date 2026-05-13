@@ -69,7 +69,7 @@ public sealed class QueueConsumerHost<TPayload> : BackgroundService
         var workerId = $"{Environment.MachineName}/{Environment.ProcessId}/{_queue.Name}";
 
         await using var subscription = await _notifyListener.SubscribeAsync(
-            ResolveNotifyChannel(_queue.Name),
+            _queue.NotifyChannel,
             (_, _) =>
             {
                 if (_wakeup.CurrentCount == 0)
@@ -150,14 +150,6 @@ public sealed class QueueConsumerHost<TPayload> : BackgroundService
         }
     }
 
-    private static string ResolveNotifyChannel(string queueName)
-    {
-        // Conventional channel naming — must match
-        // PostgresQueueOptions.NotifyChannel. Schema is captured implicitly
-        // via the queue registration; this host is constructed once per
-        // (schema,name) pair so we can't ambiguously route.
-        return $"queue_{queueName}";
-    }
 }
 
 /// <summary>Configuration for <see cref="QueueConsumerHost{TPayload}"/>.</summary>

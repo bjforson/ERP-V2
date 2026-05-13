@@ -42,8 +42,8 @@ namespace NickERP.Platform.Queueing.StateMachine;
 /// shapes the keys for any queue rows the subclass enqueues from inside
 /// a transition (typical pattern:
 /// <c>IdempotencyKey.From(workItem.IdempotencyAnchor, trigger, toState)</c>).
-/// Subclasses override <see cref="OnTransitionedAsync"/> to do the actual
-/// enqueueing.
+/// Subclasses override the transaction-aware <c>OnTransitionedAsync</c>
+/// overload to do the actual enqueueing.
 /// </para>
 /// </remarks>
 /// <typeparam name="TState">State enum the machine operates on.</typeparam>
@@ -82,7 +82,7 @@ public abstract class WorkItemStateMachine<TState, TTrigger, TWorkItem>
     /// {
     ///     if (toState == InspectionWorkflowState.Validated)
     ///     {
-    ///         await _splitDetectionQueue.EnqueueAsync(new EnqueueRequest&lt;...&gt; {
+    ///         await _splitDetectionQueue.EnqueueAsync(db, new EnqueueRequest&lt;...&gt; {
     ///             WorkItemId = workItem.Id,
     ///             Payload = new SplitDetectionPayload(workItem.CaseId),
     ///             IdempotencyKey = IdempotencyKey.From(workItem.IdempotencyAnchor, "split", toState),
@@ -101,6 +101,23 @@ public abstract class WorkItemStateMachine<TState, TTrigger, TWorkItem>
         string reason,
         string? correlationId,
         CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>
+    /// Transaction-aware hook for subclasses to schedule downstream work.
+    /// New producer side effects should override this overload and use
+    /// <paramref name="db"/>'s current transaction.
+    /// </summary>
+    protected virtual Task OnTransitionedAsync(
+        DbContext db,
+        TWorkItem workItem,
+        TState fromState,
+        TState toState,
+        TTrigger trigger,
+        string actor,
+        string reason,
+        string? correlationId,
+        CancellationToken ct) =>
+        OnTransitionedAsync(workItem, fromState, toState, trigger, actor, reason, correlationId, ct);
 
     /// <summary>
     /// Atomically transition the work item via <paramref name="trigger"/>.
@@ -216,7 +233,7 @@ public abstract class WorkItemStateMachine<TState, TTrigger, TWorkItem>
             // Subclass hook — runs before SaveChanges so any queue rows
             // it inserts go in the same transaction.
             await OnTransitionedAsync(
-                workItem, fromState, workItem.CurrentState, trigger,
+                db, workItem, fromState, workItem.CurrentState, trigger,
                 actor, reason, correlationId, ct).ConfigureAwait(false);
 
             await db.SaveChangesAsync(ct).ConfigureAwait(false);

@@ -233,10 +233,10 @@ builder.Services.AddQueueConsumer<SubmissionConsumer, OutboundSubmissionPayload>
 // InspectionWorkItem.CurrentState (the platform base enforces this via
 // the internal setter on WorkItem<TState>); fires the split-detection
 // enqueue from inside the transition transaction on Open → Validated.
-// Scoped because it captures IQueue<SplitDetectionPayload> indirectly via
-// constructor injection — though the queue itself is a singleton, the
-// machine is conceptually a per-request collaborator alongside the
-// caller's InspectionDbContext.
+// Scoped because it captures the transactional queue producer indirectly
+// via constructor injection — though the queue writer itself is a
+// singleton, the machine is conceptually a per-request collaborator
+// alongside the caller's InspectionDbContext.
 builder.Services.AddScoped<InspectionStateMachine>();
 // --- end Sprint 14 / B-queues ---
 
