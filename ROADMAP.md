@@ -206,9 +206,9 @@ Optional GPU box availability (post-pilot blocker): confirm A100 / H100 / 4090 w
 
 ### 4.3 Phase V execution (security + perf)
 
-**Inputs.** `docs/security/audit-checklist-2026.md` (running checklist with ~89 SEC-* items across 11 categories); `docs/perf/test-plan.md` (load-test plan with NBomber-shaped scenarios). Both shipped Sprint 30 / 39 / 52 as living docs.
+**Inputs.** `docs/security/audit-checklist-2026.md` (running checklist with ~89 SEC-* items across 11 categories); `docs/perf/test-plan.md` (load-test plan). Both shipped Sprint 30 / 39 / 52 as living docs. The perf scenarios run on the in-tree NickPerf runner at `tests/NickERP.Perf.Tests/Runner/` post-Sprint-58.
 
-**Open finding requiring operator decision before Phase V:** SEC-DEP-3 NBomber license — the package is under a proprietary commercial subscription, NOT MIT (Sprint 57 triage). Resolution path picks: (a) purchase subscription, (b) replace runner with `dotnet-bombardier` / `k6`, (c) hand-roll NBomber.Contracts-only harness, (d) drop perf harness from CI. Default if no decision: pause NBomber-based perf work. See `tools/security-scan/license-allowlist-rationale.md` §2 + audit-checklist `SEC-DEP-3`.
+**Phase V gate status: no open P0/P1 blockers from this layer.** The previous SEC-DEP-3 NBomber-license P0 (Sprint 57 triage) was resolved in Sprint 58 by removing NBomber + NBomber.Http + NBomber.Contracts and replacing the runtime with a homegrown in-tree runner (`NickPerfScenario` / `NickPerfRunner` / `NickPerfStats` / `NickPerfReport` / `NickPerfHttp`). Behaviour parity preserved (same per-profile RPS, same skip-on-misconfigured semantics, same acceptance-gate thresholds). Audit re-run on 2026-05-06 shows 0 non-allowlisted licenses. See `tools/security-scan/license-allowlist-rationale.md` §2 + audit-checklist `SEC-DEP-3` for the full trail.
 
 **Output.** Site-scoped `audit-{site}-{date}.md` artifact with each item ticked + per-finding `AUD-{n}` entries. Pilot doesn't ship until all P0 + P1 findings are resolved.
 
