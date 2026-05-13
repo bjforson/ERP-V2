@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using NickERP.Inspection.Application.Workflows;
 
 namespace NickERP.Inspection.Application.Reviews;
 
@@ -31,6 +32,7 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.TryAddScoped<IReviewWorkflow, ReviewWorkflow>();
+        services.TryAddScoped<IAuditDispositionService, AuditDispositionService>();
         return services;
     }
 }

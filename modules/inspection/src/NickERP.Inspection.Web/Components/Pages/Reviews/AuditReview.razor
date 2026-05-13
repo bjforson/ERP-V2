@@ -217,6 +217,8 @@ else
             r.Id, r.ReviewType, r.StartedByUserId, r.Outcome, r.ConfidenceScore, r.CreatedAt,
             findingCounts.TryGetValue(r.Id, out var c) ? c : 0)).ToList();
 
+        _reviewId ??= await Queue.FindOpenReviewAsync(CaseId, ReviewType.AuditReview, _userId);
+
         // Pull every finding on this case so the supervisor can see
         // what was flagged across all prior reviews. Filter out the
         // current audit review's own findings (none yet on first load).
@@ -239,19 +241,14 @@ else
         {
             if (_reviewId is null)
             {
-                _reviewId = await Workflow.StartReviewAsync(CaseId, ReviewType.AuditReview, _userId);
+                _reviewId = await Queue.FindOpenReviewAsync(CaseId, ReviewType.AuditReview, _userId)
+                    ?? await Workflow.StartReviewAsync(CaseId, ReviewType.AuditReview, _userId);
                 _message = "Audit review started.";
             }
             else
             {
                 var findings = BuildFindings();
                 var outcome = _decision; // already concur/dissent/escalated
-                await Workflow.CompleteReviewAsync(_reviewId.Value, outcome, findings, _userId);
-
-                // If the supervisor chose to escalate to a specific
-                // user id (optional), record that as a separate
-                // EscalateReviewAsync call. The complete-call above
-                // already audit-trailed the supervisor's outcome.
                 if (_decision == "escalated"
                     && Guid.TryParse(_escalateToUserIdRaw, out var toUser)
                     && toUser != Guid.Empty)
@@ -259,10 +256,14 @@ else
                     await Queue.EscalateReviewAsync(
                         _reviewId.Value, _userId, toUser,
                         string.IsNullOrWhiteSpace(_note) ? "supervisor escalation" : _note);
+                    _message = "Audit review escalated.";
                 }
-
-                _message = "Audit review completed.";
-                _reviewId = null;
+                else
+                {
+                    await Workflow.CompleteReviewAsync(_reviewId.Value, outcome, findings, _userId);
+                    _message = "Audit review completed.";
+                    _reviewId = null;
+                }
             }
         }
         catch (Exception ex)

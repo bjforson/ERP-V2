@@ -285,6 +285,26 @@ public sealed class ReviewQueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FindOpenReviewAsync_returns_existing_assignment_open_review()
+    {
+        var (svc, loc, user) = await SeedTenancyAsync();
+        var caseId = await SeedCaseAsync(loc);
+
+        Guid reviewId;
+        using (var scope = _sp.CreateScope())
+        {
+            var queue = scope.ServiceProvider.GetRequiredService<ReviewQueueService>();
+            reviewId = await queue.ClaimReviewAsync(caseId, svc, ReviewType.AuditReview, user);
+        }
+
+        using var s = _sp.CreateScope();
+        var queue2 = s.ServiceProvider.GetRequiredService<ReviewQueueService>();
+        var open = await queue2.FindOpenReviewAsync(caseId, ReviewType.AuditReview, user);
+
+        open.Should().Be(reviewId);
+    }
+
+    [Fact]
     public async Task EscalateReview_passes_through_to_workflow()
     {
         var (svc, loc, user) = await SeedTenancyAsync();

@@ -347,6 +347,20 @@ public sealed class OutboundDispatchRetryTests : IDisposable
         Assert.Equal(1, dispatched);
     }
 
+    [Fact]
+    public async Task Pickup_filter_skips_queue_owned_rows()
+    {
+        await SeedTenantAndCaseAsync();
+        await SeedSubmissionAsync("idem-queued-owned", status: "queued");
+
+        _esAdapter.NextSubmissionResult = new SubmissionResult(true, "{}", null);
+        var worker = _sp.GetRequiredService<OutboundSubmissionDispatchWorker>();
+        var dispatched = await InvokeAsync<int>(worker, "DispatchOnceAsync");
+
+        Assert.Equal(0, dispatched);
+        Assert.Equal(0, _esAdapter.SubmitCalls);
+    }
+
     // ---------------------------------------------------------------
     // Seeding helpers
     // ---------------------------------------------------------------
@@ -404,7 +418,7 @@ public sealed class OutboundDispatchRetryTests : IDisposable
         }
     }
 
-    private async Task<Guid> SeedSubmissionAsync(string idempotencyKey)
+    private async Task<Guid> SeedSubmissionAsync(string idempotencyKey, string status = "pending")
     {
         using var scope = _sp.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
@@ -432,7 +446,7 @@ public sealed class OutboundDispatchRetryTests : IDisposable
             ExternalSystemInstanceId = _externalSystemInstanceId,
             PayloadJson = "{}",
             IdempotencyKey = idempotencyKey,
-            Status = "pending",
+            Status = status,
             SubmittedAt = _clock.GetUtcNow(),
             TenantId = _tenantId
         });

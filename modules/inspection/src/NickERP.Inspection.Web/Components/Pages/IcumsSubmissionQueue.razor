@@ -1,7 +1,7 @@
 @page "/admin/icums/submission-queue"
 @page "/admin/icums/submission-queue/{SelectedId:guid}"
 @* Sprint 22 / B2.1 — ICUMS submission queue admin UI. v1 parity port:
-   list pending / sent / accepted / rejected / error rows with filters,
+   list queued / pending / accepted / rejected / error rows with filters,
    per-row requeue + payload-view, and a bounded "requeue all matching"
    bulk action.
 
@@ -54,7 +54,7 @@ else
                 <div class="inspection-form-row">
                     <label>
                         <span>Statuses</span>
-                        <span class="inspection-form-help">Multi-select; defaults to error + pending on first load.</span>
+                        <span class="inspection-form-help">Multi-select; defaults to error + queued + pending on first load.</span>
                         <div class="inspection-checkbox-group">
                             @foreach (var status in AllStatuses)
                             {
@@ -100,7 +100,7 @@ else
                     <button type="button" class="inspection-button" @onclick="ResetFiltersAsync">Reset</button>
                     <button type="button" class="inspection-button"
                             @onclick="RequeueBulkAsync"
-                            disabled="@(_loading || _filterForm.SelectedStatuses.Count == 0 || (_filterForm.SelectedStatuses.Count == 1 && _filterForm.SelectedStatuses.Contains("pending")))">
+                            disabled="@(_loading || !HasBulkRequeueableStatus)">
                         Requeue all matching (max @IcumsSubmissionQueueAdminService.MaxBulkRequeueRows)
                     </button>
                     @if (!string.IsNullOrEmpty(_message))
@@ -158,7 +158,7 @@ else
                                 <a class="inspection-button" href="/cases/@r.CaseId">Case</a>
                                 <button type="button" class="inspection-button inspection-button-primary"
                                         @onclick="() => RequeueOneAsync(r.Id)"
-                                        disabled="@(_loading || string.Equals(r.Status, "pending", StringComparison.OrdinalIgnoreCase))">
+                                        disabled="@(_loading || IsActiveDispatchStatus(r.Status))">
                                     Requeue
                                 </button>
                             </td>
@@ -209,8 +209,8 @@ else
 }
 
 @code {
-    /// <summary>The status values the v2 OutboundSubmission entity allows. v1 uses a richer set; v2 collapses to four canonical buckets.</summary>
-    private static readonly string[] AllStatuses = new[] { "pending", "accepted", "rejected", "error" };
+    /// <summary>The status values the v2 OutboundSubmission entity allows. v1 uses a richer set; v2 collapses to five canonical buckets.</summary>
+    private static readonly string[] AllStatuses = new[] { "queued", "pending", "accepted", "rejected", "error" };
     private const int PageSize = 50;
 
     [Parameter] public Guid? SelectedId { get; set; }
@@ -229,6 +229,8 @@ else
         ? 0
         : Math.Max(1, (int)Math.Ceiling(_page.TotalCount / (double)PageSize));
 
+    private bool HasBulkRequeueableStatus => _filterForm.SelectedStatuses.Any(s => !IsActiveDispatchStatus(s));
+
     protected override async Task OnInitializedAsync()
     {
         if (!Tenant.IsResolved) return;
@@ -239,8 +241,8 @@ else
             .ToListAsync();
 
         // Default the first load to "needs operator attention" (error +
-        // pending). Operators can clear / extend from the filters card.
-        _filterForm.SelectedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "error", "pending" };
+        // queued + pending). Operators can clear / extend from the filters card.
+        _filterForm.SelectedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "error", "queued", "pending" };
         _currentPage = PageQuery is int p && p > 0 ? p : 1;
         await ReloadAsync();
     }
@@ -301,7 +303,7 @@ else
     {
         _filterForm = new FilterFormModel
         {
-            SelectedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "error", "pending" },
+            SelectedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "error", "queued", "pending" },
         };
         _currentPage = 1;
         await ReloadAsync();
@@ -357,11 +359,16 @@ else
     private static string StatusBadgeClass(string status) => status?.ToLowerInvariant() switch
     {
         "pending" => "info",
+        "queued" => "info",
         "accepted" => "success",
         "rejected" => "warning",
         "error" => "error",
         _ => "neutral",
     };
+
+    private static bool IsActiveDispatchStatus(string status)
+        => string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(status, "queued", StringComparison.OrdinalIgnoreCase);
 
     private static string Truncate(string s, int max) =>
         string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : s[..max] + "…");

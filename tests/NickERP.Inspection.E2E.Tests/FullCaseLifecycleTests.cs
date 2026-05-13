@@ -210,18 +210,33 @@ public sealed class FullCaseLifecycleTests
                     caseId, VerdictDecision.Clear, "e2e-clear", confidence: 0.9, ct);
                 verdict.Decision.Should().Be(VerdictDecision.Clear);
 
-                // 9d. Submit — adapter writes a JSON to the outbox.
+                // 9d. Submit — enqueues an OutboundSubmissionPayload in the
+                // same tx; SubmissionConsumer claims it, calls the icums-gh
+                // adapter, which writes JSON to the outbox and flips the
+                // submission row to "accepted".
                 var submission = await workflow.SubmitAsync(
                     caseId, externalSystemInstanceId, ct);
-                submission.Status.Should().Be("accepted",
-                    because: "the icums-gh outbox adapter returns Accepted=true on a successful file write");
+                submission.Status.Should().Be("queued",
+                    because: "SubmitAsync now enqueues; SubmissionConsumer dispatches asynchronously");
+
+                var submissionId = submission.Id;
+                var idempotencyKey = submission.IdempotencyKey;
+                await WaitForAsync(async () =>
+                {
+                    using var probeScope = factory.CreateTenantScope();
+                    var ins = probeScope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+                    var row = await ins.OutboundSubmissions.AsNoTracking()
+                        .FirstOrDefaultAsync(s => s.Id == submissionId, ct);
+                    return row?.Status == "accepted" ? (object?)true : null;
+                }, TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(1), ct,
+                because: "SubmissionConsumer must drain the queued outbound submission and the icums-gh adapter must mark it accepted");
 
                 var outboxFiles = Directory.EnumerateFiles(icumsOutbox, "*.json").ToList();
                 outboxFiles.Should().NotBeEmpty(
                     because: "icums-gh.SubmitAsync writes one JSON per IdempotencyKey");
                 outboxFiles.Should().Contain(
                     p => Path.GetFileNameWithoutExtension(p)
-                         .Contains(submission.IdempotencyKey, StringComparison.Ordinal),
+                         .Contains(idempotencyKey, StringComparison.Ordinal),
                     because: "the outbox filename is the submission's IdempotencyKey");
 
                 // 9e. Close the case.

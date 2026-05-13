@@ -150,10 +150,11 @@ public sealed class IcumsSubmissionQueueAdminService
 
     /// <summary>
     /// Reset a single submission back to <c>pending</c> + clear its
-    /// error. Emits an
+    /// error. Queue-owned <c>queued</c> rows are treated as active and
+    /// are not requeued into the legacy pending dispatcher. Emits an
     /// <c>inspection.icums.submission_requeued</c> domain event tagged
     /// with the actor user id and the submission id. Idempotent: if the
-    /// row is already pending, no-op (no event emitted).
+    /// row is already pending or queued, no-op (no event emitted).
     /// </summary>
     public async Task<RequeueResult> RequeueAsync(
         Guid submissionId,
@@ -172,6 +173,10 @@ public sealed class IcumsSubmissionQueueAdminService
         if (string.Equals(row.Status, "pending", StringComparison.OrdinalIgnoreCase))
         {
             return new RequeueResult(true, 0, "Already pending — no-op.");
+        }
+        if (string.Equals(row.Status, "queued", StringComparison.OrdinalIgnoreCase))
+        {
+            return new RequeueResult(true, 0, "Already queued — no-op.");
         }
 
         row.Status = "pending";
@@ -211,7 +216,7 @@ public sealed class IcumsSubmissionQueueAdminService
     /// Bulk-requeue every <see cref="OutboundSubmission"/> matching
     /// <paramref name="filters"/>, up to a hard cap of
     /// <see cref="MaxBulkRequeueRows"/> rows. Rows already in
-    /// <c>pending</c> are skipped. Emits a single
+    /// <c>pending</c> or <c>queued</c> are skipped. Emits a single
     /// <c>inspection.icums.submission_bulk_requeued</c> domain event
     /// summarising the action; per-row events are NOT emitted (would
     /// overwhelm the audit log on a 1000-row flip).
@@ -257,8 +262,9 @@ public sealed class IcumsSubmissionQueueAdminService
                 (s.Case != null && s.Case.SubjectIdentifier.Contains(needle)));
         }
 
-        // Skip rows already in pending; they shouldn't count against the cap.
-        q = q.Where(s => s.Status != "pending");
+        // Skip rows already active in either dispatch path; they shouldn't
+        // count against the cap or be moved between queue ownership models.
+        q = q.Where(s => s.Status != "pending" && s.Status != "queued");
 
         var rows = await q
             .OrderByDescending(s => s.Priority)
@@ -269,7 +275,7 @@ public sealed class IcumsSubmissionQueueAdminService
 
         if (rows.Count == 0)
         {
-            return new RequeueResult(true, 0, "No matching non-pending rows.");
+            return new RequeueResult(true, 0, "No matching requeueable rows.");
         }
 
         var now = _clock.GetUtcNow();

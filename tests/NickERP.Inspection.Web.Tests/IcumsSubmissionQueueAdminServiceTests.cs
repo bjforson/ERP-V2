@@ -208,6 +208,25 @@ public sealed class IcumsSubmissionQueueAdminServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RequeueAsync_AlreadyQueued_NoOp()
+    {
+        var (caseId, esiId) = await SeedFixtureAsync();
+        var id = await SeedSubmissionAsync(caseId, esiId, "queued");
+
+        using var scope = _sp.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<IcumsSubmissionQueueAdminService>();
+        var result = await svc.RequeueAsync(id, Guid.NewGuid());
+
+        Assert.True(result.Success);
+        Assert.Equal(0, result.RowsAffected);
+
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var row = await db.OutboundSubmissions.FirstAsync(s => s.Id == id);
+        Assert.Equal("queued", row.Status);
+        Assert.DoesNotContain(_events.Published, e => e.EventType == "inspection.icums.submission_requeued");
+    }
+
+    [Fact]
     public async Task RequeueBulkAsync_RequiresStatusFilter()
     {
         await SeedFixtureAsync();
@@ -243,6 +262,28 @@ public sealed class IcumsSubmissionQueueAdminServiceTests : IDisposable
         var bulk = Assert.Single(
             _events.Published, e => e.EventType == "inspection.icums.submission_bulk_requeued");
         Assert.Equal(2, bulk.Payload.GetProperty("row_count").GetInt32());
+    }
+
+    [Fact]
+    public async Task RequeueBulkAsync_SkipsQueuedRows()
+    {
+        var (caseId, esiId) = await SeedFixtureAsync();
+        await SeedSubmissionAsync(caseId, esiId, "queued");
+        await SeedSubmissionAsync(caseId, esiId, "error", errorMessage: "e1");
+
+        using var scope = _sp.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<IcumsSubmissionQueueAdminService>();
+        var result = await svc.RequeueBulkAsync(new SubmissionQueueFilter
+        {
+            Statuses = new[] { "queued", "error" }
+        }, Guid.NewGuid());
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.RowsAffected);
+
+        var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        Assert.Equal(1, await db.OutboundSubmissions.CountAsync(s => s.Status == "queued"));
+        Assert.Equal(1, await db.OutboundSubmissions.CountAsync(s => s.Status == "pending"));
     }
 
     [Fact]

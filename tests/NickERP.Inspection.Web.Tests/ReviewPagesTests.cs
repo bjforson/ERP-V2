@@ -187,6 +187,42 @@ public sealed class ReviewPagesTests : IDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
+    public void AuditReview_reuses_existing_open_audit_review()
+    {
+        using (var scope = _ctx.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+            var session = new ReviewSession
+            {
+                Id = Guid.NewGuid(),
+                CaseId = _caseId,
+                AnalystUserId = _userId,
+                StartedAt = _now,
+                Outcome = "in-progress",
+                TenantId = _tenantId,
+            };
+            db.ReviewSessions.Add(session);
+            db.AnalystReviews.Add(new AnalystReview
+            {
+                Id = Guid.NewGuid(),
+                ReviewSessionId = session.Id,
+                ReviewType = ReviewType.AuditReview,
+                CreatedAt = _now,
+                StartedByUserId = _userId,
+                ConfidenceScore = 0,
+                TenantId = _tenantId,
+            });
+            db.SaveChanges();
+        }
+
+        var page = _ctx.RenderComponent<AuditReview>(p => p.Add(x => x.CaseId, _caseId));
+
+        page.WaitForAssertion(() => page.Markup.Should().Contain("Complete audit review"), TimeSpan.FromSeconds(3));
+        page.Markup.Should().NotContain("Start audit review");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public void MyQueue_lists_visible_case_with_priority_badge()
     {
         var page = _ctx.RenderComponent<MyQueue>();

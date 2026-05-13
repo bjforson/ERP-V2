@@ -97,7 +97,7 @@ public sealed class SubmissionConsumer : IQueueConsumer<OutboundSubmissionPayloa
             return null;
         }
 
-        if (submission.Status is not ("pending" or "error" or "dispatching"))
+        if (submission.Status is not ("queued" or "pending" or "error" or "dispatching"))
         {
             throw new InvalidOperationException(
                 $"OutboundSubmission {submission.Id} is in unsupported status '{submission.Status}'.");

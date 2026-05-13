@@ -8,6 +8,7 @@ using NickERP.Inspection.Application.Completeness;
 using NickERP.Inspection.Application.Sla;
 using NickERP.Inspection.Application.StateMachines;
 using NickERP.Inspection.Application.Validation;
+using NickERP.Inspection.Application.Workflows;
 using NickERP.Inspection.Authorities.Abstractions;
 using NickERP.Inspection.Core.Completeness;
 using NickERP.Inspection.Core.Entities;
@@ -19,6 +20,7 @@ using NickERP.Inspection.Scanners.Abstractions;
 using NickERP.Platform.Audit;
 using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Plugins;
+using NickERP.Platform.Queueing.Abstractions;
 using NickERP.Platform.Telemetry;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Features;
@@ -61,6 +63,7 @@ public sealed class CaseWorkflowService
     // (safe rollout).
     private readonly ITenantSettingsService? _tenantSettings;
     private readonly InspectionStateMachine? _inspectionStateMachine;
+    private readonly ITransactionalQueue<OutboundSubmissionPayload>? _submissionQueue;
 
     public CaseWorkflowService(
         InspectionDbContext db,
@@ -75,7 +78,8 @@ public sealed class CaseWorkflowService
         ICompletenessChecker? completenessChecker = null,
         ISlaTracker? slaTracker = null,
         ITenantSettingsService? tenantSettings = null,
-        InspectionStateMachine? inspectionStateMachine = null)
+        InspectionStateMachine? inspectionStateMachine = null,
+        ITransactionalQueue<OutboundSubmissionPayload>? submissionQueue = null)
     {
         _db = db;
         _events = events;
@@ -90,6 +94,7 @@ public sealed class CaseWorkflowService
         _slaTracker = slaTracker;
         _tenantSettings = tenantSettings;
         _inspectionStateMachine = inspectionStateMachine;
+        _submissionQueue = submissionQueue;
     }
 
     /// <summary>
@@ -1221,73 +1226,79 @@ public sealed class CaseWorkflowService
         var idempotencyKey = IdempotencyKey.From(tenantId, "submission", caseId, v.Id, instance.Id);
         var payload = JsonSerializer.Serialize(new { caseId, decision = v.Decision.ToString(), basis = v.Basis });
 
-        var sub = new OutboundSubmission
+        var workItem = await EnsureWorkItemAsync(c, tenantId, now, ct).ConfigureAwait(false);
+        OutboundSubmission sub;
+        var shouldEnqueue = false;
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false))
         {
-            CaseId = caseId,
-            ExternalSystemInstanceId = instance.Id,
-            PayloadJson = payload,
-            IdempotencyKey = idempotencyKey,
-            Status = "pending",
-            SubmittedAt = now,
-            TenantId = tenantId
-        };
-        _db.OutboundSubmissions.Add(sub);
-        await _db.SaveChangesAsync(ct);
-
-        // Sprint A2 — capture pre-Submit state so the transition counter
-        // can tag the actual from→to (we only count when SubmitAsync
-        // actually moves the case forward — i.e. on Accepted).
-        var priorState = c.State;
-        bool transitioned = false;
-        try
-        {
-            var adapter = _plugins.Resolve<IExternalSystemAdapter>("inspection", instance.TypeCode, _services);
-            var result = await adapter.SubmitAsync(
-                new ExternalSystemConfig(instance.Id, tenantId, instance.ConfigJson),
-                new OutboundSubmissionRequest(idempotencyKey, c.SubjectIdentifier, payload),
-                ct);
-
-            sub.Status = result.Accepted ? "accepted" : "rejected";
-            sub.ResponseJson = result.AuthorityResponseJson;
-            sub.ErrorMessage = result.Error;
-            sub.RespondedAt = DateTimeOffset.UtcNow;
-
-            if (result.Accepted)
+            var existingSubmission = await _db.OutboundSubmissions
+                .FirstOrDefaultAsync(s => s.IdempotencyKey == idempotencyKey, ct)
+                .ConfigureAwait(false);
+            if (existingSubmission is null)
             {
-                c.State = InspectionWorkflowState.Submitted;
-                c.StateEnteredAt = sub.RespondedAt.Value;
-                transitioned = true;
-            }
-            await _db.SaveChangesAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            sub.Status = "error";
-            sub.ErrorMessage = ex.Message;
-            sub.RespondedAt = DateTimeOffset.UtcNow;
-            await _db.SaveChangesAsync(ct);
-            _logger.LogWarning(ex, "Outbound submission failed for case {CaseId}", caseId);
-        }
-
-        await EmitAsync(tenantId, actor, c.CorrelationId, "nickerp.inspection.submission_dispatched", "OutboundSubmission",
-            sub.Id.ToString(), new { sub.Id, sub.CaseId, sub.Status }, ct);
-        if (transitioned)
-        {
-            NickErpActivity.CaseStateTransitions.Add(1,
-                new KeyValuePair<string, object?>("from", priorState.ToString()),
-                new KeyValuePair<string, object?>("to", InspectionWorkflowState.Submitted.ToString()));
-
-            // Sprint 31 / B5.1 — close verdict_to_submitted on accepted submission.
-            if (_slaTracker is not null && sub.RespondedAt is { } respondedAt)
-            {
-                try { await _slaTracker.CloseWindowAsync(caseId, SlaTracker.VerdictToSubmitted, respondedAt, ct); }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                sub = new OutboundSubmission
                 {
-                    _logger.LogWarning(ex,
-                        "SlaTracker failed to close verdict_to_submitted for case {CaseId}.", caseId);
+                    Id = Guid.NewGuid(),
+                    CaseId = caseId,
+                    ExternalSystemInstanceId = instance.Id,
+                    PayloadJson = payload,
+                    IdempotencyKey = idempotencyKey,
+                    Status = "queued",
+                    SubmittedAt = now,
+                    TenantId = tenantId
+                };
+                _db.OutboundSubmissions.Add(sub);
+                shouldEnqueue = true;
+            }
+            else
+            {
+                sub = existingSubmission;
+                if (sub.Status is "queued" or "pending" or "error")
+                {
+                    shouldEnqueue = true;
                 }
             }
+
+            await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            if (shouldEnqueue && _submissionQueue is not null)
+            {
+                await _submissionQueue.EnqueueAsync(
+                        _db,
+                        new EnqueueRequest<OutboundSubmissionPayload>
+                        {
+                            WorkItemId = workItem.Id,
+                            Payload = new OutboundSubmissionPayload(workItem.Id, caseId, now)
+                            {
+                                OutboundSubmissionId = sub.Id,
+                                ExternalSystemInstanceId = instance.Id,
+                                IdempotencyKey = idempotencyKey
+                            },
+                            IdempotencyKey = IdempotencyKey.From(
+                                tenantId,
+                                "submission-queue",
+                                caseId,
+                                v.Id,
+                                instance.Id),
+                            CorrelationId = c.CorrelationId
+                        },
+                        ct)
+                    .ConfigureAwait(false);
+            }
+
+            await tx.CommitAsync(ct).ConfigureAwait(false);
         }
+
+        await EmitAsync(
+            tenantId,
+            actor,
+            c.CorrelationId,
+            "nickerp.inspection.submission_queued",
+            "OutboundSubmission",
+            sub.Id.ToString(),
+            new { sub.Id, sub.CaseId, sub.Status, Enqueued = shouldEnqueue && _submissionQueue is not null },
+            ct).ConfigureAwait(false);
+
         return sub;
     }
 

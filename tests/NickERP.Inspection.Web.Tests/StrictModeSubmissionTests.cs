@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NickERP.Inspection.Application;
 using NickERP.Inspection.Application.Validation;
+using NickERP.Inspection.Application.Workflows;
 using NickERP.Inspection.Authorities.Abstractions;
 using NickERP.Inspection.Core.Entities;
 using NickERP.Inspection.Core.Validation;
@@ -16,6 +17,7 @@ using NickERP.Inspection.Imaging;
 using NickERP.Inspection.Web.Services;
 using NickERP.Platform.Audit.Events;
 using NickERP.Platform.Plugins;
+using NickERP.Platform.Queueing.Abstractions;
 using NickERP.Platform.Tenancy;
 using NickERP.Platform.Tenancy.Features;
 using Xunit;
@@ -45,6 +47,7 @@ public sealed class StrictModeSubmissionTests : IDisposable
     private readonly Guid _externalSystemInstanceId = Guid.NewGuid();
     private readonly InMemoryTenantSettingsService _settings = new();
     private readonly RecordingEventPublisher _events = new();
+    private readonly CapturingTransactionalSubmissionQueue _submissionQueue = new();
     private bool _engineEmitsError = true;
 
     public StrictModeSubmissionTests()
@@ -67,6 +70,7 @@ public sealed class StrictModeSubmissionTests : IDisposable
         services.AddSingleton(NullLoggerFactory.Instance);
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<ITenantSettingsService>(_settings);
+        services.AddSingleton<ITransactionalQueue<OutboundSubmissionPayload>>(_submissionQueue);
 
         // Validation engine — uses an in-memory enablement provider and
         // a deterministic test rule whose severity is toggled by the
@@ -99,7 +103,9 @@ public sealed class StrictModeSubmissionTests : IDisposable
         var submission = await workflow.SubmitAsync(_caseId, _externalSystemInstanceId);
 
         Assert.NotNull(submission);
-        Assert.Equal("accepted", submission.Status);
+        Assert.Equal("queued", submission.Status);
+        Assert.Single(_submissionQueue.Requests);
+        Assert.Equal(submission.Id, _submissionQueue.Requests[0].Payload.OutboundSubmissionId);
     }
 
     [Fact]
@@ -126,6 +132,7 @@ public sealed class StrictModeSubmissionTests : IDisposable
         var db = verifyScope.ServiceProvider.GetRequiredService<InspectionDbContext>();
         var rows = await db.OutboundSubmissions.AsNoTracking().Where(o => o.CaseId == _caseId).ToListAsync();
         Assert.Empty(rows);
+        Assert.Empty(_submissionQueue.Requests);
     }
 
     [Fact]
@@ -140,7 +147,30 @@ public sealed class StrictModeSubmissionTests : IDisposable
         var submission = await workflow.SubmitAsync(_caseId, _externalSystemInstanceId);
 
         Assert.NotNull(submission);
-        Assert.Equal("accepted", submission.Status);
+        Assert.Equal("queued", submission.Status);
+        Assert.Single(_submissionQueue.Requests);
+    }
+
+    [Fact]
+    public async Task Submit_is_idempotent_and_does_not_enqueue_duplicate_rows()
+    {
+        _settings.Set(_tenantId, CaseWorkflowService.StrictModeSettingKey, "true");
+        _engineEmitsError = false;
+        await SeedVerdictAsync();
+
+        using var scope = _sp.CreateScope();
+        var workflow = scope.ServiceProvider.GetRequiredService<CaseWorkflowService>();
+
+        var first = await workflow.SubmitAsync(_caseId, _externalSystemInstanceId);
+        var second = await workflow.SubmitAsync(_caseId, _externalSystemInstanceId);
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Single(_submissionQueue.Requests);
+
+        using var verifyScope = _sp.CreateScope();
+        var db = verifyScope.ServiceProvider.GetRequiredService<InspectionDbContext>();
+        var rows = await db.OutboundSubmissions.AsNoTracking().Where(o => o.CaseId == _caseId).ToListAsync();
+        Assert.Single(rows);
     }
 
     [Fact]
@@ -334,6 +364,28 @@ public sealed class StrictModeSubmissionTests : IDisposable
             var plugin = FindByTypeCode(module, typeCode)
                 ?? throw new KeyNotFoundException($"No plugin (Module='{module}', TypeCode='{typeCode}').");
             return (T)services.GetRequiredService(plugin.ConcreteType);
+        }
+    }
+
+    private sealed class CapturingTransactionalSubmissionQueue : ITransactionalQueue<OutboundSubmissionPayload>
+    {
+        private readonly HashSet<string> _keys = new(StringComparer.Ordinal);
+        private long _nextId = 1;
+
+        public List<EnqueueRequest<OutboundSubmissionPayload>> Requests { get; } = new();
+
+        public Task<long> EnqueueAsync(
+            DbContext db,
+            EnqueueRequest<OutboundSubmissionPayload> request,
+            CancellationToken ct = default)
+        {
+            if (_keys.Add(request.IdempotencyKey))
+            {
+                Requests.Add(request);
+                return Task.FromResult(_nextId++);
+            }
+
+            return Task.FromResult(_nextId - 1);
         }
     }
 }

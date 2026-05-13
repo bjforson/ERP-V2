@@ -53,7 +53,7 @@ public sealed class AuditReviewConsumerTests : IDisposable
         var verdict = await _db.Verdicts.AsNoTracking().SingleAsync(v => v.CaseId == c.Id);
         verdict.Decision.Should().Be(VerdictDecision.Clear);
         var submission = await _db.OutboundSubmissions.AsNoTracking().SingleAsync(s => s.CaseId == c.Id);
-        submission.Status.Should().Be("pending");
+        submission.Status.Should().Be("queued");
 
         _submissionQueue.Db.Should().BeSameAs(_db);
         _submissionQueue.Request.Should().NotBeNull();
@@ -130,6 +130,55 @@ public sealed class AuditReviewConsumerTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessAsync_DissentRoutesCaseToExceptionQueueWithoutSubmission()
+    {
+        var c = await SeedCaseAsync();
+        var review = await SeedAuditReviewAsync(c.Id, outcome: "dissent", completed: true);
+        var workItemId = Guid.NewGuid();
+
+        await NewConsumer().ProcessAsync(
+            new StubQueueClaim(
+                workItemId,
+                new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow)
+                {
+                    ReviewId = review.Id,
+                    Outcome = "dissent"
+                },
+                correlationId: null),
+            CancellationToken.None);
+
+        var updatedCase = await _db.Cases.AsNoTracking().SingleAsync(x => x.Id == c.Id);
+        updatedCase.State.Should().Be(InspectionWorkflowState.Reviewed);
+        updatedCase.ReviewQueue.Should().Be(ReviewQueue.Exception);
+        (await _db.Verdicts.AsNoTracking().CountAsync(v => v.CaseId == c.Id)).Should().Be(0);
+        (await _db.OutboundSubmissions.AsNoTracking().CountAsync(s => s.CaseId == c.Id)).Should().Be(0);
+        _submissionQueue.Request.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SecondRunDoesNotDuplicateVerdictOrSubmissionRows()
+    {
+        var c = await SeedCaseAsync();
+        var review = await SeedAuditReviewAsync(c.Id, outcome: "concur", completed: true);
+        var workItemId = Guid.NewGuid();
+        var claim = new StubQueueClaim(
+            workItemId,
+            new AuditReviewPayload(workItemId, c.Id, DateTimeOffset.UtcNow)
+            {
+                ReviewId = review.Id,
+                Outcome = "concur"
+            },
+            correlationId: "corr-ar");
+        var consumer = NewConsumer();
+
+        await consumer.ProcessAsync(claim, CancellationToken.None);
+        await consumer.ProcessAsync(claim, CancellationToken.None);
+
+        (await _db.Verdicts.AsNoTracking().CountAsync(v => v.CaseId == c.Id)).Should().Be(1);
+        (await _db.OutboundSubmissions.AsNoTracking().CountAsync(s => s.CaseId == c.Id)).Should().Be(1);
+    }
+
+    [Fact]
     public async Task ProcessAsync_OpenHumanAuditReviewThrowsInsteadOfCompletingAsNoOp()
     {
         var c = await SeedCaseAsync();
@@ -151,12 +200,18 @@ public sealed class AuditReviewConsumerTests : IDisposable
     }
 
     private AuditReviewConsumer NewConsumer()
-        => new(
+    {
+        var dispositions = new AuditDispositionService(
             _db,
             _tenant,
             _events,
             _submissionQueue,
+            NullLogger<AuditDispositionService>.Instance);
+        return new(
+            _tenant,
+            dispositions,
             NullLogger<AuditReviewConsumer>.Instance);
+    }
 
     private async Task<InspectionCase> SeedCaseAsync()
     {

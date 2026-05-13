@@ -1650,6 +1650,7 @@ internal sealed class RecordingExternalSystemAdapter : IExternalSystemAdapter
     public IReadOnlyList<AuthorityDocumentDto> NextDocs { get; set; } = System.Array.Empty<AuthorityDocumentDto>();
     public SubmissionResult NextSubmissionResult { get; set; } = new(true, null, null);
     public bool ShouldThrowOnSubmit { get; set; }
+    public int SubmitCalls { get; private set; }
 
     public Task<NickERP.Inspection.ExternalSystems.Abstractions.ConnectionTestResult> TestAsync(
         ExternalSystemConfig config, CancellationToken ct = default) =>
@@ -1662,6 +1663,7 @@ internal sealed class RecordingExternalSystemAdapter : IExternalSystemAdapter
     public Task<SubmissionResult> SubmitAsync(
         ExternalSystemConfig config, OutboundSubmissionRequest request, CancellationToken ct = default)
     {
+        SubmitCalls++;
         if (ShouldThrowOnSubmit) throw new InvalidOperationException("simulated authority crash");
         return Task.FromResult(NextSubmissionResult);
     }

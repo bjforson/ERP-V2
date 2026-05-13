@@ -294,6 +294,21 @@ public sealed class ReviewWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task CompleteReview_enqueues_audit_review_stage_once_when_replayed()
+    {
+        var caseId = await SeedCaseAsync();
+        var userId = Guid.NewGuid();
+        var auditReviewQueue = new CapturingTransactionalQueue();
+        var workflow = NewWorkflow(auditReviewQueue: auditReviewQueue);
+        var reviewId = await workflow.StartReviewAsync(caseId, ReviewType.AuditReview, userId);
+
+        await workflow.CompleteReviewAsync(reviewId, "concur", new List<Finding>(), userId);
+        await workflow.CompleteReviewAsync(reviewId, "concur", new List<Finding>(), userId);
+
+        auditReviewQueue.EnqueueCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task CompleteReview_throws_on_empty_outcome()
     {
         var caseId = await SeedCaseAsync();
@@ -429,6 +444,7 @@ public sealed class ReviewWorkflowTests : IDisposable
     {
         public DbContext? Db { get; private set; }
         public EnqueueRequest<AuditReviewPayload>? Request { get; private set; }
+        public int EnqueueCount { get; private set; }
 
         public Task<long> EnqueueAsync(
             DbContext db,
@@ -437,6 +453,7 @@ public sealed class ReviewWorkflowTests : IDisposable
         {
             Db = db;
             Request = request;
+            EnqueueCount++;
             return Task.FromResult(1L);
         }
     }

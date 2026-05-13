@@ -136,6 +136,36 @@ public sealed class ReviewQueueService
     }
 
     /// <summary>
+    /// Finds an in-progress review already opened for this case/user. Used
+    /// by assignment-driven audit review so the page does not create a
+    /// duplicate <see cref="AnalystReview"/> row before completion.
+    /// </summary>
+    public async Task<Guid?> FindOpenReviewAsync(
+        Guid caseId,
+        ReviewType reviewType,
+        Guid userId,
+        CancellationToken ct = default)
+    {
+        if (!_tenant.IsResolved)
+        {
+            return null;
+        }
+
+        return await (
+                from review in _db.AnalystReviews.AsNoTracking()
+                join session in _db.ReviewSessions.AsNoTracking()
+                    on review.ReviewSessionId equals session.Id
+                where session.CaseId == caseId
+                      && review.ReviewType == reviewType
+                      && review.CompletedAt == null
+                      && (review.StartedByUserId == userId || session.AnalystUserId == userId)
+                orderby review.CreatedAt descending
+                select (Guid?)review.Id)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Hand a review off to a different user (typically a supervisor).
     /// Audit-trailed via <c>nickerp.inspection.review.escalated</c>.
     /// </summary>

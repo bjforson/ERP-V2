@@ -24,7 +24,7 @@ public sealed class OutboundSubmission : ITenantOwned
     /// <summary>Stable key for at-most-once semantics. Must be deterministic for a given verdict + case + external system.</summary>
     public string IdempotencyKey { get; set; } = string.Empty;
 
-    /// <summary>Lifecycle status — "pending", "accepted", "rejected", "error".</summary>
+    /// <summary>Lifecycle status — "queued", "pending", "accepted", "rejected", "error".</summary>
     public string Status { get; set; } = "pending";
 
     /// <summary>Adapter-shaped response from the external system, as JSON. Null until a response arrives.</summary>
