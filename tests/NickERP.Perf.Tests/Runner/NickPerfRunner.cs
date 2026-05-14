@@ -64,11 +64,19 @@ public static class NickPerfRunner
         var stats = new NickPerfStats();
         var profile = scenario.LoadProfile;
         var tickDelay = profile.TickDelay;
-        var deadline = DateTime.UtcNow + profile.Duration;
+        var scenarioStartUtc = DateTime.UtcNow;
+        // Warmup defaults to zero (back-compat). When set, dispatch the
+        // step on the same loop but exclude its latency from stats —
+        // keeps the JIT / connection-pool / DNS cost off the measured
+        // p99 tail without changing the per-step delegate.
+        var statsStartAt = scenarioStartUtc + profile.Warmup;
+        var deadline = statsStartAt + profile.Duration;
+        var warmupSkipped = 0;
 
         Console.WriteLine(
             $"NickPerf scenario={scenario.Name} rate={profile.Rate}/{profile.Interval} " +
-            $"duration={profile.Duration} tick={tickDelay} maxConcurrent={scenario.MaxConcurrent}");
+            $"duration={profile.Duration} warmup={profile.Warmup} " +
+            $"tick={tickDelay} maxConcurrent={scenario.MaxConcurrent}");
 
         using var sem = new SemaphoreSlim(scenario.MaxConcurrent, scenario.MaxConcurrent);
         using var timer = new PeriodicTimer(tickDelay);
@@ -94,7 +102,8 @@ public static class NickPerfRunner
                 // acquire, mirroring NBomber's "queued requests don't
                 // count toward latency until they fire" semantics).
                 await sem.WaitAsync(ct).ConfigureAwait(false);
-                inFlight.Add(DispatchStepAsync(scenario, stats, sem, stepCts.Token));
+                inFlight.Add(DispatchStepAsync(scenario, stats, sem, statsStartAt,
+                    () => Interlocked.Increment(ref warmupSkipped), stepCts.Token));
             }
         }
         catch (OperationCanceledException)
@@ -120,6 +129,7 @@ public static class NickPerfRunner
         File.WriteAllText(reportPath, NickPerfReport.BuildMarkdown(testName, scenario.Name, snapshot));
         Console.WriteLine(
             $"NickPerf scenario={scenario.Name} ok={snapshot.ok} fail={snapshot.fail} " +
+            $"warmup-skipped={warmupSkipped} " +
             $"p99={snapshot.p99:F1}ms rps={snapshot.Rps:F2} report={reportPath}");
 
         return snapshot;
@@ -129,6 +139,8 @@ public static class NickPerfRunner
         NickPerfScenario scenario,
         NickPerfStats stats,
         SemaphoreSlim sem,
+        DateTime statsStartAt,
+        Action onWarmupSkipped,
         CancellationToken stepCt)
     {
         var startUtc = DateTime.UtcNow;
@@ -153,6 +165,13 @@ public static class NickPerfRunner
 
         var latencyMs = NickPerfClock.StopElapsedMs(sw);
         var endUtc = DateTime.UtcNow;
+        if (startUtc < statsStartAt)
+        {
+            // Warmup phase — step ran (JIT / pool / DNS warmed) but its
+            // latency is not recorded against the scenario's gates.
+            onWarmupSkipped();
+            return;
+        }
         stats.Record(result, latencyMs, startUtc, endUtc);
     }
 }

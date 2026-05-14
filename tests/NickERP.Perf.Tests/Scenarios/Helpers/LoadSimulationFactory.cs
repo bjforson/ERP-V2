@@ -10,6 +10,12 @@ namespace NickERP.Perf.Tests.Scenarios.Helpers;
 /// </summary>
 public static class LoadSimulationFactory
 {
+    // 5 s warmup window applied to every measured scenario — matches
+    // appsettings.json ScenarioDefaults.WarmupSeconds. Keeps first-request
+    // JIT / DNS / HttpClient cold-start cost off the measured p99.
+    // Backlog scenario opts out (it's informative, not gated).
+    private static readonly TimeSpan StandardWarmup = TimeSpan.FromSeconds(5);
+
     /// <summary>
     /// Case-create profile per test-plan §3.1 EP-001.
     /// 1x = 0.35 RPS, 5x = 1.75 RPS, 10x = 3.5 RPS.
@@ -21,12 +27,12 @@ public static class LoadSimulationFactory
         return profile switch
         {
             // 0.35 RPS = 21 / minute. Inject 21 over 60s.
-            LoadProfile.Pilot1x => new NickPerfLoadProfile { Rate = 21, Interval = TimeSpan.FromMinutes(1), Duration = during },
+            LoadProfile.Pilot1x => new NickPerfLoadProfile { Rate = 21, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup },
             // 1.75 RPS = 105 / minute.
-            LoadProfile.Tema5x => new NickPerfLoadProfile { Rate = 105, Interval = TimeSpan.FromMinutes(1), Duration = during },
+            LoadProfile.Tema5x => new NickPerfLoadProfile { Rate = 105, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup },
             // 3.5 RPS = 210 / minute.
-            LoadProfile.Stress10x => new NickPerfLoadProfile { Rate = 210, Interval = TimeSpan.FromMinutes(1), Duration = during },
-            _ => new NickPerfLoadProfile { Rate = 21, Interval = TimeSpan.FromMinutes(1), Duration = during }
+            LoadProfile.Stress10x => new NickPerfLoadProfile { Rate = 210, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup },
+            _ => new NickPerfLoadProfile { Rate = 21, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup }
         };
     }
 
@@ -39,12 +45,12 @@ public static class LoadSimulationFactory
         return profile switch
         {
             // 0.5 RPS = 30 / minute.
-            LoadProfile.Pilot1x => new NickPerfLoadProfile { Rate = 30, Interval = TimeSpan.FromMinutes(1), Duration = during },
+            LoadProfile.Pilot1x => new NickPerfLoadProfile { Rate = 30, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup },
             // 2.5 RPS = 150 / minute.
-            LoadProfile.Tema5x => new NickPerfLoadProfile { Rate = 150, Interval = TimeSpan.FromMinutes(1), Duration = during },
+            LoadProfile.Tema5x => new NickPerfLoadProfile { Rate = 150, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup },
             // 5.0 RPS = 300 / minute.
-            LoadProfile.Stress10x => new NickPerfLoadProfile { Rate = 300, Interval = TimeSpan.FromMinutes(1), Duration = during },
-            _ => new NickPerfLoadProfile { Rate = 30, Interval = TimeSpan.FromMinutes(1), Duration = during }
+            LoadProfile.Stress10x => new NickPerfLoadProfile { Rate = 300, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup },
+            _ => new NickPerfLoadProfile { Rate = 30, Interval = TimeSpan.FromMinutes(1), Duration = during, Warmup = StandardWarmup }
         };
     }
 

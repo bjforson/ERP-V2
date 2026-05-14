@@ -71,8 +71,21 @@ public sealed record NickPerfLoadProfile
     /// <summary>Interval over which <see cref="Rate"/> calls are spread.</summary>
     public required TimeSpan Interval { get; init; }
 
-    /// <summary>Total duration of the scenario.</summary>
+    /// <summary>Total duration of the scenario (excluding warmup).</summary>
     public required TimeSpan Duration { get; init; }
+
+    /// <summary>
+    /// Optional warmup window before the measured phase begins. Steps
+    /// fired during the warmup window go through the same dispatch path
+    /// (so JIT / connection pool / DNS caches are warmed) but their
+    /// latency is excluded from the stats snapshot. Defaults to zero —
+    /// existing scenarios are unaffected until they opt in. The first
+    /// request typically pays for JIT compilation + cold HttpClient
+    /// channel + DNS, so the p99 of a 30-sample scenario can be
+    /// dominated by this single outlier; a 3–5 s warmup window keeps
+    /// the measured tail meaningful.
+    /// </summary>
+    public TimeSpan Warmup { get; init; } = TimeSpan.Zero;
 
     /// <summary>
     /// Convenience: per-tick delay. With <c>Rate=21</c> and

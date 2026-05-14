@@ -47,12 +47,17 @@ public static class HealthEndpointScenario
     private static NickPerfLoadProfile BuildLoadProfile(LoadProfile profile)
     {
         // Healthz is a probe; rate scales modestly with profile. Per test-plan §2.1 EP-008.
+        // 5 s warmup matches appsettings.json ScenarioDefaults.WarmupSeconds and keeps
+        // the first-request JIT + DNS + HttpClient cold-start cost off the measured
+        // p99. Sprint 60 rehearsal 2026-05-14 saw a 29 s single-request outlier
+        // dominate p99 with only 30 samples — warmup absorbs that outlier.
+        var warmup = TimeSpan.FromSeconds(5);
         return profile switch
         {
-            LoadProfile.Pilot1x => new NickPerfLoadProfile { Rate = 1, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(30) },
-            LoadProfile.Tema5x => new NickPerfLoadProfile { Rate = 5, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(30) },
-            LoadProfile.Stress10x => new NickPerfLoadProfile { Rate = 10, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(60) },
-            _ => new NickPerfLoadProfile { Rate = 1, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(30) }
+            LoadProfile.Pilot1x => new NickPerfLoadProfile { Rate = 1, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(30), Warmup = warmup },
+            LoadProfile.Tema5x => new NickPerfLoadProfile { Rate = 5, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(30), Warmup = warmup },
+            LoadProfile.Stress10x => new NickPerfLoadProfile { Rate = 10, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(60), Warmup = warmup },
+            _ => new NickPerfLoadProfile { Rate = 1, Interval = TimeSpan.FromSeconds(1), Duration = TimeSpan.FromSeconds(30), Warmup = warmup }
         };
     }
 }

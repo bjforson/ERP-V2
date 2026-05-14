@@ -77,6 +77,7 @@ public static class HelperUnitTests
         failures += Run(log, nameof(NickPerf_Runner_RunsToCompletion), NickPerf_Runner_RunsToCompletion);
         failures += Run(log, nameof(NickPerf_Runner_RecordsFailuresFromExceptions), NickPerf_Runner_RecordsFailuresFromExceptions);
         failures += Run(log, nameof(NickPerf_Runner_WritesReportFile), NickPerf_Runner_WritesReportFile);
+        failures += Run(log, nameof(NickPerf_Runner_WarmupSkipsEarlySamples), NickPerf_Runner_WarmupSkipsEarlySamples);
 
         log($"selftest: {failures} failure(s).");
         return failures;
@@ -549,6 +550,58 @@ public static class HelperUnitTests
                 throw new InvalidOperationException("report doesn't contain scenario name");
             if (!contents.Contains("selftest-test"))
                 throw new InvalidOperationException("report doesn't contain test name");
+        }
+        finally
+        {
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    private static void NickPerf_Runner_WarmupSkipsEarlySamples()
+    {
+        // 250 ms warmup + 250 ms measured at 20/sec. Each step records its
+        // own latency. Warmup steps must not appear in the stats snapshot;
+        // measured-phase steps must.
+        var allLatenciesMs = new List<double>();
+        var lockObj = new object();
+        var scenario = new NickPerfScenario
+        {
+            Name = "selftest-warmup",
+            LoadProfile = new NickPerfLoadProfile
+            {
+                Rate = 20,
+                Interval = TimeSpan.FromSeconds(1),
+                Duration = TimeSpan.FromMilliseconds(250),
+                Warmup = TimeSpan.FromMilliseconds(250)
+            },
+            RunStep = async _ =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await Task.Delay(5).ConfigureAwait(false);
+                sw.Stop();
+                lock (lockObj) { allLatenciesMs.Add(sw.Elapsed.TotalMilliseconds); }
+                return NickPerfStepResult.OkResult(200);
+            }
+        };
+
+        var folder = Path.Combine(Path.GetTempPath(), $"nickperf-selftest-{Guid.NewGuid():N}");
+        try
+        {
+            var snap = NickPerfRunner.RunAsync(scenario, folder, "selftest").GetAwaiter().GetResult();
+
+            // Step ran during BOTH phases: total invocations ≈ warmup
+            // ticks + measured ticks. Recorded ok count must be strictly
+            // less than total invocations (warmup ones were skipped).
+            int totalInvocations;
+            lock (lockObj) { totalInvocations = allLatenciesMs.Count; }
+            if (totalInvocations < 2)
+                throw new InvalidOperationException($"step ran too few times to test warmup: {totalInvocations}");
+            if (snap.ok >= totalInvocations)
+                throw new InvalidOperationException(
+                    $"warmup did not exclude samples: total invocations={totalInvocations} recorded={snap.ok}");
+            if (snap.ok < 1)
+                throw new InvalidOperationException(
+                    $"measured phase recorded nothing — expected ≥1 ok, got {snap.ok}");
         }
         finally
         {
