@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Sprint 52 / FU-truffleHog-gitleaks-integration (Sprint 30) - production-grade secret scan.
 

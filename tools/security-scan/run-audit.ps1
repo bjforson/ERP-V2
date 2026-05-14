@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # NickERP v2 — Phase V audit-checklist runner (Sprint 60 Phase B1)
 # ============================================================
 # Walks `docs/security/audit-checklist-2026.md` (the ~89 SEC-*
@@ -145,7 +145,7 @@ function Read-Checklist {
     if (-not (Test-Path $Path)) {
         throw "Checklist absent: $Path"
     }
-    $raw = Get-Content -Path $Path -Raw
+    $raw = Get-Content -Path $Path -Raw -Encoding UTF8
 
     $items = New-Object System.Collections.ArrayList
 
@@ -390,7 +390,7 @@ function Handle-SystemContextRegister {
     if (-not (Test-Path $RegisterPath)) {
         return @{ Status = 'skip'; Evidence = "register absent at docs/system-context-audit-register.md" }
     }
-    $registerRaw = Get-Content -Path $RegisterPath -Raw
+    $registerRaw = Get-Content -Path $RegisterPath -Raw -Encoding UTF8
     $registerCount = @([regex]::Matches($registerRaw, 'SetSystemContext')).Count
     if ($codeCount -eq 0) {
         return @{ Status = 'skip'; Evidence = 'no SetSystemContext callers found in source — verify scan scope' }
@@ -435,7 +435,7 @@ function Handle-MailKitVersion {
                }
     $bad = New-Object System.Collections.ArrayList
     foreach ($csproj in $csprojs) {
-        $content = Get-Content -Path $csproj.FullName -Raw
+        $content = Get-Content -Path $csproj.FullName -Raw -Encoding UTF8
         $m = [regex]::Match($content, '(?i)<PackageReference\s+Include="MailKit"\s+Version="(?<v>[^"]+)"')
         if ($m.Success) {
             $version = $m.Groups['v'].Value
@@ -464,7 +464,7 @@ function Handle-DotNetVersion {
                }
     $bad = New-Object System.Collections.ArrayList
     foreach ($csproj in $csprojs) {
-        $content = Get-Content -Path $csproj.FullName -Raw
+        $content = Get-Content -Path $csproj.FullName -Raw -Encoding UTF8
         $m = [regex]::Matches($content, '(?i)<TargetFramework[s]?>([^<]+)</TargetFramework[s]?>')
         foreach ($match in $m) {
             $tf = $match.Groups[1].Value
@@ -493,7 +493,7 @@ function Handle-NpgsqlVersion {
     $bad = New-Object System.Collections.ArrayList
     $found = 0
     foreach ($csproj in $csprojs) {
-        $content = Get-Content -Path $csproj.FullName -Raw
+        $content = Get-Content -Path $csproj.FullName -Raw -Encoding UTF8
         $matches = [regex]::Matches($content, '(?i)<PackageReference\s+Include="Npgsql(?:\.[A-Za-z.]+)?"\s+Version="(?<v>[^"]+)"')
         foreach ($m in $matches) {
             $found++
@@ -544,7 +544,7 @@ function Handle-ChainedScanner {
             Evidence = "no $Kind report under reports/; pass -RunChained or run $Script first"
         }
     }
-    $body = Get-Content -Path $latest.FullName -Raw
+    $body = Get-Content -Path $latest.FullName -Raw -Encoding UTF8
     # Tools that self-skip (e.g. run-trufflehog.ps1 on a host with no
     # trufflehog binary) emit "**Status:** SKIPPED" / "(skipped)" — surface
     # those as skip with the reason, not as fail.
@@ -571,7 +571,7 @@ function Handle-DepLicenseClosure {
                                   -FailPattern '(?im)Non-allowlisted licenses\s*\|\s*[1-9]'
     $closure = ''
     if (Test-Path $RationalePath) {
-        $rat = Get-Content -Path $RationalePath -Raw
+        $rat = Get-Content -Path $RationalePath -Raw -Encoding UTF8
         if ($rat -match 'NBomber.*?RESOLVED|RESOLVED.*?NBomber') {
             $closure = ' (Sprint 58: NBomber P0 RESOLVED — see license-allowlist-rationale.md §2)'
         }
@@ -631,7 +631,7 @@ ORDER BY 1;
         # otherwise probe the connection if available.
         $latest = Get-LatestReport -KindGlob 'dryrun-*-migration-report.md'
         if ($latest) {
-            $body = Get-Content -Path $latest.FullName -Raw
+            $body = Get-Content -Path $latest.FullName -Raw -Encoding UTF8
             if ($body -match 'newly-applied=0' -or $body -match 'idempotent re-run') {
                 return @{ Status = 'pass'; Evidence = "evidence: $($latest.Name) (idempotent re-run, no drift)" }
             }

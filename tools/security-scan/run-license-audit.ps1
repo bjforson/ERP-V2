@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Sprint 52 / FU-license-audit-tool (Sprint 30) - third-party NuGet license audit.
 

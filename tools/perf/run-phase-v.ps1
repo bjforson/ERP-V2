@@ -1,6 +1,14 @@
+﻿#requires -Version 7.0
 # ============================================================
 # NickERP v2 — Phase V perf-execution wrapper (Sprint 60 Phase B2 — C1)
 # ============================================================
+# Requires PowerShell 7+ (pwsh). Uses the ternary operator (`? :`) and
+# UTF-8 default encoding, neither of which exists in Windows PowerShell
+# 5.1. The shebang above makes the failure mode explicit:
+# "The script ... cannot be run because it contained a #requires
+#  statement for Windows PowerShell ..." instead of a parser error.
+# Pilot operator note: run via `pwsh .\tools\perf\run-phase-v.ps1`, NOT
+# `powershell.exe`.
 # Runs the four NickPerf scenarios (Health → CaseCreate → EdgeReplay →
 # EdgeReplay-backlog) against a target URL, captures per-scenario
 # latency / throughput / error rates, and emits a site-scoped markdown
@@ -267,7 +275,7 @@ function ConvertFrom-NickPerfReport {
     #   | p95 | <f> |
     #   | p99 | <f> |
     if (-not (Test-Path $Path)) { return $null }
-    $text = Get-Content -Path $Path -Raw
+    $text = Get-Content -Path $Path -Raw -Encoding UTF8
     $stats = [ordered]@{}
     # Explicit pattern→key map. Patterns are regex; keys are plain
     # property names we use downstream (`Format-Latency` looks them up
@@ -338,7 +346,7 @@ function Invoke-PerfScenario {
     $duration = [math]::Round(((Get-Date) - $startedAt).TotalSeconds, 2)
 
     # Detect skip-on-misconfigured (per `docs/perf/test-plan.md` §12.4).
-    $stdoutText = Get-Content -Path $stdoutLog.FullName -Raw -ErrorAction SilentlyContinue
+    $stdoutText = Get-Content -Path $stdoutLog.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
     $skipped = $false
     if ($stdoutText -match "$([regex]::Escape($Scenario.Name)):\s*skipping\s+—") {
         $skipped = $true

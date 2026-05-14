@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # NickERP v2 — Cutover dry-run runner (Sprint 60 Phase A — C1)
 # ============================================================
 # Provisions a clean PostgreSQL 17 instance, creates the three
@@ -426,7 +426,7 @@ function Invoke-MigrationApply {
         # block that started in the script and report it.
         $lastMigration = ''
         try {
-            $sqlText = Get-Content -Path $sqlPath -Raw
+            $sqlText = Get-Content -Path $sqlPath -Raw -Encoding UTF8
             $matches = [regex]::Matches($sqlText, "MigrationId.*?'(?<id>\d{14}_[^']+)'")
             if ($matches.Count -gt 0) { $lastMigration = $matches[$matches.Count - 1].Groups['id'].Value }
         } catch {}
