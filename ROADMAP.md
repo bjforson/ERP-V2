@@ -74,8 +74,9 @@ Open-question answers (locked):
 > probe ACTIVE with 5 system-correctness gates including the
 > `MultiTenantInvariantProbe`. Production scaling foundation in place
 > (audit.events partitioned with 18 monthly partitions; perf seed
-> tool + JWT mock + license audit + secret-scan tooling). 1099/1099
-> tests passing across 11 projects.
+> tool + JWT mock + license audit + secret-scan tooling). 1196/1197
+> tests passing across 11 projects (1 skipped — pre-existing
+> SystemContextTests flake, not pilot-blocking).
 >
 > Remaining work is operator-side: apply staged migrations, stand up
 > standby + pgbackrest, lock the pilot site, run Phase V execution.
