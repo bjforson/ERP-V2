@@ -1116,16 +1116,33 @@ Some external system (the per-site authority's submission API)
 accepted a submission.
 
 **Driver:** depends on the external system in scope at the pilot
-site. The submission worker dispatches outbound submissions per
-[`05-icums-outbox-backlog.md`](05-icums-outbox-backlog.md). After
-the first real case is decisioned (gate 3), the system attempts
-submission to the external authority; on the first acceptance,
-the gate flips.
+site. Post-Sprint-S+3 the primary dispatch path is the transactional
+queue: `CaseWorkflowService.SubmitAsync` writes a row with `Status =
+'queued'` and enqueues an `OutboundSubmissionPayload`;
+`SubmissionConsumer` claims it, calls the external-system adapter, and
+flips it to `accepted` / `rejected` / `error`. The legacy
+`OutboundSubmissionDispatchWorker` still runs as the operator-driven
+retry path for rows in `Status = 'pending'` (per
+[`05-icums-outbox-backlog.md`](05-icums-outbox-backlog.md) and the full
+contract in
+[`../OUTBOUND-DISPATCH-OWNERSHIP.md`](../OUTBOUND-DISPATCH-OWNERSHIP.md)).
+After the first real case is decisioned (gate 3), the system attempts
+submission via the queue path; on the first acceptance the gate flips.
 
-**If still Not yet observed during §11:** the outbound dispatcher
-is failing. Check `inspection.outbound_submissions` for rows in
-`Status = 'failed'` and walk `OutboundSubmissionDispatchWorker`'s
-log for the underlying exception.
+**If still Not yet observed during §11:** check
+`inspection.outbound_submissions` and identify the row state:
+- `queued` rows = waiting for `SubmissionConsumer` to claim. Tail
+  `nickerp.inspection.submission_dispatched` audit events; if none in
+  the last minute the consumer is stalled — verify it's running and
+  the queue lease isn't held by a dead worker.
+- `pending` rows = waiting for `OutboundSubmissionDispatchWorker`
+  (legacy retry path). Walk its log for the underlying exception.
+- `error` rows = retry budget exhausted; an operator must triage via
+  the admin queue UI. The `ErrorMessage` column carries the last
+  adapter exception.
+- `rejected` rows = the adapter accepted the call but the authority
+  declined the submission; check `ResponseJson` for the authority's
+  reason.
 
 #### `gate.multi_tenant.invariants` — Multi-tenant invariants
 
@@ -1182,6 +1199,15 @@ run Phase V — the operator-facing security audit + the perf load
 test — against the pilot-shaped system. Both must pass acceptance
 gates per their checklists before §11 (real-traffic cutover) is
 allowed.
+
+> **PowerShell version.** Every scripted-alternative block in §10
+> uses `pwsh` (PowerShell 7+). `tools/perf/run-phase-v.ps1`
+> declares `#requires -Version 7.0` and will fast-fail under
+> Windows PowerShell 5.1 with a clear "requires PS 7" error rather
+> than a parser failure. The audit runner
+> (`tools/security-scan/run-audit.ps1`) works under both 5.1 and
+> 7+ but `pwsh` is recommended for matching encoding behavior.
+> Install: `winget install Microsoft.PowerShell` (one-time).
 
 ### 10.1 Phase V security audit
 
@@ -1337,6 +1363,17 @@ how to recover from a misclick. The customs operator who's been
 the §6.3 first user is the **trainer** for additional analysts;
 this scales because day-1 training is a single screen-share, not
 a multi-day course.
+
+> **Visual parity with v1.** v2's design tokens were realigned to
+> v1's NSCIM `ICUMSTheme.PaletteLight` in Sprint 60 — analysts
+> coming from v1 see the same Government-Executive blue, the same
+> Domiex dark left rail (`#1B2537`), the same Ghana flag accents.
+> The shell shape differs (v2 is hand-rolled Razor + scoped CSS
+> instead of v1's MudBlazor) but the visual language is the same.
+> Training emphasis is therefore on **what each new page does**,
+> not on "where did the buttons move?" — they didn't, visually.
+> See [`../V1-V2-STYLE-PARITY.md`](../V1-V2-STYLE-PARITY.md) for
+> the full mapping.
 
 Training completion gate: each trained analyst signs in and
 demonstrates one full case decisioning end-to-end against a
