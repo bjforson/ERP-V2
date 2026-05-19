@@ -9,41 +9,80 @@
  * rebrand is a single-file change.
  *
  * Roadmap: A.6.1 (this file) — branding tokens. Adjacent: TopNav.razor, etc.
+ *
+ * Sprint 60 — palette realigned to v1 NSCIM ICUMSTheme + enhanced-theme.css
+ * for seamless pilot cutover. Users moving from v1 → v2 see the same
+ * Government-Executive blue, the same dark sidebar, and the same Ghana flag
+ * accents. v2 token NAMES are unchanged so existing component CSS keeps
+ * working — only the values shifted. Cross-reference:
+ * docs/V1-V2-STYLE-PARITY.md.
  */
 
 :root {
-  /* Brand palette — base */
-  --nickerp-color-primary:        #1d4ed8;  /* indigo-700 — anchor */
-  --nickerp-color-primary-hover:  #1e40af;  /* indigo-800 */
-  --nickerp-color-accent:         #06b6d4;  /* cyan-500 — secondary */
-  --nickerp-color-accent-hover:   #0891b2;  /* cyan-600 */
+  /* Brand palette — base. Values from v1 ICUMSTheme.PaletteLight.
+     v1 primary is one shade lighter than v2's original indigo-700; matching
+     it removes the "did the blue change?" reaction at cutover. */
+  --nickerp-color-primary:        #2563EB;  /* v1 PaletteLight.Primary (blue-600) */
+  --nickerp-color-primary-hover:  #1D4ED8;  /* v1 PaletteLight.PrimaryDarken (blue-700) */
+  --nickerp-color-primary-light:  #60A5FA;  /* v1 PaletteLight.PrimaryLighten (blue-400) */
+  /* Accent — v1 ICUMSTheme uses slate as the secondary surface accent
+     (Domiex executive style). v2's prior cyan accent is gone. */
+  --nickerp-color-accent:         #334155;  /* v1 PaletteLight.Secondary (slate-700) */
+  --nickerp-color-accent-hover:   #1E293B;  /* v1 PaletteLight.SecondaryDarken (slate-800) */
+  /* Tertiary — v1's deeper blue used for Info + outline tints. */
+  --nickerp-color-tertiary:       #0369A1;  /* v1 PaletteLight.Tertiary (sky-700) */
 
-  /* Surfaces */
-  --nickerp-color-bg-page:        #f8fafc;  /* slate-50 */
-  --nickerp-color-bg-surface:     #ffffff;
-  --nickerp-color-bg-topnav:      #0f172a;  /* slate-900 — dark TopNav */
-  --nickerp-color-bg-elevated:    #f1f5f9;  /* slate-100 */
+  /* Surfaces. v1 background is slate-100 not slate-50 — slightly more
+     saturated cards-on-surface contrast. */
+  --nickerp-color-bg-page:        #F1F5F9;  /* v1 PaletteLight.Background */
+  --nickerp-color-bg-surface:     #FFFFFF;  /* v1 PaletteLight.Surface */
+  /* TopNav uses the v1 drawer-dark Domiex hex, not slate-900. The
+     SharedHeader picks this up; the inspection sidenav too. */
+  --nickerp-color-bg-topnav:      #1B2537;  /* v1 PaletteLight.DrawerBackground */
+  --nickerp-color-bg-drawer:      #1B2537;  /* alias — same Domiex dark */
+  --nickerp-color-bg-elevated:    #F8FAFC;  /* v1 enhanced-theme surface-elevation-1 */
 
-  /* Text */
-  --nickerp-color-text:           #0f172a;
-  --nickerp-color-text-muted:     #475569;  /* slate-600 */
-  --nickerp-color-text-inverse:   #f8fafc;
-  --nickerp-color-text-on-topnav: #f8fafc;
+  /* Text. v1 TextPrimary is slate-950 (truer black) than v2's prior slate-900. */
+  --nickerp-color-text:           #020617;  /* v1 PaletteLight.TextPrimary */
+  --nickerp-color-text-muted:     #64748B;  /* v1 PaletteLight.TextSecondary */
+  --nickerp-color-text-inverse:   #FFFFFF;
+  --nickerp-color-text-on-topnav: rgba(255, 255, 255, 0.85);   /* drawer body */
+  --nickerp-color-text-on-drawer: rgba(255, 255, 255, 0.55);   /* v1 DrawerText */
 
-  /* States */
-  --nickerp-color-success:        #16a34a;  /* green-600 */
-  --nickerp-color-warning:        #ca8a04;  /* yellow-600 */
-  --nickerp-color-danger:         #dc2626;  /* red-600 */
-  --nickerp-color-info:           #0284c7;  /* sky-600 */
+  /* States — v1 ICUMSTheme.PaletteLight values. Warning is amber-600 (v1)
+     not yellow-600 (v2's earlier pick); Info is sky-700 not sky-600. */
+  --nickerp-color-success:        #16A34A;  /* v1 Success */
+  --nickerp-color-warning:        #D97706;  /* v1 Warning (amber-600) */
+  --nickerp-color-danger:         #DC2626;  /* v1 Error */
+  --nickerp-color-info:           #0369A1;  /* v1 Info (sky-700) */
 
-  /* Borders + dividers */
-  --nickerp-color-border:         #e2e8f0;  /* slate-200 */
-  --nickerp-color-border-strong:  #cbd5e1;  /* slate-300 */
-  --nickerp-color-divider:        #f1f5f9;
+  /* Borders + dividers — v1 PaletteLight.Divider / LinesDefault / LinesInputs. */
+  --nickerp-color-border:         #E2E8F0;  /* v1 LinesDefault + Divider */
+  --nickerp-color-border-strong:  #CBD5E1;  /* v1 LinesInputs */
+  --nickerp-color-divider:        #F1F5F9;  /* v1 DividerLight */
 
-  /* Typography */
+  /* Ghana flag accents — v1 custom.css uses these for highlights, decorative
+     stripes, and stat-card icon backgrounds. Carried through so v2 pages
+     that want a Ghana flourish (login splash, dashboard hero) match. */
+  --nickerp-color-gh-red:         #CE1126;
+  --nickerp-color-gh-gold:        #FCD116;
+  --nickerp-color-gh-green:       #006B3F;
+
+  /* Gradients — v1 enhanced-theme + custom.css. Used by login splash,
+     stat-card-modern-gradient, modern-card-gradient-info. */
+  --nickerp-gradient-primary:     linear-gradient(135deg, #2563EB 0%, #3B82F6 100%);
+  --nickerp-gradient-primary-hover: linear-gradient(135deg, #1D4ED8 0%, #2563EB 100%);
+  --nickerp-gradient-success:     linear-gradient(135deg, #16A34A 0%, #22C55E 100%);
+  --nickerp-gradient-warning:     linear-gradient(135deg, #D97706 0%, #F59E0B 100%);
+  --nickerp-gradient-info:        linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%);
+  --nickerp-gradient-danger:      linear-gradient(135deg, #DC2626 0%, #EF4444 100%);
+
+  /* Typography. v1 falls back through Helvetica Neue first. To match the
+     "feel" without giving up modern OS-native rendering, we keep system-ui
+     at the front (so Windows/Mac kiosks render natively) and ensure
+     Helvetica Neue is in the chain. Headlines pick up the v1 weight scale. */
   --nickerp-font-sans:            -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                                  "Helvetica Neue", Arial, sans-serif;
+                                  "Helvetica Neue", Helvetica, Arial, sans-serif;
   --nickerp-font-mono:            ui-monospace, SFMono-Regular, "Menlo", "Consolas",
                                   "Liberation Mono", monospace;
   --nickerp-font-size-xs:         0.75rem;
@@ -51,6 +90,7 @@
   --nickerp-font-size-base:       1rem;
   --nickerp-font-size-lg:         1.125rem;
   --nickerp-font-size-xl:         1.25rem;
+  --nickerp-font-size-2xl:        1.5rem;
   --nickerp-font-weight-regular:  400;
   --nickerp-font-weight-medium:   500;
   --nickerp-font-weight-semibold: 600;
@@ -58,7 +98,7 @@
   --nickerp-line-height-tight:    1.2;
   --nickerp-line-height-base:     1.5;
 
-  /* Spacing scale (4px increments) */
+  /* Spacing scale (4px increments) — matches v1 enhanced-theme. */
   --nickerp-space-1: 0.25rem;
   --nickerp-space-2: 0.5rem;
   --nickerp-space-3: 0.75rem;
@@ -68,17 +108,28 @@
   --nickerp-space-8: 2rem;
   --nickerp-space-10: 2.5rem;
   --nickerp-space-12: 3rem;
+  --nickerp-space-16: 4rem;
 
-  /* Radius */
-  --nickerp-radius-sm: 4px;
-  --nickerp-radius-md: 8px;
-  --nickerp-radius-lg: 12px;
+  /* Radius — extended to match v1 enhanced-theme radius scale (was: sm/md/lg/full). */
+  --nickerp-radius-sm:   4px;
+  --nickerp-radius-md:   8px;
+  --nickerp-radius-lg:   12px;
+  --nickerp-radius-xl:   16px;
+  --nickerp-radius-2xl:  24px;
   --nickerp-radius-full: 9999px;
 
-  /* Elevation */
-  --nickerp-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --nickerp-shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.10), 0 2px 4px -2px rgba(15, 23, 42, 0.10);
-  --nickerp-shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.10), 0 4px 6px -4px rgba(15, 23, 42, 0.10);
+  /* Elevation — extended shadow scale from v1 enhanced-theme. */
+  --nickerp-shadow-sm:   0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --nickerp-shadow-md:   0 4px 6px -1px rgba(0, 0, 0, 0.10), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --nickerp-shadow-lg:   0 10px 15px -3px rgba(0, 0, 0, 0.10), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --nickerp-shadow-xl:   0 20px 25px -5px rgba(0, 0, 0, 0.10), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --nickerp-shadow-2xl:  0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  --nickerp-shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+
+  /* Transitions — matches v1 enhanced-theme cubic-bezier scale. */
+  --nickerp-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --nickerp-transition-base: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  --nickerp-transition-slow: 500ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Layout */
   --nickerp-topnav-height: 56px;

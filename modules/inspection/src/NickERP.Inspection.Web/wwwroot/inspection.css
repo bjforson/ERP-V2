@@ -21,9 +21,14 @@ a { color: var(--nickerp-color-primary); }
     min-height: calc(100vh - var(--nickerp-topnav-height));
 }
 
+/* Sprint 60 — v1 parity. The drawer is dark (Domiex executive style)
+   to match the v1 NSCIM ICUMSTheme.PaletteLight.DrawerBackground
+   (#1B2537). v1 users moving to v2 see the same recognizable dark
+   left-rail; non-active items are muted white per v1's DrawerText
+   (rgba(255,255,255,0.55)), active items get the primary blue accent. */
 .inspection-sidenav {
-    background: var(--nickerp-color-bg-surface);
-    border-right: 1px solid var(--nickerp-color-border);
+    background: var(--nickerp-color-bg-drawer);
+    border-right: 1px solid rgba(255, 255, 255, 0.04);
     padding: var(--nickerp-space-4) var(--nickerp-space-2);
     display: flex;
     flex-direction: column;
@@ -34,13 +39,16 @@ a { color: var(--nickerp-color-primary); }
     display: block;
     padding: var(--nickerp-space-2) var(--nickerp-space-3);
     border-radius: var(--nickerp-radius-md);
-    color: var(--nickerp-color-text);
+    color: var(--nickerp-color-text-on-drawer);
     text-decoration: none;
     font-size: var(--nickerp-font-size-sm);
     font-weight: var(--nickerp-font-weight-medium);
+    transition: background var(--nickerp-transition-fast),
+                color var(--nickerp-transition-fast);
 }
 .inspection-sidenav a:hover {
-    background: var(--nickerp-color-bg-elevated);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--nickerp-color-text-inverse);
 }
 
 .inspection-sidenav-section {
@@ -48,7 +56,7 @@ a { color: var(--nickerp-color-primary); }
     padding: 0 var(--nickerp-space-3);
     font-size: 0.65rem;
     font-weight: var(--nickerp-font-weight-bold);
-    color: var(--nickerp-color-text-muted);
+    color: rgba(255, 255, 255, 0.40);
     text-transform: uppercase;
     letter-spacing: 0.6px;
 }
@@ -103,6 +111,11 @@ a { color: var(--nickerp-color-primary); }
 .inspection-button-row { display: flex; gap: var(--nickerp-space-2); flex-wrap: wrap; }
 .inspection-sidenav .active {
     background: var(--nickerp-color-primary);
+    color: var(--nickerp-color-text-inverse);
+    font-weight: var(--nickerp-font-weight-semibold);
+}
+.inspection-sidenav .active:hover {
+    background: var(--nickerp-color-primary-hover);
     color: var(--nickerp-color-text-inverse);
 }
 
