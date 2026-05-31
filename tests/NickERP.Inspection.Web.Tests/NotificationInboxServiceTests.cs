@@ -23,6 +23,11 @@ public sealed class NotificationInboxServiceTests
 {
     private readonly DateTimeOffset _now = new(2026, 5, 5, 12, 0, 0, TimeSpan.Zero);
     private readonly List<DomainEvent> _events = new();
+    // Sprint 60 — NotificationInboxService now takes an IDbContextFactory.
+    // BuildDb() stashes the in-memory options here so BuildService() can hand
+    // the service fresh contexts over the SAME named in-memory store (the
+    // seed written through the test's own context stays visible).
+    private DbContextOptions<AuditDbContext>? _options;
 
     [Fact]
     [Trait("Category", "Unit")]
@@ -337,18 +342,33 @@ public sealed class NotificationInboxServiceTests
         var publisher = new CapturingEventPublisher(_events);
         var tenant = new TenantContext();
         tenant.SetTenant(1);
+        // db param is the seed context; the service reads through a factory
+        // over the same options (_options set in BuildDb).
+        _ = db;
         return new NotificationInboxService(
-            db, clock, tenant, publisher,
+            new TestDbContextFactory(_options!), clock, tenant, publisher,
             NullLogger<NotificationInboxService>.Instance);
     }
 
-    private static AuditDbContext BuildDb()
+    private AuditDbContext BuildDb()
     {
-        var options = new DbContextOptionsBuilder<AuditDbContext>()
+        _options = new DbContextOptionsBuilder<AuditDbContext>()
             .UseInMemoryDatabase("inbox-svc-" + Guid.NewGuid())
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
-        return new TestAuditDbContext(options);
+        return new TestAuditDbContext(_options);
+    }
+
+    /// <summary>
+    /// Sprint 60 — hands the service a fresh <see cref="TestAuditDbContext"/>
+    /// per call over the same in-memory store, mirroring the production
+    /// scoped IDbContextFactory&lt;AuditDbContext&gt; registration.
+    /// </summary>
+    private sealed class TestDbContextFactory : IDbContextFactory<AuditDbContext>
+    {
+        private readonly DbContextOptions<AuditDbContext> _opts;
+        public TestDbContextFactory(DbContextOptions<AuditDbContext> opts) => _opts = opts;
+        public AuditDbContext CreateDbContext() => new TestAuditDbContext(_opts);
     }
 
     /// <summary>

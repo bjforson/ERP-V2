@@ -62,6 +62,26 @@ builder.Services.AddNickErpTenancy();
 builder.Services.AddNickErpTenancyCore(platformConn);
 builder.Services.AddNickErpAuditCore(platformConn);
 
+// Sprint 60 — NotificationInboxService backs BOTH the /notifications page
+// and the SharedHeader bell. On a Blazor Server circuit the scoped
+// AuditDbContext is a single shared instance + connection; the bell's
+// refresh Timer and the inbox page issue queries concurrently, tripping
+// `NpgsqlOperationInProgressException` (a second operation on one connection)
+// → HTTP 500 on /notifications. Register a SCOPED IDbContextFactory so the
+// service can take a short-lived, exclusive AuditDbContext per call. Scoped
+// lifetime (not the EF default Singleton) is required so the
+// TenantConnectionInterceptor still resolves the request's ITenantContext and
+// pushes app.tenant_id — otherwise RLS would fail-closed and the inbox would
+// silently show zero rows.
+builder.Services.AddDbContextFactory<NickERP.Platform.Audit.Database.AuditDbContext>((sp, opts) =>
+{
+    opts.UseNpgsql(platformConn, npgsql =>
+        npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "audit"));
+    opts.AddInterceptors(
+        sp.GetRequiredService<TenantConnectionInterceptor>(),
+        sp.GetRequiredService<TenantOwnedEntityInterceptor>());
+}, ServiceLifetime.Scoped);
+
 // Sprint 8 P3 — projection of audit.events into the user-facing
 // notifications inbox. 1s poll in dev / 5s in prod (default). Three
 // hardcoded rules: case-opened (notifies opener), case-assigned

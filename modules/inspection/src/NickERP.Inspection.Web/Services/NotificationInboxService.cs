@@ -37,20 +37,26 @@ public sealed class NotificationInboxService
     /// <summary>Default page size for <see cref="ListAsync"/>. Mirrors the v1 inbox.</summary>
     public const int DefaultPageSize = 20;
 
-    private readonly AuditDbContext _db;
+    // Sprint 60 — each public method takes a short-lived AuditDbContext from
+    // this factory instead of sharing one scoped context across the Blazor
+    // circuit. The bell's refresh Timer and the inbox page can otherwise
+    // issue overlapping queries on a single connection → NpgsqlOperationInProgress
+    // → HTTP 500. The factory is registered SCOPED (see Program.cs) so the
+    // TenantConnectionInterceptor still pushes the request's app.tenant_id.
+    private readonly IDbContextFactory<AuditDbContext> _dbFactory;
     private readonly TimeProvider _clock;
     private readonly ITenantContext _tenant;
     private readonly IEventPublisher _events;
     private readonly ILogger<NotificationInboxService> _logger;
 
     public NotificationInboxService(
-        AuditDbContext db,
+        IDbContextFactory<AuditDbContext> dbFactory,
         TimeProvider clock,
         ITenantContext tenant,
         IEventPublisher events,
         ILogger<NotificationInboxService> logger)
     {
-        _db = db ?? throw new ArgumentNullException(nameof(db));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
         _events = events ?? throw new ArgumentNullException(nameof(events));
@@ -75,7 +81,9 @@ public sealed class NotificationInboxService
         if (skip < 0) skip = 0;
         filter ??= NotificationInboxFilter.All;
 
-        var q = _db.Notifications
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var q = db.Notifications
             .AsNoTracking()
             .Where(n => n.UserId == userId);
 
@@ -110,7 +118,7 @@ public sealed class NotificationInboxService
 
         var totalCount = await q.CountAsync(ct);
 
-        var unreadCount = await _db.Notifications
+        var unreadCount = await db.Notifications
             .AsNoTracking()
             .Where(n => n.UserId == userId && n.ReadAt == null)
             .CountAsync(ct);
@@ -148,7 +156,9 @@ public sealed class NotificationInboxService
     {
         if (userId == Guid.Empty) return Array.Empty<string>();
 
-        return await _db.Notifications
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        return await db.Notifications
             .AsNoTracking()
             .Where(n => n.UserId == userId)
             .Select(n => n.EventType)
@@ -172,13 +182,15 @@ public sealed class NotificationInboxService
         if (notificationId == Guid.Empty) return false;
         if (userId == Guid.Empty) return false;
 
-        var row = await _db.Notifications
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var row = await db.Notifications
             .FirstOrDefaultAsync(n => n.Id == notificationId && n.UserId == userId, ct);
         if (row is null || row.ReadAt is not null) return false;
 
         var now = _clock.GetUtcNow();
         row.ReadAt = now;
-        await _db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
 
         await EmitReadEventAsync(row, now, ct);
         return true;
@@ -196,7 +208,9 @@ public sealed class NotificationInboxService
     {
         if (userId == Guid.Empty) return 0;
 
-        var unread = await _db.Notifications
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var unread = await db.Notifications
             .Where(n => n.UserId == userId && n.ReadAt == null)
             .ToListAsync(ct);
         if (unread.Count == 0) return 0;
@@ -206,7 +220,7 @@ public sealed class NotificationInboxService
         {
             row.ReadAt = now;
         }
-        await _db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
 
         foreach (var row in unread)
         {
@@ -226,7 +240,9 @@ public sealed class NotificationInboxService
     {
         if (userId == Guid.Empty) return 0;
 
-        return await _db.Notifications
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        return await db.Notifications
             .AsNoTracking()
             .Where(n => n.UserId == userId && n.ReadAt == null)
             .CountAsync(ct);
